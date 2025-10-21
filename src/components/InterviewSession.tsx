@@ -53,10 +53,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
-  useEffect(() => {
-    initializeSession();
-  }, [initializeSession]);
-
   const initializeSession = useCallback(async () => {
     try {
       // Validate role input
@@ -108,6 +104,10 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       });
     }
   }, [role, userId, onComplete, toast]);
+
+  useEffect(() => {
+    initializeSession();
+  }, [initializeSession]);
 
   const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
