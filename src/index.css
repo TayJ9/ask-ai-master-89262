@@ -1,0 +1,166 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Professional Blue Base */
+    --background: 220 25% 97%;
+    --foreground: 220 40% 10%;
+
+    /* Card Styling */
+    --card: 0 0% 100%;
+    --card-foreground: 220 40% 10%;
+
+    /* Popover */
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 40% 10%;
+
+    /* Primary - Professional Blue */
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 91% 70%;
+
+    /* Secondary - Elegant Purple */
+    --secondary: 262 83% 58%;
+    --secondary-foreground: 0 0% 100%;
+
+    /* Accent - Vibrant Gradient Base */
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    /* Muted */
+    --muted: 220 20% 94%;
+    --muted-foreground: 220 15% 40%;
+
+    /* Destructive */
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Success */
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    /* Borders & Inputs */
+    --border: 220 20% 88%;
+    --input: 220 20% 88%;
+    --ring: 217 91% 60%;
+
+    /* Radius */
+    --radius: 0.75rem;
+
+    /* Custom Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(217, 91%, 60%), hsl(262, 83%, 58%));
+    --gradient-secondary: linear-gradient(180deg, hsl(220, 25%, 97%), hsl(217, 91%, 95%));
+    --gradient-recording: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 71%, 55%));
+
+    /* Shadows */
+    --shadow-sm: 0 2px 8px hsl(220, 40%, 10%, 0.08);
+    --shadow-md: 0 4px 16px hsl(220, 40%, 10%, 0.12);
+    --shadow-lg: 0 8px 32px hsl(220, 40%, 10%, 0.16);
+    --shadow-glow: 0 0 40px hsl(217, 91%, 60%, 0.3);
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+  }
+
+  .dark {
+    --background: 220 40% 8%;
+    --foreground: 220 20% 95%;
+
+    --card: 220 35% 12%;
+    --card-foreground: 220 20% 95%;
+
+    --popover: 220 35% 12%;
+    --popover-foreground: 220 20% 95%;
+
+    --primary: 217 91% 60%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 217 91% 70%;
+
+    --secondary: 262 83% 58%;
+    --secondary-foreground: 0 0% 100%;
+
+    --accent: 262 83% 58%;
+    --accent-foreground: 0 0% 100%;
+
+    --muted: 220 30% 15%;
+    --muted-foreground: 220 15% 60%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 220 30% 18%;
+    --input: 220 30% 18%;
+    --ring: 217 91% 60%;
+
+    --gradient-primary: linear-gradient(135deg, hsl(217, 91%, 60%), hsl(262, 83%, 58%));
+    --gradient-secondary: linear-gradient(180deg, hsl(220, 40%, 8%), hsl(217, 91%, 15%));
+    --gradient-recording: linear-gradient(135deg, hsl(142, 71%, 45%), hsl(142, 71%, 55%));
+
+    --shadow-sm: 0 2px 8px hsl(0, 0%, 0%, 0.3);
+    --shadow-md: 0 4px 16px hsl(0, 0%, 0%, 0.4);
+    --shadow-lg: 0 8px 32px hsl(0, 0%, 0%, 0.5);
+    --shadow-glow: 0 0 40px hsl(217, 91%, 60%, 0.4);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-bold tracking-tight;
+  }
+}
+
+@layer utilities {
+  .gradient-primary {
+    background: var(--gradient-primary);
+  }
+
+  .gradient-secondary {
+    background: var(--gradient-secondary);
+  }
+
+  .gradient-recording {
+    background: var(--gradient-recording);
+  }
+
+  .shadow-glow {
+    box-shadow: var(--shadow-glow);
+  }
+
+  .animate-pulse-slow {
+    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
+  .animate-scale-in {
+    animation: scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  @keyframes scaleIn {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
