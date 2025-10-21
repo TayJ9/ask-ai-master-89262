@@ -89,8 +89,10 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         }
 
         if (isLogin) {
+          console.log('Login successful, storing credentials...');
           localStorage.setItem('auth_token', data.token);
           localStorage.setItem('user', JSON.stringify(data.user));
+          console.log('Calling onAuthSuccess callback...');
           toast({ title: "Welcome back!" });
           onAuthSuccess(data.user, data.token);
         } else {
