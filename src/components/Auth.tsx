@@ -1,11 +1,23 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic } from "lucide-react";
+import { Mic, Eye, EyeOff } from "lucide-react";
+import { z } from "zod";
+
+// Input validation schemas
+const emailSchema = z.string().email("Invalid email address").max(255, "Email too long");
+const passwordSchema = z.string()
+  .min(8, "Password must be at least 8 characters")
+  .max(128, "Password too long")
+  .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one uppercase letter, one lowercase letter, and one number");
+const nameSchema = z.string()
+  .min(2, "Name must be at least 2 characters")
+  .max(100, "Name too long")
+  .regex(/^[a-zA-Z\s'-]+$/, "Name can only contain letters, spaces, hyphens, and apostrophes");
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
@@ -13,27 +25,65 @@ export default function Auth() {
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [emailError, setEmailError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [nameError, setNameError] = useState("");
   const { toast } = useToast();
+
+  // Input validation functions
+  const validateEmail = useCallback((value: string) => {
+    const result = emailSchema.safeParse(value);
+    setEmailError(result.success ? "" : result.error.errors[0].message);
+    return result.success;
+  }, []);
+
+  const validatePassword = useCallback((value: string) => {
+    const result = passwordSchema.safeParse(value);
+    setPasswordError(result.success ? "" : result.error.errors[0].message);
+    return result.success;
+  }, []);
+
+  const validateName = useCallback((value: string) => {
+    const result = nameSchema.safeParse(value);
+    setNameError(result.success ? "" : result.error.errors[0].message);
+    return result.success;
+  }, []);
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
+    // Clear previous errors
+    setEmailError("");
+    setPasswordError("");
+    setNameError("");
+
     try {
+      // Validate inputs
+      const isEmailValid = validateEmail(email);
+      const isPasswordValid = validatePassword(password);
+      const isNameValid = isLogin || validateName(fullName);
+
+      if (!isEmailValid || !isPasswordValid || !isNameValid) {
+        setLoading(false);
+        return;
+      }
+
       if (isLogin) {
         const { error } = await supabase.auth.signInWithPassword({
-          email,
+          email: email.trim().toLowerCase(),
           password,
         });
         if (error) throw error;
         toast({ title: "Welcome back!" });
       } else {
         const { error } = await supabase.auth.signUp({
-          email,
+          email: email.trim().toLowerCase(),
           password,
           options: {
             data: {
-              full_name: fullName,
+              full_name: fullName.trim(),
             },
           },
         });
@@ -41,9 +91,11 @@ export default function Auth() {
         toast({ title: "Account created! You can now sign in." });
       }
     } catch (error: any) {
+      // Sanitize error messages for security
+      const sanitizedMessage = error.message?.replace(/[<>]/g, '') || 'An error occurred';
       toast({
         title: "Error",
-        description: error.message,
+        description: sanitizedMessage,
         variant: "destructive",
       });
     } finally {
@@ -75,9 +127,16 @@ export default function Auth() {
                   type="text"
                   placeholder="John Doe"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    if (e.target.value) validateName(e.target.value);
+                  }}
+                  onBlur={() => validateName(fullName)}
                   required={!isLogin}
+                  maxLength={100}
+                  className={nameError ? "border-destructive" : ""}
                 />
+                {nameError && <p className="text-sm text-destructive">{nameError}</p>}
               </div>
             )}
             <div className="space-y-2">
@@ -87,21 +146,57 @@ export default function Auth() {
                 type="email"
                 placeholder="you@example.com"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value);
+                  if (e.target.value) validateEmail(e.target.value);
+                }}
+                onBlur={() => validateEmail(email)}
                 required
+                maxLength={255}
+                className={emailError ? "border-destructive" : ""}
+                autoComplete="email"
               />
+              {emailError && <p className="text-sm text-destructive">{emailError}</p>}
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="••••••••"
+                  value={password}
+                  onChange={(e) => {
+                    setPassword(e.target.value);
+                    if (e.target.value) validatePassword(e.target.value);
+                  }}
+                  onBlur={() => validatePassword(password)}
+                  required
+                  minLength={8}
+                  maxLength={128}
+                  className={passwordError ? "border-destructive pr-10" : "pr-10"}
+                  autoComplete={isLogin ? "current-password" : "new-password"}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" />
+                  ) : (
+                    <Eye className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
+              {!isLogin && !passwordError && password && (
+                <p className="text-xs text-muted-foreground">
+                  Must contain uppercase, lowercase, and number
+                </p>
+              )}
             </div>
             <Button
               type="submit"

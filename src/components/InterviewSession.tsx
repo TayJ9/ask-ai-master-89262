@@ -1,39 +1,43 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
+import { useErrorHandler } from "@/hooks/use-error-handler";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { z } from "zod";
+import type { 
+  InterviewSessionProps, 
+  InterviewQuestion, 
+  AnalysisResponse,
+  SpeechToTextResponse,
+  TextToSpeechResponse,
+  InterviewRole 
+} from "@/types";
 
 const roleSchema = z.enum(["software-engineer", "product-manager", "marketing"]);
 const questionTextSchema = z.string().min(1).max(1000);
 
-interface InterviewSessionProps {
-  role: string;
-  userId: string;
-  onComplete: () => void;
-}
-
 export default function InterviewSession({ role, userId, onComplete }: InterviewSessionProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [questions, setQuestions] = useState<any[]>([]);
+  const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
   const [transcript, setTranscript] = useState("");
   const { toast } = useToast();
+  const { handleError } = useErrorHandler();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
   useEffect(() => {
     initializeSession();
-  }, []);
+  }, [initializeSession]);
 
-  const initializeSession = async () => {
+  const initializeSession = useCallback(async () => {
     try {
       // Validate role input
       const validatedRole = roleSchema.safeParse(role);
@@ -76,15 +80,16 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
         playQuestion(questionsData[0].question_text);
       }
     } catch (error: any) {
+      console.error('Session initialization error:', error);
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message?.replace(/[<>]/g, '') || 'Failed to initialize session',
         variant: "destructive",
       });
     }
-  };
+  }, [role, userId, onComplete, toast]);
 
-  const playQuestion = async (questionText: string) => {
+  const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
     try {
       // Validate question text
@@ -101,16 +106,25 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audio.onended = () => setIsPlayingQuestion(false);
+      audio.onerror = () => {
+        setIsPlayingQuestion(false);
+        toast({
+          title: "Audio Error",
+          description: "Failed to play audio",
+          variant: "destructive",
+        });
+      };
       await audio.play();
     } catch (error: any) {
+      console.error('Audio playback error:', error);
       toast({
         title: "Error playing question",
-        description: error.message,
+        description: error.message?.replace(/[<>]/g, '') || 'Failed to play question',
         variant: "destructive",
       });
       setIsPlayingQuestion(false);
     }
-  };
+  }, [toast]);
 
   const startRecording = async () => {
     try {
@@ -226,6 +240,11 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     onComplete();
   };
 
+  // Memoized values for performance
+  const currentQuestion = useMemo(() => questions[currentQuestionIndex], [questions, currentQuestionIndex]);
+  const progress = useMemo(() => ((currentQuestionIndex + 1) / questions.length) * 100, [currentQuestionIndex, questions.length]);
+  const isLastQuestion = useMemo(() => currentQuestionIndex >= questions.length - 1, [currentQuestionIndex, questions.length]);
+
   if (!questions.length) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -233,9 +252,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       </div>
     );
   }
-
-  const currentQuestion = questions[currentQuestionIndex];
-  const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
 
   return (
     <div className="min-h-screen p-6 gradient-secondary">
