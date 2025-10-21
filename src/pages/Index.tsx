@@ -1,6 +1,4 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { User, Session } from "@supabase/supabase-js";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
 import InterviewSession from "@/components/InterviewSession";
@@ -9,31 +7,26 @@ import { Button } from "@/components/ui/button";
 import { LogOut, History } from "lucide-react";
 
 export default function Index() {
-  const [user, setUser] = useState<User | null>(null);
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<any>(null);
   const [currentView, setCurrentView] = useState<"roles" | "interview" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
 
   useEffect(() => {
-    // Listen for auth changes FIRST
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-    });
-
-    // THEN check current session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
+    const token = localStorage.getItem('auth_token');
+    const storedUser = localStorage.getItem('user');
+    if (token && storedUser) {
+      setUser(JSON.parse(storedUser));
+    }
   }, []);
 
-  const handleSignOut = async () => {
-    await supabase.auth.signOut();
+  const handleAuthSuccess = (userData: any, token: string) => {
+    setUser(userData);
+  };
+
+  const handleSignOut = () => {
+    localStorage.removeItem('auth_token');
+    localStorage.removeItem('user');
+    setUser(null);
     setCurrentView("roles");
     setSelectedRole("");
   };
@@ -49,7 +42,7 @@ export default function Index() {
   };
 
   if (!user) {
-    return <Auth />;
+    return <Auth onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (
@@ -61,6 +54,7 @@ export default function Index() {
               onClick={() => setCurrentView("history")}
               variant="outline"
               className="gap-2 bg-card shadow-md"
+              data-testid="button-view-history"
             >
               <History className="w-4 h-4" />
               History
@@ -70,6 +64,7 @@ export default function Index() {
             onClick={handleSignOut}
             variant="outline"
             className="gap-2 bg-card shadow-md"
+            data-testid="button-signout"
           >
             <LogOut className="w-4 h-4" />
             Sign Out

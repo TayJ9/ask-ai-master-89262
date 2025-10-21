@@ -1,5 +1,4 @@
 import { useState, useCallback } from "react";
-import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -8,12 +7,15 @@ import { useToast } from "@/hooks/use-toast";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { z } from "zod";
 
-// Basic validation
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
 const nameSchema = z.string().min(2, "Name must be at least 2 characters");
 
-export default function Auth() {
+interface AuthProps {
+  onAuthSuccess: (user: any, token: string) => void;
+}
+
+export default function Auth({ onAuthSuccess }: AuthProps) {
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -25,7 +27,6 @@ export default function Auth() {
   const [nameError, setNameError] = useState("");
   const { toast } = useToast();
 
-  // Input validation functions
   const validateEmail = useCallback((value: string) => {
     const result = emailSchema.safeParse(value);
     setEmailError(result.success ? "" : result.error.errors[0].message);
@@ -48,13 +49,11 @@ export default function Auth() {
     e.preventDefault();
     setLoading(true);
 
-    // Clear previous errors
     setEmailError("");
     setPasswordError("");
     setNameError("");
 
     try {
-      // Validate inputs
       const isEmailValid = validateEmail(email);
       const isPasswordValid = validatePassword(password);
       const isNameValid = isLogin || validateName(fullName);
@@ -64,28 +63,34 @@ export default function Auth() {
         return;
       }
 
+      const endpoint = isLogin ? '/api/auth/signin' : '/api/auth/signup';
+      const body = isLogin 
+        ? { email: email.trim().toLowerCase(), password }
+        : { email: email.trim().toLowerCase(), password, fullName: fullName.trim() };
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Authentication failed');
+      }
+
       if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim().toLowerCase(),
-          password,
-        });
-        if (error) throw error;
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
         toast({ title: "Welcome back!" });
+        onAuthSuccess(data.user, data.token);
       } else {
-        const { error } = await supabase.auth.signUp({
-          email: email.trim().toLowerCase(),
-          password,
-          options: {
-            data: {
-              full_name: fullName.trim(),
-            },
-          },
-        });
-        if (error) throw error;
         toast({ title: "Account created! You can now sign in." });
+        setIsLogin(true);
+        setPassword("");
       }
     } catch (error: any) {
-      // Sanitize error messages for security
       const sanitizedMessage = error.message?.replace(/[<>]/g, '') || 'An error occurred';
       toast({
         title: "Error",
@@ -105,7 +110,7 @@ export default function Auth() {
             <Mic className="w-8 h-8 text-white" />
           </div>
           <div>
-            <CardTitle className="text-3xl">AI Interview Coach</CardTitle>
+            <CardTitle className="text-3xl" data-testid="text-app-title">AI Interview Coach</CardTitle>
             <CardDescription className="text-base mt-2">
               Practice interviews with AI-powered feedback
             </CardDescription>
@@ -129,6 +134,7 @@ export default function Auth() {
                   required={!isLogin}
                   maxLength={100}
                   className={nameError ? "border-destructive" : ""}
+                  data-testid="input-fullname"
                 />
                 {nameError && <p className="text-sm text-destructive">{nameError}</p>}
               </div>
@@ -149,6 +155,7 @@ export default function Auth() {
                 maxLength={255}
                 className={emailError ? "border-destructive" : ""}
                 autoComplete="email"
+                data-testid="input-email"
               />
               {emailError && <p className="text-sm text-destructive">{emailError}</p>}
             </div>
@@ -166,10 +173,11 @@ export default function Auth() {
                   }}
                   onBlur={() => validatePassword(password)}
                   required
-                  minLength={8}
+                  minLength={6}
                   maxLength={128}
                   className={passwordError ? "border-destructive pr-10" : "pr-10"}
                   autoComplete={isLogin ? "current-password" : "new-password"}
+                  data-testid="input-password"
                 />
                 <Button
                   type="button"
@@ -177,6 +185,7 @@ export default function Auth() {
                   size="sm"
                   className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
                   onClick={() => setShowPassword(!showPassword)}
+                  data-testid="button-toggle-password"
                 >
                   {showPassword ? (
                     <EyeOff className="h-4 w-4" />
@@ -186,16 +195,12 @@ export default function Auth() {
                 </Button>
               </div>
               {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
-              {!isLogin && !passwordError && password && (
-                <p className="text-xs text-muted-foreground">
-                  Must contain uppercase, lowercase, and number
-                </p>
-              )}
             </div>
             <Button
               type="submit"
               className="w-full gradient-primary text-white shadow-glow hover:opacity-90"
               disabled={loading}
+              data-testid="button-submit"
             >
               {loading ? "Loading..." : isLogin ? "Sign In" : "Create Account"}
             </Button>
@@ -204,6 +209,7 @@ export default function Auth() {
               variant="ghost"
               className="w-full"
               onClick={() => setIsLogin(!isLogin)}
+              data-testid="button-toggle-mode"
             >
               {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
             </Button>

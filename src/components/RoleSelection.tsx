@@ -67,6 +67,7 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                   <Button
                     onClick={() => onSelectRole(role.id)}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
+                    data-testid={`button-select-${role.id}`}
                   >
                     Start Practice
                     <ArrowRight className="w-4 h-4 ml-2" />
