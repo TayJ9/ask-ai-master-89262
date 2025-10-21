@@ -5,7 +5,12 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 
-const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key-change-in-production";
+const JWT_SECRET = process.env.JWT_SECRET || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('JWT_SECRET environment variable must be set in production');
+  }
+  return "dev-secret-key-change-before-production";
+})();
 
 interface AuthRequest extends Express.Request {
   userId?: string;
@@ -147,7 +152,16 @@ export function registerRoutes(app: Express) {
         return res.status(404).json({ error: "Session not found" });
       }
 
-      await storage.updateSession(id, req.body);
+      // Only allow updating specific fields
+      const allowedFields = z.object({
+        status: z.string().optional(),
+        overallScore: z.number().optional(),
+        feedbackSummary: z.string().optional(),
+        completedAt: z.date().optional(),
+      });
+
+      const validatedData = allowedFields.parse(req.body);
+      await storage.updateSession(id, validatedData);
       res.json({ success: true });
     } catch (error) {
       console.error("Update session error:", error);
