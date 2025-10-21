@@ -183,13 +183,17 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
 
     try {
+      console.log('Processing audio...', audioBlob.size, 'bytes');
+      
       // Convert to base64
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
       reader.onloadend = async () => {
         const base64Audio = reader.result?.toString().split(",")[1];
+        console.log('Audio converted to base64, length:', base64Audio?.length);
 
         // Transcribe
+        console.log('Calling speech-to-text function...');
         const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke(
           "speech-to-text",
           {
@@ -197,10 +201,16 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           }
         );
 
-        if (transcriptError) throw transcriptError;
+        if (transcriptError) {
+          console.error('Speech-to-text error:', transcriptError);
+          throw transcriptError;
+        }
+        
+        console.log('Transcript received:', transcriptData);
         setTranscript(transcriptData.text);
 
         // Analyze response
+        console.log('Calling analyze-response function...');
         const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
           "analyze-response",
           {
@@ -212,10 +222,16 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           }
         );
 
-        if (feedbackError) throw feedbackError;
+        if (feedbackError) {
+          console.error('Analyze response error:', feedbackError);
+          throw feedbackError;
+        }
+
+        console.log('Feedback received:', feedbackData);
 
         // Save response
-        await supabase.from("interview_responses").insert({
+        console.log('Saving response to database...');
+        const { error: saveError } = await supabase.from("interview_responses").insert({
           session_id: sessionId,
           question_id: questions[currentQuestionIndex].id,
           transcript: transcriptData.text,
@@ -223,6 +239,11 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           strengths: feedbackData.strengths,
           improvements: feedbackData.improvements,
         });
+
+        if (saveError) {
+          console.error('Database save error:', saveError);
+          throw saveError;
+        }
 
         toast({
           title: "Response Analyzed",
@@ -240,9 +261,10 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
         }
       };
     } catch (error: any) {
+      console.error('Recording stop error:', error);
       toast({
         title: "Error",
-        description: error.message,
+        description: error.message || 'Failed to process recording',
         variant: "destructive",
       });
     } finally {
