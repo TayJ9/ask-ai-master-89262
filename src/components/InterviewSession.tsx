@@ -15,10 +15,6 @@ interface InterviewSessionProps {
 }
 
 export default function InterviewSession({ role, userId, onComplete }: InterviewSessionProps) {
-  console.log('=== INTERVIEW SESSION COMPONENT RENDERED ===');
-  console.log('Role:', role);
-  console.log('User ID:', userId);
-  
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
@@ -35,22 +31,16 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     enabled: !!role,
   });
 
-  console.log('Questions loading:', questionsLoading);
-  console.log('Questions loaded:', questions.length);
-
   const createSessionMutation = useMutation({
     mutationFn: (data: { userId: string; role: string; status: string }) =>
       apiRequest('/api/sessions', 'POST', data),
     onSuccess: (data: IInterviewSession) => {
-      console.log('Session created successfully:', data.id);
       setSessionId(data.id);
       if (questions && questions.length > 0) {
-        console.log('Starting to play first question...');
         playQuestion(questions[0].questionText);
       }
     },
     onError: (error: any) => {
-      console.error('Failed to create session:', error);
       toast({
         title: "Error",
         description: error.message || "Failed to create session. Please try again.",
@@ -86,18 +76,14 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
   const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
-    console.log('Requesting text-to-speech for:', questionText.substring(0, 50) + '...');
     
     try {
       const data = await apiRequest('/api/ai/text-to-speech', 'POST', { text: questionText });
-      console.log('Text-to-speech response received');
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audio.onended = () => {
-        console.log('Audio playback finished');
         setIsPlayingQuestion(false);
       };
-      audio.onerror = (e) => {
-        console.error('Audio playback error:', e);
+      audio.onerror = () => {
         setIsPlayingQuestion(false);
         toast({
           title: "Audio Error",
@@ -107,7 +93,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       };
       await audio.play();
     } catch (error: any) {
-      console.error('Text-to-speech error:', error);
       toast({
         title: "Audio Error",
         description: error.message || "Failed to play question audio. You can still read and answer the question.",

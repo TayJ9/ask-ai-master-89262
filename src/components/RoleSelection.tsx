@@ -65,11 +65,7 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                 </CardHeader>
                 <CardContent>
                   <Button
-                    onClick={() => {
-                      console.log('=== START PRACTICE CLICKED ===');
-                      console.log('Selected role:', role.id);
-                      onSelectRole(role.id);
-                    }}
+                    onClick={() => onSelectRole(role.id)}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
                   >
