@@ -8,16 +8,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { z } from "zod";
 
-// Input validation schemas
-const emailSchema = z.string().email("Invalid email address").max(255, "Email too long");
-const passwordSchema = z.string()
-  .min(8, "Password must be at least 8 characters")
-  .max(128, "Password too long")
-  .regex(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/, "Password must contain at least one uppercase letter, one lowercase letter, and one number");
-const nameSchema = z.string()
-  .min(2, "Name must be at least 2 characters")
-  .max(100, "Name too long")
-  .regex(/^[a-zA-Z\s'-]+$/, "Name can only contain letters, spaces, hyphens, and apostrophes");
+// Basic validation
+const emailSchema = z.string().email("Invalid email address");
+const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
+const nameSchema = z.string().min(2, "Name must be at least 2 characters");
 
 export default function Auth() {
   const [isLogin, setIsLogin] = useState(true);
