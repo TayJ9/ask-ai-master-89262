@@ -5,7 +5,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
-import { z } from "zod";
 // Type definitions for better type safety
 interface InterviewQuestion {
   id: string;
@@ -31,9 +30,6 @@ interface TextToSpeechResponse {
   audioContent: string;
 }
 
-const roleSchema = z.enum(["software-engineer", "product-manager", "marketing"]);
-const questionTextSchema = z.string().min(1).max(1000);
-
 interface InterviewSessionProps {
   role: string;
   userId: string;
@@ -54,53 +50,46 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const audioChunksRef = useRef<Blob[]>([]);
 
   const initializeSession = useCallback(async () => {
-    try {
-      // Validate role input
-      const validatedRole = roleSchema.safeParse(role);
-      if (!validatedRole.success) {
-        toast({
-          title: "Invalid Role",
-          description: "Please select a valid role.",
-          variant: "destructive",
-        });
-        onComplete();
-        return;
-      }
+    const { data: session, error: sessionError } = await supabase
+      .from("interview_sessions")
+      .insert({
+        user_id: userId,
+        role: role,
+        status: "in_progress",
+      })
+      .select()
+      .single();
 
-      // Create session
-      const { data: session, error: sessionError } = await supabase
-        .from("interview_sessions")
-        .insert({
-          user_id: userId,
-          role: validatedRole.data,
-          status: "in_progress",
-        })
-        .select()
-        .single();
-
-      if (sessionError) throw sessionError;
-      setSessionId(session.id);
-
-      // Fetch questions
-      const { data: questionsData, error: questionsError } = await supabase
-        .from("interview_questions")
-        .select("*")
-        .eq("role", role)
-        .order("order_index");
-
-      if (questionsError) throw questionsError;
-      setQuestions(questionsData || []);
-
-      // Play first question
-      if (questionsData && questionsData.length > 0) {
-        playQuestion(questionsData[0].question_text);
-      }
-    } catch (error: any) {
+    if (sessionError) {
       toast({
         title: "Error",
-        description: error.message?.replace(/[<>]/g, '') || 'Failed to initialize session',
+        description: "Failed to create session",
         variant: "destructive",
       });
+      return;
+    }
+
+    setSessionId(session.id);
+
+    const { data: questionsData, error: questionsError } = await supabase
+      .from("interview_questions")
+      .select("*")
+      .eq("role", role)
+      .order("order_index");
+
+    if (questionsError) {
+      toast({
+        title: "Error",
+        description: "Failed to load questions",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setQuestions(questionsData || []);
+
+    if (questionsData && questionsData.length > 0) {
+      playQuestion(questionsData[0].question_text);
     }
   }, [role, userId, onComplete, toast]);
 
@@ -110,39 +99,32 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
   const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
-    try {
-      // Validate question text
-      const validatedText = questionTextSchema.safeParse(questionText);
-      if (!validatedText.success) {
-        throw new Error("Invalid question text");
-      }
+    
+    const { data, error } = await supabase.functions.invoke("text-to-speech", {
+      body: { text: questionText },
+    });
 
-      const { data, error } = await supabase.functions.invoke("text-to-speech", {
-        body: { text: validatedText.data },
-      });
-
-      if (error) throw error;
-
-      const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
-      audio.onended = () => setIsPlayingQuestion(false);
-      audio.onerror = () => {
-        setIsPlayingQuestion(false);
-        toast({
-          title: "Audio Error",
-          description: "Failed to play audio",
-          variant: "destructive",
-        });
-      };
-      await audio.play();
-    } catch (error: any) {
-      console.error('Audio playback error:', error);
+    if (error) {
       toast({
-        title: "Error playing question",
-        description: error.message?.replace(/[<>]/g, '') || 'Failed to play question',
+        title: "Audio Error",
+        description: "Failed to play question",
         variant: "destructive",
       });
       setIsPlayingQuestion(false);
+      return;
     }
+
+    const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+    audio.onended = () => setIsPlayingQuestion(false);
+    audio.onerror = () => {
+      setIsPlayingQuestion(false);
+      toast({
+        title: "Audio Error",
+        description: "Failed to play audio",
+        variant: "destructive",
+      });
+    };
+    await audio.play();
   }, [toast]);
 
   const startRecording = async () => {
@@ -153,15 +135,13 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
+        audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = handleRecordingStop;
       mediaRecorder.start();
       setIsRecording(true);
-    } catch (error: any) {
+    } catch (error) {
       toast({
         title: "Microphone Error",
         description: "Could not access microphone",
@@ -181,72 +161,76 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     setIsProcessing(true);
     const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
 
-    try {
-      // Convert to base64
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      reader.onloadend = async () => {
-        const base64Audio = reader.result?.toString().split(",")[1];
+    const reader = new FileReader();
+    reader.readAsDataURL(audioBlob);
+    reader.onloadend = async () => {
+      const base64Audio = reader.result?.toString().split(",")[1];
 
-        // Transcribe
-        const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke(
-          "speech-to-text",
-          {
-            body: { audio: base64Audio },
-          }
-        );
-
-        if (transcriptError) throw transcriptError;
-        setTranscript(transcriptData.text);
-
-        // Analyze response
-        const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
-          "analyze-response",
-          {
-            body: {
-              question: questions[currentQuestionIndex].question_text,
-              answer: transcriptData.text,
-              role: role,
-            },
-          }
-        );
-
-        if (feedbackError) throw feedbackError;
-
-        // Save response
-        await supabase.from("interview_responses").insert({
-          session_id: sessionId,
-          question_id: questions[currentQuestionIndex].id,
-          transcript: transcriptData.text,
-          score: feedbackData.score,
-          strengths: feedbackData.strengths,
-          improvements: feedbackData.improvements,
-        });
-
-        toast({
-          title: "Response Analyzed",
-          description: `Score: ${feedbackData.score}/100`,
-        });
-
-        // Move to next question or complete
-        if (currentQuestionIndex < questions.length - 1) {
-          const nextIndex = currentQuestionIndex + 1;
-          setCurrentQuestionIndex(nextIndex);
-          setTranscript("");
-          playQuestion(questions[nextIndex].question_text);
-        } else {
-          completeSession();
+      const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke(
+        "speech-to-text",
+        {
+          body: { audio: base64Audio },
         }
-      };
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || 'Failed to process recording',
-        variant: "destructive",
+      );
+
+      if (transcriptError) {
+        toast({
+          title: "Error",
+          description: "Failed to transcribe audio",
+          variant: "destructive",
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      setTranscript(transcriptData.text);
+
+      const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
+        "analyze-response",
+        {
+          body: {
+            question: questions[currentQuestionIndex].question_text,
+            answer: transcriptData.text,
+            role: role,
+          },
+        }
+      );
+
+      if (feedbackError) {
+        toast({
+          title: "Error",
+          description: "Failed to analyze response",
+          variant: "destructive",
+        });
+        setIsProcessing(false);
+        return;
+      }
+
+      await supabase.from("interview_responses").insert({
+        session_id: sessionId,
+        question_id: questions[currentQuestionIndex].id,
+        transcript: transcriptData.text,
+        score: feedbackData.score,
+        strengths: feedbackData.strengths,
+        improvements: feedbackData.improvements,
       });
-    } finally {
+
+      toast({
+        title: "Response Analyzed",
+        description: `Score: ${feedbackData.score}/100`,
+      });
+
+      if (currentQuestionIndex < questions.length - 1) {
+        const nextIndex = currentQuestionIndex + 1;
+        setCurrentQuestionIndex(nextIndex);
+        setTranscript("");
+        playQuestion(questions[nextIndex].question_text);
+      } else {
+        completeSession();
+      }
+
       setIsProcessing(false);
-    }
+    };
   };
 
   const completeSession = async () => {
