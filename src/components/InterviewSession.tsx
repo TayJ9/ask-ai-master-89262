@@ -65,14 +65,14 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   });
 
   useEffect(() => {
-    if (!questionsLoading && questions.length > 0 && !sessionId) {
+    if (!questionsLoading && questions.length > 0 && !sessionId && !createSessionMutation.isPending) {
       createSessionMutation.mutate({
         userId,
         role,
         status: "in_progress",
       });
     }
-  }, [questionsLoading, questions, sessionId]);
+  }, [questionsLoading, questions.length, sessionId, createSessionMutation.isPending, userId, role]);
 
   const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
@@ -197,10 +197,15 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const currentQuestion = useMemo(() => questions[currentQuestionIndex], [questions, currentQuestionIndex]);
   const progress = useMemo(() => ((currentQuestionIndex + 1) / questions.length) * 100, [currentQuestionIndex, questions.length]);
 
-  if (questionsLoading || !questions.length) {
+  if (questionsLoading || !questions.length || createSessionMutation.isPending || (questions.length > 0 && !sessionId)) {
     return (
       <div className="min-h-screen flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" data-testid="loader-session" />
+          <p className="text-lg text-muted-foreground">
+            {questionsLoading ? "Loading questions..." : "Preparing your interview session..."}
+          </p>
+        </div>
       </div>
     );
   }
