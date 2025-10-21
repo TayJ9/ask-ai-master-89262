@@ -38,7 +38,13 @@ app.use((req, res, next) => {
 
 (async () => {
   registerRoutes(app);
-  await setupVite(app);
+  
+  // Use static file serving in production, Vite dev server in development
+  if (process.env.NODE_ENV === "production") {
+    serveStatic(app);
+  } else {
+    await setupVite(app);
+  }
 
   const PORT = 5000;
   app.listen(PORT, "0.0.0.0", () => {

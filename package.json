@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx watch --ignore 'vite.config.ts.timestamp-*' --ignore 'node_modules/**' --ignore 'dist/**' server/index.ts",
     "build": "vite build",
+    "start": "NODE_ENV=production tsx server/index.ts",
     "preview": "vite preview",
     "db:push": "drizzle-kit push"
   },
