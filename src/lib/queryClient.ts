@@ -25,11 +25,25 @@ const defaultQueryFn = async ({ queryKey }: { queryKey: any[] }) => {
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(queryKey[0] as string, {
-    headers,
-  });
-  
-  return handleResponse(response);
+  // Add timeout to prevent hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+  try {
+    const response = await fetch(queryKey[0] as string, {
+      headers,
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    return handleResponse(response);
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
+    throw error;
+  }
 };
 
 export const queryClient = new QueryClient({
@@ -54,11 +68,25 @@ export async function apiRequest(url: string, method: RequestMethod, body?: any)
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  
-  return handleResponse(response);
+  // Add timeout to prevent hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+  try {
+    const response = await fetch(url, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    return handleResponse(response);
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Request timed out. Please try again.');
+    }
+    throw error;
+  }
 }

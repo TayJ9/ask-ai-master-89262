@@ -68,27 +68,42 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         ? { email: email.trim().toLowerCase(), password }
         : { email: email.trim().toLowerCase(), password, fullName: fullName.trim() };
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
+      // Add timeout to prevent hanging
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
-      const data = await response.json();
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(data.error || 'Authentication failed');
-      }
+        clearTimeout(timeoutId);
 
-      if (isLogin) {
-        localStorage.setItem('auth_token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
-        toast({ title: "Welcome back!" });
-        onAuthSuccess(data.user, data.token);
-      } else {
-        toast({ title: "Account created! You can now sign in." });
-        setIsLogin(true);
-        setPassword("");
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Authentication failed');
+        }
+
+        if (isLogin) {
+          localStorage.setItem('auth_token', data.token);
+          localStorage.setItem('user', JSON.stringify(data.user));
+          toast({ title: "Welcome back!" });
+          onAuthSuccess(data.user, data.token);
+        } else {
+          toast({ title: "Account created! You can now sign in." });
+          setIsLogin(true);
+          setPassword("");
+        }
+      } catch (fetchError: any) {
+        clearTimeout(timeoutId);
+        if (fetchError.name === 'AbortError') {
+          throw new Error('Request timed out. Please check your connection and try again.');
+        }
+        throw fetchError;
       }
     } catch (error: any) {
       const sanitizedMessage = error.message?.replace(/[<>]/g, '') || 'An error occurred';
