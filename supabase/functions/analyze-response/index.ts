@@ -1,7 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': process.env.NODE_ENV === 'production' ? 'https://yourdomain.com' : '*',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Max-Age': '86400',
@@ -34,13 +34,10 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  // Security headers
-  const securityHeaders = {
+  // Basic headers
+  const responseHeaders = {
     ...corsHeaders,
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block',
-    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'Content-Type': 'application/json',
   };
 
   try {
@@ -49,7 +46,7 @@ serve(async (req) => {
     if (!checkRateLimit(clientIP)) {
       return new Response(
         JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
-        { status: 429, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 429, headers: responseHeaders }
       );
     }
 
@@ -57,7 +54,7 @@ serve(async (req) => {
     if (req.method !== 'POST') {
       return new Response(
         JSON.stringify({ error: 'Method not allowed' }),
-        { status: 405, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 405, headers: responseHeaders }
       );
     }
 
@@ -66,7 +63,7 @@ serve(async (req) => {
     if (!contentType || !contentType.includes('application/json')) {
       return new Response(
         JSON.stringify({ error: 'Content-Type must be application/json' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -76,7 +73,7 @@ serve(async (req) => {
     if (!question || typeof question !== 'string') {
       return new Response(
         JSON.stringify({ error: 'Invalid question input' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -85,14 +82,14 @@ serve(async (req) => {
     if (sanitizedQuestion.length === 0 || sanitizedQuestion.length > 1000) {
       return new Response(
         JSON.stringify({ error: 'Invalid question input' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
     if (!answer || typeof answer !== 'string') {
       return new Response(
         JSON.stringify({ error: 'Invalid answer input' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -101,7 +98,7 @@ serve(async (req) => {
     if (sanitizedAnswer.length === 0 || sanitizedAnswer.length > 5000) {
       return new Response(
         JSON.stringify({ error: 'Invalid answer input' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -109,7 +106,7 @@ serve(async (req) => {
     if (!role || typeof role !== 'string' || !allowedRoles.includes(role)) {
       return new Response(
         JSON.stringify({ error: 'Invalid role' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -172,7 +169,7 @@ Return only valid JSON with this exact structure:
 
     return new Response(
       JSON.stringify(feedback),
-      { headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+      { headers: responseHeaders }
     );
   } catch (error) {
     // Log error securely (don't expose internal details)
@@ -182,7 +179,7 @@ Return only valid JSON with this exact structure:
     
     return new Response(
       JSON.stringify({ error: sanitizedError }),
-      { status: 500, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: responseHeaders }
     );
   }
 });

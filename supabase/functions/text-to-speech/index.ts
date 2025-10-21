@@ -2,7 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
-  'Access-Control-Allow-Origin': process.env.NODE_ENV === 'production' ? 'https://yourdomain.com' : '*',
+  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Allow-Methods': 'POST, OPTIONS',
   'Access-Control-Max-Age': '86400',
@@ -35,13 +35,10 @@ serve(async (req) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
-  // Security headers
-  const securityHeaders = {
+  // Basic headers
+  const responseHeaders = {
     ...corsHeaders,
-    'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
-    'X-XSS-Protection': '1; mode=block',
-    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains',
+    'Content-Type': 'application/json',
   };
 
   try {
@@ -50,7 +47,7 @@ serve(async (req) => {
     if (!checkRateLimit(clientIP)) {
       return new Response(
         JSON.stringify({ error: 'Rate limit exceeded. Please try again later.' }),
-        { status: 429, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 429, headers: responseHeaders }
       );
     }
 
@@ -58,7 +55,7 @@ serve(async (req) => {
     if (req.method !== 'POST') {
       return new Response(
         JSON.stringify({ error: 'Method not allowed' }),
-        { status: 405, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 405, headers: responseHeaders }
       );
     }
 
@@ -67,7 +64,7 @@ serve(async (req) => {
     if (!contentType || !contentType.includes('application/json')) {
       return new Response(
         JSON.stringify({ error: 'Content-Type must be application/json' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -77,7 +74,7 @@ serve(async (req) => {
     if (!text || typeof text !== 'string') {
       return new Response(
         JSON.stringify({ error: 'Invalid text input' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -86,7 +83,7 @@ serve(async (req) => {
     if (sanitizedText.length === 0 || sanitizedText.length > 5000) {
       return new Response(
         JSON.stringify({ error: 'Text too long (max 5000 characters)' }),
-        { status: 400, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+        { status: 400, headers: responseHeaders }
       );
     }
 
@@ -118,7 +115,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({ audioContent: base64Audio }),
-      { headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+      { headers: responseHeaders }
     );
   } catch (error) {
     console.error('Text-to-speech error:', error);
@@ -127,7 +124,7 @@ serve(async (req) => {
     
     return new Response(
       JSON.stringify({ error: sanitizedError }),
-      { status: 500, headers: { ...securityHeaders, 'Content-Type': 'application/json' } }
+      { status: 500, headers: responseHeaders }
     );
   }
 });
