@@ -64,12 +64,12 @@ export function registerRoutes(app: Express) {
       
       const profile = await storage.getProfileByEmail(email.toLowerCase().trim());
       if (!profile || !profile.passwordHash) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ error: "No account found with this email address. Please sign up first." });
       }
 
       const validPassword = await bcrypt.compare(password, profile.passwordHash);
       if (!validPassword) {
-        return res.status(401).json({ error: "Invalid credentials" });
+        return res.status(401).json({ error: "Incorrect password. Please try again." });
       }
 
       const token = jwt.sign({ userId: profile.id }, JWT_SECRET, { expiresIn: '7d' });
