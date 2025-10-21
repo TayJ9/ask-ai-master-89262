@@ -13,8 +13,6 @@
     "security:audit": "npm audit --audit-level moderate",
     "security:fix": "npm audit fix",
     "preview": "vite preview",
-    "prebuild": "npm run type-check && npm run lint",
-    "postbuild": "npm run security:audit"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

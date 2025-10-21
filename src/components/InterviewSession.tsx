@@ -3,21 +3,42 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { useErrorHandler } from "@/hooks/use-error-handler";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2 } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { z } from "zod";
-import type { 
-  InterviewSessionProps, 
-  InterviewQuestion, 
-  AnalysisResponse,
-  SpeechToTextResponse,
-  TextToSpeechResponse,
-  InterviewRole 
-} from "@/types";
+// Type definitions for better type safety
+interface InterviewQuestion {
+  id: string;
+  role: string;
+  category: string;
+  difficulty: string;
+  question_text: string;
+  order_index: number;
+  created_at: string | null;
+}
+
+interface AnalysisResponse {
+  score: number;
+  strengths: string[];
+  improvements: string[];
+}
+
+interface SpeechToTextResponse {
+  text: string;
+}
+
+interface TextToSpeechResponse {
+  audioContent: string;
+}
 
 const roleSchema = z.enum(["software-engineer", "product-manager", "marketing"]);
 const questionTextSchema = z.string().min(1).max(1000);
+
+interface InterviewSessionProps {
+  role: string;
+  userId: string;
+  onComplete: () => void;
+}
 
 export default function InterviewSession({ role, userId, onComplete }: InterviewSessionProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -28,7 +49,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
   const [transcript, setTranscript] = useState("");
   const { toast } = useToast();
-  const { handleError } = useErrorHandler();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
