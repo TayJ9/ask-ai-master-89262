@@ -15,17 +15,4 @@ export default defineConfig(({ mode }) => ({
       "@": path.resolve(__dirname, "./src"),
     },
   },
-  build: {
-    // Security and performance optimizations
-    minify: 'esbuild',
-    sourcemap: mode === 'development',
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          supabase: ['@supabase/supabase-js'],
-        },
-      },
-    },
-  },
 }));
