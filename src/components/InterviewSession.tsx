@@ -35,15 +35,18 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     mutationFn: (data: { userId: string; role: string; status: string }) =>
       apiRequest('/api/sessions', 'POST', data),
     onSuccess: (data: IInterviewSession) => {
+      console.log('Session created successfully:', data.id);
       setSessionId(data.id);
       if (questions && questions.length > 0) {
+        console.log('Starting to play first question...');
         playQuestion(questions[0].questionText);
       }
     },
-    onError: () => {
+    onError: (error: any) => {
+      console.error('Failed to create session:', error);
       toast({
         title: "Error",
-        description: "Failed to create session",
+        description: error.message || "Failed to create session. Please try again.",
         variant: "destructive",
       });
     },
@@ -76,24 +79,31 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
   const playQuestion = useCallback(async (questionText: string) => {
     setIsPlayingQuestion(true);
+    console.log('Requesting text-to-speech for:', questionText.substring(0, 50) + '...');
     
     try {
       const data = await apiRequest('/api/ai/text-to-speech', 'POST', { text: questionText });
+      console.log('Text-to-speech response received');
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
-      audio.onended = () => setIsPlayingQuestion(false);
-      audio.onerror = () => {
+      audio.onended = () => {
+        console.log('Audio playback finished');
+        setIsPlayingQuestion(false);
+      };
+      audio.onerror = (e) => {
+        console.error('Audio playback error:', e);
         setIsPlayingQuestion(false);
         toast({
           title: "Audio Error",
-          description: "Failed to play audio",
+          description: "Failed to play audio. You can still record your answer.",
           variant: "destructive",
         });
       };
       await audio.play();
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Text-to-speech error:', error);
       toast({
         title: "Audio Error",
-        description: "Failed to play question",
+        description: error.message || "Failed to play question audio. You can still read and answer the question.",
         variant: "destructive",
       });
       setIsPlayingQuestion(false);
