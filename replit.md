@@ -54,10 +54,12 @@ Preferred communication style: Simple, everyday language.
 
 **API Design Pattern**
 - RESTful API endpoints under `/api` prefix
-- Authentication endpoints: `/api/auth/signup`, `/api/auth/login`
+- Authentication endpoints: `/api/auth/signup`, `/api/auth/signin`, `/api/auth/me`
 - Resource endpoints for sessions, questions, and responses
+- AI proxy endpoints: `/api/ai/text-to-speech`, `/api/ai/speech-to-text`, `/api/ai/analyze-response`
 - Centralized error handling with proper HTTP status codes
 - Request/response logging for API debugging
+- Field-level validation on PATCH operations to prevent unauthorized updates
 
 ### Data Storage
 
@@ -86,7 +88,8 @@ Preferred communication style: Simple, everyday language.
 
 **Third-Party Services**
 - Neon Database: Serverless PostgreSQL hosting
-- Browser APIs: MediaRecorder for audio capture, Web Speech API potential for voice processing
+- Lovable AI API: Text-to-speech (TTS-1 with alloy voice), speech-to-text (Whisper-1), and interview response analysis (GPT-5-mini)
+- Browser APIs: MediaRecorder for audio capture and voice recording
 
 **Key NPM Packages**
 - Authentication: bcryptjs, jsonwebtoken
