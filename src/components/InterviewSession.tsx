@@ -55,8 +55,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
   const initializeSession = useCallback(async () => {
     try {
-      console.log('Initializing session for role:', role, 'user:', userId);
-      
       // Validate role input
       const validatedRole = roleSchema.safeParse(role);
       if (!validatedRole.success) {
@@ -70,7 +68,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       }
 
       // Create session
-      console.log('Creating interview session...');
       const { data: session, error: sessionError } = await supabase
         .from("interview_sessions")
         .insert({
@@ -81,37 +78,24 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
         .select()
         .single();
 
-      if (sessionError) {
-        console.error('Session creation error:', sessionError);
-        throw sessionError;
-      }
-      
-      console.log('Session created:', session.id);
+      if (sessionError) throw sessionError;
       setSessionId(session.id);
 
       // Fetch questions
-      console.log('Fetching questions for role:', role);
       const { data: questionsData, error: questionsError } = await supabase
         .from("interview_questions")
         .select("*")
         .eq("role", role)
         .order("order_index");
 
-      if (questionsError) {
-        console.error('Questions fetch error:', questionsError);
-        throw questionsError;
-      }
-      
-      console.log('Questions fetched:', questionsData?.length);
+      if (questionsError) throw questionsError;
       setQuestions(questionsData || []);
 
       // Play first question
       if (questionsData && questionsData.length > 0) {
-        console.log('Playing first question:', questionsData[0].question_text);
         playQuestion(questionsData[0].question_text);
       }
     } catch (error: any) {
-      console.error('Session initialization error:', error);
       toast({
         title: "Error",
         description: error.message?.replace(/[<>]/g, '') || 'Failed to initialize session',
@@ -163,52 +147,21 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
   const startRecording = async () => {
     try {
-      console.log('Starting recording...');
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 44100
-        } 
-      });
-      
-      // Check if MediaRecorder supports the format
-      const options = { mimeType: 'audio/webm;codecs=opus' };
-      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
-        console.warn('WebM not supported, falling back to default');
-      }
-      
-      const mediaRecorder = new MediaRecorder(stream, options);
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
 
       mediaRecorder.ondataavailable = (event) => {
-        console.log('Data available:', event.data.size, 'bytes');
         if (event.data.size > 0) {
           audioChunksRef.current.push(event.data);
         }
       };
 
-      mediaRecorder.onstop = () => {
-        console.log('Recording stopped, processing...');
-        handleRecordingStop();
-      };
-      
-      mediaRecorder.onerror = (event) => {
-        console.error('MediaRecorder error:', event);
-        toast({
-          title: "Recording Error",
-          description: "Failed to record audio",
-          variant: "destructive",
-        });
-        setIsRecording(false);
-      };
-
-      mediaRecorder.start(1000); // Collect data every second
+      mediaRecorder.onstop = handleRecordingStop;
+      mediaRecorder.start();
       setIsRecording(true);
-      console.log('Recording started successfully');
     } catch (error: any) {
-      console.error('Recording start error:', error);
       toast({
         title: "Microphone Error",
         description: "Could not access microphone",
@@ -218,157 +171,80 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   };
 
   const stopRecording = () => {
-    console.log('Stopping recording...');
     if (mediaRecorderRef.current && isRecording) {
-      try {
-        mediaRecorderRef.current.stop();
-        setIsRecording(false);
-        console.log('Recording stopped successfully');
-      } catch (error) {
-        console.error('Error stopping recording:', error);
-        toast({
-          title: "Error",
-          description: "Failed to stop recording",
-          variant: "destructive",
-        });
-        setIsRecording(false);
-      }
-    } else {
-      console.warn('No active recording to stop');
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
     }
   };
 
   const handleRecordingStop = async () => {
     setIsProcessing(true);
-    
+    const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+
     try {
-      console.log('Processing audio...', audioChunksRef.current.length, 'chunks');
-      
-      if (audioChunksRef.current.length === 0) {
-        throw new Error('No audio data recorded');
-      }
-      
-      const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-      console.log('Audio blob created:', audioBlob.size, 'bytes');
-      
-      if (audioBlob.size === 0) {
-        throw new Error('Empty audio recording');
-      }
-      
       // Convert to base64
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
-      
       reader.onloadend = async () => {
-        try {
-          const base64Audio = reader.result?.toString().split(",")[1];
-          console.log('Audio converted to base64, length:', base64Audio?.length);
+        const base64Audio = reader.result?.toString().split(",")[1];
 
-          if (!base64Audio) {
-            throw new Error('Failed to convert audio to base64');
+        // Transcribe
+        const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke(
+          "speech-to-text",
+          {
+            body: { audio: base64Audio },
           }
+        );
 
-          // Transcribe
-          console.log('Calling speech-to-text function...');
-          const { data: transcriptData, error: transcriptError } = await supabase.functions.invoke(
-            "speech-to-text",
-            {
-              body: { audio: base64Audio },
-            }
-          );
+        if (transcriptError) throw transcriptError;
+        setTranscript(transcriptData.text);
 
-          if (transcriptError) {
-            console.error('Speech-to-text error:', transcriptError);
-            throw transcriptError;
+        // Analyze response
+        const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
+          "analyze-response",
+          {
+            body: {
+              question: questions[currentQuestionIndex].question_text,
+              answer: transcriptData.text,
+              role: role,
+            },
           }
-          
-          console.log('Transcript received:', transcriptData);
-          
-          if (!transcriptData?.text) {
-            throw new Error('No transcript received');
-          }
-          
-          setTranscript(transcriptData.text);
+        );
 
-          // Analyze response
-          console.log('Calling analyze-response function...');
-          const { data: feedbackData, error: feedbackError } = await supabase.functions.invoke(
-            "analyze-response",
-            {
-              body: {
-                question: questions[currentQuestionIndex].question_text,
-                answer: transcriptData.text,
-                role: role,
-              },
-            }
-          );
+        if (feedbackError) throw feedbackError;
 
-          if (feedbackError) {
-            console.error('Analyze response error:', feedbackError);
-            throw feedbackError;
-          }
+        // Save response
+        await supabase.from("interview_responses").insert({
+          session_id: sessionId,
+          question_id: questions[currentQuestionIndex].id,
+          transcript: transcriptData.text,
+          score: feedbackData.score,
+          strengths: feedbackData.strengths,
+          improvements: feedbackData.improvements,
+        });
 
-          console.log('Feedback received:', feedbackData);
+        toast({
+          title: "Response Analyzed",
+          description: `Score: ${feedbackData.score}/100`,
+        });
 
-          // Save response
-          console.log('Saving response to database...');
-          const { error: saveError } = await supabase.from("interview_responses").insert({
-            session_id: sessionId,
-            question_id: questions[currentQuestionIndex].id,
-            transcript: transcriptData.text,
-            score: feedbackData.score,
-            strengths: feedbackData.strengths,
-            improvements: feedbackData.improvements,
-          });
-
-          if (saveError) {
-            console.error('Database save error:', saveError);
-            throw saveError;
-          }
-
-          toast({
-            title: "Response Analyzed",
-            description: `Score: ${feedbackData.score}/100`,
-          });
-
-          // Move to next question or complete
-          if (currentQuestionIndex < questions.length - 1) {
-            const nextIndex = currentQuestionIndex + 1;
-            setCurrentQuestionIndex(nextIndex);
-            setTranscript("");
-            playQuestion(questions[nextIndex].question_text);
-          } else {
-            completeSession();
-          }
-        } catch (error: any) {
-          console.error('Processing error:', error);
-          toast({
-            title: "Processing Error",
-            description: error.message || 'Failed to process recording',
-            variant: "destructive",
-          });
-        } finally {
-          setIsProcessing(false);
+        // Move to next question or complete
+        if (currentQuestionIndex < questions.length - 1) {
+          const nextIndex = currentQuestionIndex + 1;
+          setCurrentQuestionIndex(nextIndex);
+          setTranscript("");
+          playQuestion(questions[nextIndex].question_text);
+        } else {
+          completeSession();
         }
       };
-      
-      reader.onerror = () => {
-        console.error('FileReader error');
-        toast({
-          title: "Error",
-          description: "Failed to read audio file",
-          variant: "destructive",
-        });
-        setIsProcessing(false);
-      };
-      
     } catch (error: any) {
-      console.error('Recording stop error:', error);
       toast({
         title: "Error",
         description: error.message || 'Failed to process recording',
         variant: "destructive",
       });
+    } finally {
       setIsProcessing(false);
     }
   };
