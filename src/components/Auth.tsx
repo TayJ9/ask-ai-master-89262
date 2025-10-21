@@ -29,19 +29,19 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
 
   const validateEmail = useCallback((value: string) => {
     const result = emailSchema.safeParse(value);
-    setEmailError(result.success ? "" : result.error.errors[0].message);
+    setEmailError(result.success ? "" : result.error.issues[0].message);
     return result.success;
   }, []);
 
   const validatePassword = useCallback((value: string) => {
     const result = passwordSchema.safeParse(value);
-    setPasswordError(result.success ? "" : result.error.errors[0].message);
+    setPasswordError(result.success ? "" : result.error.issues[0].message);
     return result.success;
   }, []);
 
   const validateName = useCallback((value: string) => {
     const result = nameSchema.safeParse(value);
-    setNameError(result.success ? "" : result.error.errors[0].message);
+    setNameError(result.success ? "" : result.error.issues[0].message);
     return result.success;
   }, []);
 
