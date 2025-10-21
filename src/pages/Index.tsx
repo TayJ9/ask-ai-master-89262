@@ -32,8 +32,12 @@ export default function Index() {
   };
 
   const handleSelectRole = (role: string) => {
+    console.log('=== HANDLE SELECT ROLE CALLED ===');
+    console.log('Role:', role);
+    console.log('User ID:', user?.id);
     setSelectedRole(role);
     setCurrentView("interview");
+    console.log('View changed to interview, role set to:', role);
   };
 
   const handleCompleteInterview = () => {

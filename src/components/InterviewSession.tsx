@@ -15,6 +15,10 @@ interface InterviewSessionProps {
 }
 
 export default function InterviewSession({ role, userId, onComplete }: InterviewSessionProps) {
+  console.log('=== INTERVIEW SESSION COMPONENT RENDERED ===');
+  console.log('Role:', role);
+  console.log('User ID:', userId);
+  
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
@@ -30,6 +34,9 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
     queryKey: [`/api/questions/${role}`],
     enabled: !!role,
   });
+
+  console.log('Questions loading:', questionsLoading);
+  console.log('Questions loaded:', questions.length);
 
   const createSessionMutation = useMutation({
     mutationFn: (data: { userId: string; role: string; status: string }) =>
