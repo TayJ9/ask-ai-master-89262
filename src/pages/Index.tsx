@@ -20,7 +20,6 @@ export default function Index() {
   }, []);
 
   const handleAuthSuccess = (userData: any, token: string) => {
-    console.log('handleAuthSuccess called with user:', userData);
     setUser(userData);
   };
 
