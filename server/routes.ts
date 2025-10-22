@@ -158,7 +158,7 @@ export function registerRoutes(app: Express) {
         status: z.string().optional(),
         overallScore: z.number().optional(),
         feedbackSummary: z.string().optional(),
-        completedAt: z.date().optional(),
+        completedAt: z.coerce.date().optional(),
       });
 
       const validatedData = allowedFields.parse(req.body);
