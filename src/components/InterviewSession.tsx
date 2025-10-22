@@ -82,7 +82,9 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
       const data = await apiRequest('/api/ai/text-to-speech', 'POST', { text: questionText });
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
       audio.onended = () => {
-        setIsPlayingQuestion(false);
+        setTimeout(() => {
+          setIsPlayingQuestion(false);
+        }, 800);
       };
       audio.onerror = () => {
         setIsPlayingQuestion(false);
