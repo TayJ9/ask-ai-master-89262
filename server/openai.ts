@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 
 // This integration uses OpenAI's API, which points to OpenAI's API servers and requires your own API key.
 // The newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
@@ -16,10 +16,8 @@ export async function textToSpeech(text: string): Promise<Buffer> {
 }
 
 export async function speechToText(audioBuffer: Buffer): Promise<string> {
-  const file = new File([audioBuffer], "audio.webm", { type: "audio/webm" });
-  
   const transcription = await openai.audio.transcriptions.create({
-    file: file,
+    file: await toFile(audioBuffer, "audio.webm", { type: "audio/webm" }),
     model: "whisper-1",
   });
 
