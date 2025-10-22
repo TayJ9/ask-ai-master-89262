@@ -4,6 +4,7 @@ import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewRespo
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
+import { textToSpeech, speechToText, analyzeInterviewResponse } from "./openai";
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
   if (process.env.NODE_ENV === 'production') {
@@ -203,7 +204,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // AI endpoints (proxying to Lovable AI)
+  // AI endpoints (using OpenAI)
   app.post("/api/ai/text-to-speech", authenticateToken, async (req: any, res) => {
     try {
       const { text } = req.body;
@@ -212,30 +213,8 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'No text provided' });
       }
 
-      const lovableApiKey = process.env.LOVABLE_API_KEY;
-      if (!lovableApiKey) {
-        throw new Error('LOVABLE_API_KEY not configured');
-      }
-
-      const response = await fetch('https://api.lovable.app/v1/audio/speech', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'tts-1',
-          input: text,
-          voice: 'alloy',
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Text-to-speech failed: ${response.statusText}`);
-      }
-
-      const audioBuffer = await response.arrayBuffer();
-      const base64Audio = Buffer.from(audioBuffer).toString('base64');
+      const audioBuffer = await textToSpeech(text);
+      const base64Audio = audioBuffer.toString('base64');
 
       res.json({ audioContent: base64Audio });
     } catch (error: any) {
@@ -255,34 +234,10 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'No audio provided' });
       }
 
-      const lovableApiKey = process.env.LOVABLE_API_KEY;
-      if (!lovableApiKey) {
-        throw new Error('LOVABLE_API_KEY not configured');
-      }
+      const audioBuffer = Buffer.from(audio, 'base64');
+      const text = await speechToText(audioBuffer);
 
-      const audioData = Buffer.from(audio, 'base64');
-      const FormData = (await import('formdata-node')).FormData;
-      const { Blob } = await import('buffer');
-
-      const formData = new FormData();
-      const audioBlob = new Blob([audioData], { type: 'audio/webm' });
-      formData.append('file', audioBlob, 'audio.webm');
-      formData.append('model', 'whisper-1');
-
-      const response = await fetch('https://api.lovable.app/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-        },
-        body: formData as any,
-      });
-
-      if (!response.ok) {
-        throw new Error(`Speech-to-text failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      res.json({ text: result.text });
+      res.json({ text });
     } catch (error: any) {
       console.error("Speech-to-text error:", error);
       res.status(500).json({ 
@@ -300,60 +255,7 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'Missing required fields' });
       }
 
-      const lovableApiKey = process.env.LOVABLE_API_KEY;
-      if (!lovableApiKey) {
-        throw new Error('LOVABLE_API_KEY not configured');
-      }
-
-      const prompt = `You are an expert interview coach. Analyze this ${role} interview response.
-
-Question: ${question}
-
-Candidate's Answer: ${answer}
-
-Provide a detailed analysis in JSON format with:
-1. score (0-100): Overall quality of the response
-2. strengths (array of strings): 2-3 specific positive aspects
-3. improvements (array of strings): 2-3 concrete suggestions for improvement
-
-Focus on: clarity, technical accuracy (if applicable), structure, communication skills, and role-specific competencies.
-
-Return only valid JSON with this exact structure:
-{
-  "score": number,
-  "strengths": ["strength 1", "strength 2"],
-  "improvements": ["improvement 1", "improvement 2"]
-}`;
-
-      const response = await fetch('https://api.lovable.app/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${lovableApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'openai/gpt-5-mini',
-          messages: [
-            { role: 'user', content: prompt }
-          ],
-          temperature: 0.7,
-          max_tokens: 1000,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`AI analysis failed: ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      const content = result.choices[0].message.content;
-      
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) {
-        throw new Error('Failed to parse AI response');
-      }
-
-      const feedback = JSON.parse(jsonMatch[0]);
+      const feedback = await analyzeInterviewResponse(question, answer, role);
       res.json(feedback);
     } catch (error: any) {
       console.error("Analysis error:", error);
