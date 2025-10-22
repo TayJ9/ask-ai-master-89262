@@ -213,12 +213,21 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'No text provided' });
       }
 
+      if (!process.env.OPENAI_API_KEY) {
+        console.error('OPENAI_API_KEY is missing in environment');
+        return res.status(500).json({ 
+          error: 'Text-to-speech failed', 
+          details: 'OPENAI_API_KEY not configured in production'
+        });
+      }
+
       const audioBuffer = await textToSpeech(text);
       const base64Audio = audioBuffer.toString('base64');
 
       res.json({ audioContent: base64Audio });
     } catch (error: any) {
       console.error("Text-to-speech error:", error);
+      console.error("Error stack:", error.stack);
       res.status(500).json({ 
         error: 'Text-to-speech failed', 
         details: error.message || String(error)

@@ -2,6 +2,12 @@ import OpenAI, { toFile } from "openai";
 
 // This integration uses OpenAI's API, which points to OpenAI's API servers and requires your own API key.
 // The newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error('CRITICAL ERROR: OPENAI_API_KEY environment variable is not set!');
+  console.error('Available env vars:', Object.keys(process.env).filter(k => !k.includes('SECRET')));
+}
+
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 export async function textToSpeech(text: string): Promise<Buffer> {
