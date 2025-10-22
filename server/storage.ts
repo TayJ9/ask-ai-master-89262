@@ -1,4 +1,4 @@
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, sql } from "drizzle-orm";
 import { db } from "./db";
 import { 
   profiles, 
@@ -54,10 +54,15 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getQuestionsByRole(role: string): Promise<InterviewQuestion[]> {
-    return await db.query.interviewQuestions.findMany({
-      where: eq(interviewQuestions.role, role),
-      orderBy: [interviewQuestions.orderIndex],
-    });
+    // Return 5 random questions for variety
+    const result = await db
+      .select()
+      .from(interviewQuestions)
+      .where(eq(interviewQuestions.role, role))
+      .orderBy(sql`RANDOM()`)
+      .limit(5);
+    
+    return result;
   }
 
   async createSession(data: InsertInterviewSession): Promise<InterviewSession> {
