@@ -238,9 +238,12 @@ export function registerRoutes(app: Express) {
       const base64Audio = Buffer.from(audioBuffer).toString('base64');
 
       res.json({ audioContent: base64Audio });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Text-to-speech error:", error);
-      res.status(500).json({ error: 'Text-to-speech failed' });
+      res.status(500).json({ 
+        error: 'Text-to-speech failed', 
+        details: error.message || String(error)
+      });
     }
   });
 
@@ -280,9 +283,12 @@ export function registerRoutes(app: Express) {
 
       const result = await response.json();
       res.json({ text: result.text });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Speech-to-text error:", error);
-      res.status(500).json({ error: 'Speech-to-text failed' });
+      res.status(500).json({ 
+        error: 'Speech-to-text failed',
+        details: error.message || String(error)
+      });
     }
   });
 
@@ -349,9 +355,12 @@ Return only valid JSON with this exact structure:
 
       const feedback = JSON.parse(jsonMatch[0]);
       res.json(feedback);
-    } catch (error) {
+    } catch (error: any) {
       console.error("Analysis error:", error);
-      res.status(500).json({ error: 'Analysis failed' });
+      res.status(500).json({ 
+        error: 'Analysis failed',
+        details: error.message || String(error)
+      });
     }
   });
 }
