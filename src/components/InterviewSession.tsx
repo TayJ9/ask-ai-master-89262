@@ -21,6 +21,7 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const [isProcessing, setIsProcessing] = useState(false);
   const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
   const [transcript, setTranscript] = useState("");
+  const [feedback, setFeedback] = useState<{ score: number; strengths: string[]; improvements: string[] } | null>(null);
   const { toast } = useToast();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -152,6 +153,8 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           role: role,
         });
 
+        setFeedback(feedbackData);
+
         await createResponseMutation.mutateAsync({
           sessionId: sessionId,
           questionId: questions[currentQuestionIndex].id,
@@ -165,15 +168,6 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           title: "Response Analyzed",
           description: `Score: ${feedbackData.score}/100`,
         });
-
-        if (currentQuestionIndex < questions.length - 1) {
-          const nextIndex = currentQuestionIndex + 1;
-          setCurrentQuestionIndex(nextIndex);
-          setTranscript("");
-          playQuestion(questions[nextIndex].questionText);
-        } else {
-          completeSession();
-        }
       } catch (error) {
         toast({
           title: "Error",
@@ -271,6 +265,59 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
               <div className="p-4 bg-muted rounded-lg">
                 <p className="text-sm font-medium mb-2">Your Response:</p>
                 <p className="text-sm text-muted-foreground" data-testid="text-transcript">{transcript}</p>
+              </div>
+            )}
+
+            {feedback && (
+              <div className="space-y-4 animate-scale-in">
+                <div className="flex items-center justify-between p-4 bg-primary/10 rounded-lg">
+                  <span className="text-lg font-semibold">Your Score:</span>
+                  <span className="text-3xl font-bold text-primary" data-testid="text-score">{feedback.score}/100</span>
+                </div>
+
+                {feedback.strengths.length > 0 && (
+                  <div className="p-4 bg-green-50 dark:bg-green-900/20 rounded-lg border border-green-200 dark:border-green-800">
+                    <p className="font-semibold text-green-900 dark:text-green-100 mb-2">✓ Strengths:</p>
+                    <ul className="space-y-1">
+                      {feedback.strengths.map((strength, idx) => (
+                        <li key={idx} className="text-sm text-green-800 dark:text-green-200" data-testid={`text-strength-${idx}`}>
+                          • {strength}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {feedback.improvements.length > 0 && (
+                  <div className="p-4 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                    <p className="font-semibold text-amber-900 dark:text-amber-100 mb-2">→ Areas to Improve:</p>
+                    <ul className="space-y-1">
+                      {feedback.improvements.map((improvement, idx) => (
+                        <li key={idx} className="text-sm text-amber-800 dark:text-amber-200" data-testid={`text-improvement-${idx}`}>
+                          • {improvement}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <Button
+                  onClick={() => {
+                    if (currentQuestionIndex < questions.length - 1) {
+                      const nextIndex = currentQuestionIndex + 1;
+                      setCurrentQuestionIndex(nextIndex);
+                      setTranscript("");
+                      setFeedback(null);
+                      playQuestion(questions[nextIndex].questionText);
+                    } else {
+                      completeSession();
+                    }
+                  }}
+                  className="w-full"
+                  data-testid="button-next-question"
+                >
+                  {currentQuestionIndex < questions.length - 1 ? "Next Question" : "Complete Interview"}
+                </Button>
               </div>
             )}
           </CardContent>
