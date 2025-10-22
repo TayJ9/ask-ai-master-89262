@@ -10,6 +10,10 @@ export default defineConfig({
       "@shared": path.resolve(__dirname, "./shared"),
     },
   },
+  server: {
+    host: '0.0.0.0',
+    allowedHosts: true,
+  },
   build: {
     outDir: "dist/public",
     emptyOutDir: true,
