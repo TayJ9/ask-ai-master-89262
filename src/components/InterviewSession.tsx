@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, Volume2, Loader2, Lightbulb, RefreshCw, AlertCircle, Clock, MoreVertical } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2, Lightbulb, RefreshCw, AlertCircle, Clock, MoreVertical, LogOut } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -28,6 +28,7 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   const [retryCount, setRetryCount] = useState(0);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const [showActionsMenu, setShowActionsMenu] = useState(false);
+  const [showSuccessAnimation, setShowSuccessAnimation] = useState(false);
   const { toast } = useToast();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -298,10 +299,61 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
     <div className="min-h-screen p-6 gradient-secondary">
       <div className="max-w-4xl mx-auto space-y-6 animate-scale-in">
         <div className="space-y-2">
-          <div className="flex justify-between items-center">
-            <span className="text-sm font-medium" data-testid="text-question-progress">
-              Question {currentQuestionIndex + 1} of {questions.length}
-            </span>
+          <div className="flex justify-between items-center gap-4">
+            <div className="flex-1">
+              <span className="text-sm font-medium" data-testid="text-question-progress">
+                Question {currentQuestionIndex + 1} of {questions.length}
+              </span>
+            </div>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="gap-2">
+                  <MoreVertical className="w-4 h-4" />
+                  Actions
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuItem 
+                  onClick={() => {
+                    setTranscript("");
+                    setFeedback(null);
+                    setError(null);
+                    playQuestion(questions[currentQuestionIndex].questionText);
+                  }}
+                  disabled={isProcessing || isRecording}
+                >
+                  <RefreshCw className="w-4 h-4 mr-2" />
+                  Restart Question
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    if (currentQuestionIndex < questions.length - 1) {
+                      const nextIndex = currentQuestionIndex + 1;
+                      setCurrentQuestionIndex(nextIndex);
+                      setTranscript("");
+                      setFeedback(null);
+                      setError(null);
+                      playQuestion(questions[nextIndex].questionText);
+                    }
+                  }}
+                  disabled={isProcessing || isRecording || currentQuestionIndex >= questions.length - 1}
+                >
+                  Skip Question
+                </DropdownMenuItem>
+                <DropdownMenuItem 
+                  onClick={() => {
+                    if (confirm("Are you sure you want to stop this interview? Your progress will be saved.")) {
+                      completeSession();
+                    }
+                  }}
+                  disabled={isRecording}
+                  className="text-red-600"
+                >
+                  <LogOut className="w-4 h-4 mr-2" />
+                  End Interview
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <span className="text-sm text-muted-foreground">{Math.round(progress)}%</span>
           </div>
           <Progress value={progress} className="h-2" />
