@@ -88,30 +88,6 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
     },
   });
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Only handle shortcuts when not typing in inputs
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      if (e.key === ' ') {
-        e.preventDefault();
-        if (!isProcessing && !isPlayingQuestion) {
-          if (isRecording) {
-            stopRecording();
-          } else {
-            startRecording();
-          }
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [isRecording, isProcessing, isPlayingQuestion, startRecording, stopRecording]);
-
   useEffect(() => {
     if (!questionsLoading && questions.length > 0 && !sessionId && !createSessionMutation.isPending) {
       createSessionMutation.mutate({
@@ -293,6 +269,29 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
     }
     onComplete();
   };
+
+  // Keyboard shortcuts - added after all functions are defined
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (!isProcessing && !isPlayingQuestion) {
+          if (isRecording) {
+            stopRecording();
+          } else {
+            startRecording();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isRecording, isProcessing, isPlayingQuestion]);
 
   const currentQuestion = useMemo(() => questions[currentQuestionIndex], [questions, currentQuestionIndex]);
   const progress = useMemo(() => ((currentQuestionIndex + 1) / questions.length) * 100, [currentQuestionIndex, questions.length]);
