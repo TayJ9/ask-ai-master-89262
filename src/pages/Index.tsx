@@ -11,6 +11,11 @@ export default function Index() {
   const [currentView, setCurrentView] = useState<"roles" | "interview" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
+  
+  // Debug logging
+  useEffect(() => {
+    console.log('Current view:', currentView, 'Selected role:', selectedRole, 'Difficulty:', selectedDifficulty);
+  }, [currentView, selectedRole, selectedDifficulty]);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -33,9 +38,11 @@ export default function Index() {
   };
 
   const handleSelectRole = (role: string, difficulty: string) => {
+    console.log('handleSelectRole called with:', role, difficulty);
     setSelectedRole(role);
     setSelectedDifficulty(difficulty);
     setCurrentView("interview");
+    console.log('View changed to interview');
   };
 
   const handleCompleteInterview = () => {
