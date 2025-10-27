@@ -276,11 +276,12 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // AI Coach endpoint
+  // AI Coach endpoint with enhanced validation
   app.post("/api/ai/coach", authenticateToken, async (req: any, res) => {
     try {
       const { message, role } = req.body;
 
+      // Validate message
       if (!message || typeof message !== 'string') {
         return res.status(400).json({ error: 'Message is required' });
       }
@@ -289,7 +290,18 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'Message is too long (max 500 characters)' });
       }
 
-      const coachResponse = await chatWithCoach(message, { role: role || 'general' });
+      if (message.trim().length === 0) {
+        return res.status(400).json({ error: 'Message cannot be empty' });
+      }
+
+      // Sanitize message - remove potentially harmful content
+      const sanitizedMessage = message.trim().substring(0, 500);
+
+      // Validate role
+      const validRoles = ['software-engineer', 'product-manager', 'marketing', 'general'];
+      const sanitizedRole = validRoles.includes(role) ? role : 'general';
+
+      const coachResponse = await chatWithCoach(sanitizedMessage, { role: sanitizedRole });
       
       res.json({ response: coachResponse });
     } catch (error: any) {
