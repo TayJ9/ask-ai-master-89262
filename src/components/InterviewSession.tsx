@@ -3,8 +3,9 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, Volume2, Loader2, Lightbulb, RefreshCw, AlertCircle } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2, Lightbulb, RefreshCw, AlertCircle, Clock, MoreVertical } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { InterviewQuestion, InterviewSession as IInterviewSession } from "@shared/schema";
 
@@ -25,6 +26,8 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   const [feedback, setFeedback] = useState<{ score: number; strengths: string[]; improvements: string[] } | null>(null);
   const [error, setError] = useState<{ message: string; type: 'processing' | 'recording' | 'general' } | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [showActionsMenu, setShowActionsMenu] = useState(false);
   const { toast } = useToast();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -68,6 +71,30 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
       queryClient.invalidateQueries({ queryKey: ['/api/sessions'] });
     },
   });
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Only handle shortcuts when not typing in inputs
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (!isProcessing && !isPlayingQuestion) {
+          if (isRecording) {
+            stopRecording();
+          } else {
+            startRecording();
+          }
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [isRecording, isProcessing, isPlayingQuestion, startRecording, stopRecording]);
 
   useEffect(() => {
     if (!questionsLoading && questions.length > 0 && !sessionId && !createSessionMutation.isPending) {
@@ -142,6 +169,7 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
       mediaRecorderRef.current.stop();
       mediaRecorderRef.current.stream.getTracks().forEach(track => track.stop());
       setIsRecording(false);
+      setRecordingDuration(0);
     }
   };
 
@@ -328,9 +356,15 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
                 ) : isProcessing ? (
                   <p className="text-lg font-medium text-muted-foreground" data-testid="text-status">Analyzing your response...</p>
                 ) : isRecording ? (
-                  <p className="text-lg font-medium text-primary" data-testid="text-status">Recording... Tap to stop</p>
+                  <div className="space-y-1">
+                    <p className="text-lg font-medium text-primary" data-testid="text-status">Recording... (Press Space to stop)</p>
+                    <div className="flex items-center justify-center gap-1 text-sm text-muted-foreground">
+                      <Clock className="w-4 h-4" />
+                      <span>{Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}</span>
+                    </div>
+                  </div>
                 ) : (
-                  <p className="text-lg font-medium text-muted-foreground" data-testid="text-status">Tap to start recording</p>
+                  <p className="text-lg font-medium text-muted-foreground" data-testid="text-status">Press Space to start recording</p>
                 )}
               </div>
             </div>
