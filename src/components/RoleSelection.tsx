@@ -35,7 +35,12 @@ interface RoleSelectionProps {
 export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   const [showCoach, setShowCoach] = useState(false);
   const [selectedRole, setSelectedRole] = useState<string>("");
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
+  // Track difficulty per role - using an object to store difficulty for each role
+  const [difficulties, setDifficulties] = useState<Record<string, string>>({
+    "software-engineer": "medium",
+    "product-manager": "medium",
+    "marketing": "medium",
+  });
 
   return (
     <div className="min-h-screen p-6 gradient-secondary">
@@ -74,9 +79,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                     <label className="text-sm font-medium">Difficulty Level</label>
                     <div className="grid grid-cols-3 gap-2">
                       <button
-                        onClick={() => setSelectedDifficulty("easy")}
+                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "easy" }))}
                         className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          selectedDifficulty === "easy"
+                          difficulties[role.id] === "easy"
                             ? "bg-primary text-primary-foreground font-semibold"
                             : "bg-muted hover:bg-muted/80"
                         }`}
@@ -84,9 +89,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                         Easy
                       </button>
                       <button
-                        onClick={() => setSelectedDifficulty("medium")}
+                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "medium" }))}
                         className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          selectedDifficulty === "medium"
+                          difficulties[role.id] === "medium"
                             ? "bg-primary text-primary-foreground font-semibold"
                             : "bg-muted hover:bg-muted/80"
                         }`}
@@ -94,9 +99,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                         Medium
                       </button>
                       <button
-                        onClick={() => setSelectedDifficulty("hard")}
+                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "hard" }))}
                         className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          selectedDifficulty === "hard"
+                          difficulties[role.id] === "hard"
                             ? "bg-primary text-primary-foreground font-semibold"
                             : "bg-muted hover:bg-muted/80"
                         }`}
@@ -106,7 +111,7 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                     </div>
                   </div>
                   <Button
-                    onClick={() => onSelectRole(role.id, selectedDifficulty)}
+                    onClick={() => onSelectRole(role.id, difficulties[role.id])}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
                   >

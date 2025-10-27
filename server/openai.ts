@@ -39,31 +39,68 @@ export async function analyzeInterviewResponse(
   strengths: string[];
   improvements: string[];
 }> {
-  const prompt = `You are an expert interview coach. Analyze this ${role} interview response.
+  const roleContext: Record<string, string> = {
+    'software-engineer': 'Software Engineering role focusing on technical skills, problem-solving, coding practices, system design, algorithms, and engineering best practices.',
+    'product-manager': 'Product Management role focusing on strategic thinking, prioritization, user research, cross-functional collaboration, and product vision.',
+    'marketing': 'Marketing role focusing on campaign strategy, analytics, creativity, customer understanding, ROI measurement, and brand positioning.'
+  };
+  
 
-Question: ${question}
+  const prompt = `You are an expert interview coach with 15 years of experience evaluating ${role} candidates. Your feedback should be specific, actionable, and constructive.
 
-Candidate's Answer: ${answer}
+CONTEXT:
+- Role: ${role}
+- Role Focus: ${roleContext[role] || 'Professional interview'}
 
-Provide a detailed analysis in JSON format with:
-1. score (0-100): Overall quality of the response
-2. strengths (array of strings): 2-3 specific positive aspects
-3. improvements (array of strings): 2-3 concrete suggestions for improvement
+QUESTION: ${question}
 
-Focus on: clarity, technical accuracy (if applicable), structure, communication skills, and role-specific competencies.
+CANDIDATE'S ANSWER: ${answer}
 
-Return only valid JSON with this exact structure:
+ANALYSIS REQUIRED:
+
+1. **Content Analysis**:
+   - Did they answer the question directly?
+   - Did they provide specific examples and concrete details?
+   - Is their answer relevant to the role and industry?
+   - Did they demonstrate role-specific knowledge or skills?
+
+2. **Communication Quality**:
+   - Is the answer clear and well-structured?
+   - Did they use appropriate professional language?
+   - Was the length appropriate (not too short/too long)?
+   - Did they sound confident and articulate?
+
+3. **Technical/Professional Depth** (role-dependent):
+   - Did they show expertise in key areas for this role?
+   - Did they use industry terminology appropriately?
+   - Did they demonstrate critical thinking?
+
+4. **Overall Scoring Guide**:
+   - 80-100: Excellent answer with specific examples, clear structure, role-relevant, professional tone
+   - 60-79: Good answer but could use more specifics, better structure, or more depth
+   - 40-59: Adequate answer but lacks specifics, unclear structure, or limited depth
+   - 0-39: Weak answer, vague, off-topic, or unprofessional
+
+Return JSON with this exact structure:
 {
-  "score": number,
-  "strengths": ["strength 1", "strength 2"],
-  "improvements": ["improvement 1", "improvement 2"]
-}`;
+  "score": number (0-100),
+  "strengths": ["specific strength with example", "specific strength with example"],
+  "improvements": ["actionable improvement with 'how to' guidance", "actionable improvement with 'how to' guidance"]
+}
+
+IMPORTANT GUIDELINES:
+- Strengths should reference SPECIFIC parts of their answer (e.g., "You provided a concrete example of X which demonstrates Y")
+- Improvements must be ACTIONABLE and specific (e.g., "Add a specific metric or outcome to strengthen your answer" NOT "Make it better")
+- Be encouraging and constructive - even for low scores
+- Ensure strengths and improvements are balanced (neither overly harsh nor overly generous)`;
 
   // Using gpt-4o for reliable analysis
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
+    temperature: 0.7, // Balanced: not too robotic, but consistent
+    max_tokens: 800, // More tokens for detailed feedback
   });
 
   const result = JSON.parse(response.choices[0].message.content);
