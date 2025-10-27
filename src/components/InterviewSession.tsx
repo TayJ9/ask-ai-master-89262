@@ -34,6 +34,21 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const lastFailedRequestRef = useRef<{ question: string; transcript: string } | null>(null);
+  
+  // Auto-save: Save progress to localStorage
+  useEffect(() => {
+    const sessionData = {
+      sessionId,
+      currentQuestionIndex,
+      transcript,
+      feedback,
+      role,
+      difficulty,
+      userId,
+      timestamp: Date.now()
+    };
+    localStorage.setItem(`interview_progress_${role}_${userId}`, JSON.stringify(sessionData));
+  }, [sessionId, currentQuestionIndex, transcript, feedback, role, difficulty, userId]);
 
   const { data: questions = [], isLoading: questionsLoading } = useQuery<InterviewQuestion[]>({
     queryKey: [`/api/questions/${role}?difficulty=${difficulty}`],
