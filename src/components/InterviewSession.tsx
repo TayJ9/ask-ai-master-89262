@@ -3,18 +3,19 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, Volume2, Loader2 } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2, Lightbulb } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { InterviewQuestion, InterviewSession as IInterviewSession } from "@shared/schema";
 
 interface InterviewSessionProps {
   role: string;
+  difficulty: string;
   userId: string;
   onComplete: () => void;
 }
 
-export default function InterviewSession({ role, userId, onComplete }: InterviewSessionProps) {
+export default function InterviewSession({ role, difficulty, userId, onComplete }: InterviewSessionProps) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
@@ -28,7 +29,7 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   const audioChunksRef = useRef<Blob[]>([]);
 
   const { data: questions = [], isLoading: questionsLoading } = useQuery<InterviewQuestion[]>({
-    queryKey: [`/api/questions/${role}`],
+    queryKey: [`/api/questions/${role}?difficulty=${difficulty}`],
     enabled: !!role,
   });
 
@@ -76,34 +77,39 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
   }, [questionsLoading, questions.length, sessionId, createSessionMutation.isPending, userId, role]);
 
   const playQuestion = useCallback(async (questionText: string) => {
-    setIsPlayingQuestion(true);
-    
+    // Don't show loading immediately - start audio generation in background
     try {
       const data = await apiRequest('/api/ai/text-to-speech', 'POST', { text: questionText });
       const audio = new Audio(`data:audio/mp3;base64,${data.audioContent}`);
+      
+      // Only show playing state when audio actually starts
+      audio.onplay = () => {
+        setIsPlayingQuestion(true);
+      };
+      
       audio.onended = () => {
         setTimeout(() => {
           setIsPlayingQuestion(false);
-        }, 800);
+        }, 400);
       };
+      
       audio.onerror = () => {
         setIsPlayingQuestion(false);
-        toast({
-          title: "Audio Error",
-          description: "Failed to play audio. You can still record your answer.",
-          variant: "destructive",
-        });
+        // Silent error - user can still read and record
       };
-      await audio.play();
+      
+      // Try to play - handle autoplay restrictions
+      const playPromise = audio.play();
+      if (playPromise !== undefined) {
+        playPromise.catch(() => {
+          setIsPlayingQuestion(false);
+        });
+      }
     } catch (error: any) {
-      toast({
-        title: "Audio Error",
-        description: error.message || "Failed to play question audio. You can still read and answer the question.",
-        variant: "destructive",
-      });
+      // Silent error - user can still read question
       setIsPlayingQuestion(false);
     }
-  }, [toast]);
+  }, []);
 
   const startRecording = async () => {
     try {
@@ -170,10 +176,11 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
           title: "Response Analyzed",
           description: `Score: ${feedbackData.score}/100`,
         });
-      } catch (error) {
+      } catch (error: any) {
+        console.error('Response processing error:', error);
         toast({
           title: "Error",
-          description: "Failed to process response",
+          description: error.message || "Failed to process response. Please try recording again.",
           variant: "destructive",
         });
       } finally {
@@ -223,10 +230,24 @@ export default function InterviewSession({ role, userId, onComplete }: Interview
 
         <Card className="shadow-xl">
           <CardContent className="p-8 space-y-6">
-            <div className="space-y-3">
+            <div className="space-y-4">
               <div className="flex items-start gap-3">
                 <Volume2 className="w-6 h-6 text-primary mt-1 flex-shrink-0" />
                 <p className="text-2xl font-medium leading-relaxed" data-testid="text-current-question">{currentQuestion.questionText}</p>
+              </div>
+              
+              {/* Quick Tips */}
+              <div className="flex items-start gap-2 p-3 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800">
+                <Lightbulb className="w-4 h-4 text-amber-600 dark:text-amber-400 mt-0.5 flex-shrink-0" />
+                <p className="text-sm text-amber-900 dark:text-amber-100">
+                  <span className="font-semibold">Quick Tip:</span>{" "}
+                  {currentQuestionIndex === 0 
+                    ? "Aim for 30-60 second answers. Keep it concise and structured!"
+                    : currentQuestionIndex === 1
+                    ? "Use the STAR method (Situation, Task, Action, Result) to structure your answer."
+                    : "Show enthusiasm! Smile and speak confidently, even though you're practicing."
+                  }
+                </p>
               </div>
             </div>
 

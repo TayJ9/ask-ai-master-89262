@@ -53,12 +53,16 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async getQuestionsByRole(role: string): Promise<InterviewQuestion[]> {
-    // Return 5 random questions for variety
+  async getQuestionsByRole(role: string, difficulty?: string): Promise<InterviewQuestion[]> {
+    // If difficulty specified, filter by it; otherwise return any difficulty
+    const conditions = difficulty 
+      ? and(eq(interviewQuestions.role, role), eq(interviewQuestions.difficulty, difficulty))
+      : eq(interviewQuestions.role, role);
+    
     const result = await db
       .select()
       .from(interviewQuestions)
-      .where(eq(interviewQuestions.role, role))
+      .where(conditions)
       .orderBy(sql`RANDOM()`)
       .limit(5);
     

@@ -10,6 +10,7 @@ export default function Index() {
   const [user, setUser] = useState<any>(null);
   const [currentView, setCurrentView] = useState<"roles" | "interview" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
+  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -31,8 +32,9 @@ export default function Index() {
     setSelectedRole("");
   };
 
-  const handleSelectRole = (role: string) => {
+  const handleSelectRole = (role: string, difficulty: string) => {
     setSelectedRole(role);
+    setSelectedDifficulty(difficulty);
     setCurrentView("interview");
   };
 
@@ -77,6 +79,7 @@ export default function Index() {
       {currentView === "interview" && (
         <InterviewSession
           role={selectedRole}
+          difficulty={selectedDifficulty}
           userId={user.id}
           onComplete={handleCompleteInterview}
         />

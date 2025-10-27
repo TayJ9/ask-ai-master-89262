@@ -1,6 +1,8 @@
+import { useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, Package, TrendingUp, ArrowRight } from "lucide-react";
+import { Briefcase, Package, TrendingUp, ArrowRight, Bot } from "lucide-react";
+import AICoach from "@/components/AICoach";
 
 const roles = [
   {
@@ -27,10 +29,14 @@ const roles = [
 ];
 
 interface RoleSelectionProps {
-  onSelectRole: (role: string) => void;
+  onSelectRole: (role: string, difficulty: string) => void;
 }
 
 export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
+  const [showCoach, setShowCoach] = useState(false);
+  const [selectedRole, setSelectedRole] = useState<string>("");
+  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
+
   return (
     <div className="min-h-screen p-6 gradient-secondary">
       <div className="max-w-6xl mx-auto space-y-8 animate-scale-in">
@@ -63,20 +69,73 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                     </CardDescription>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Difficulty Level</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        onClick={() => setSelectedDifficulty("easy")}
+                        className={`px-3 py-2 rounded-md text-sm transition-all ${
+                          selectedDifficulty === "easy"
+                            ? "bg-primary text-primary-foreground font-semibold"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        Easy
+                      </button>
+                      <button
+                        onClick={() => setSelectedDifficulty("medium")}
+                        className={`px-3 py-2 rounded-md text-sm transition-all ${
+                          selectedDifficulty === "medium"
+                            ? "bg-primary text-primary-foreground font-semibold"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        Medium
+                      </button>
+                      <button
+                        onClick={() => setSelectedDifficulty("hard")}
+                        className={`px-3 py-2 rounded-md text-sm transition-all ${
+                          selectedDifficulty === "hard"
+                            ? "bg-primary text-primary-foreground font-semibold"
+                            : "bg-muted hover:bg-muted/80"
+                        }`}
+                      >
+                        Hard
+                      </button>
+                    </div>
+                  </div>
                   <Button
-                    onClick={() => onSelectRole(role.id)}
+                    onClick={() => onSelectRole(role.id, selectedDifficulty)}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
                   >
                     Start Practice
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
+                  <Button
+                    onClick={() => {
+                      setSelectedRole(role.id);
+                      setShowCoach(true);
+                    }}
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <Bot className="w-4 h-4 mr-2" />
+                    Ask Coach
+                  </Button>
                 </CardContent>
               </Card>
             );
           })}
         </div>
+
+        {/* AI Coach */}
+        {showCoach && (
+          <div className="mt-8">
+            <AICoach role={selectedRole} />
+          </div>
+        )}
       </div>
     </div>
   );

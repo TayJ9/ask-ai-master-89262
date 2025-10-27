@@ -4,7 +4,7 @@ import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewRespo
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { textToSpeech, speechToText, analyzeInterviewResponse } from "./openai";
+import { textToSpeech, speechToText, analyzeInterviewResponse, chatWithCoach } from "./openai";
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
   if (process.env.NODE_ENV === 'production') {
@@ -111,7 +111,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/questions/:role", authenticateToken, async (req: any, res) => {
     try {
       const { role } = req.params;
-      const questions = await storage.getQuestionsByRole(role);
+      const difficulty = req.query.difficulty || 'medium';
+      const questions = await storage.getQuestionsByRole(role, difficulty);
       res.json(questions);
     } catch (error) {
       console.error("Get questions error:", error);
@@ -270,6 +271,31 @@ export function registerRoutes(app: Express) {
       console.error("Analysis error:", error);
       res.status(500).json({ 
         error: 'Analysis failed',
+        details: error.message || String(error)
+      });
+    }
+  });
+
+  // AI Coach endpoint
+  app.post("/api/ai/coach", authenticateToken, async (req: any, res) => {
+    try {
+      const { message, role } = req.body;
+
+      if (!message || typeof message !== 'string') {
+        return res.status(400).json({ error: 'Message is required' });
+      }
+
+      if (message.length > 500) {
+        return res.status(400).json({ error: 'Message is too long (max 500 characters)' });
+      }
+
+      const coachResponse = await chatWithCoach(message, { role: role || 'general' });
+      
+      res.json({ response: coachResponse });
+    } catch (error: any) {
+      console.error("Coach error:", error);
+      res.status(500).json({ 
+        error: 'Failed to get coach response',
         details: error.message || String(error)
       });
     }
