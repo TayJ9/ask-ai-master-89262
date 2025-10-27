@@ -3,7 +3,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, Volume2, Loader2, Lightbulb } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2, Lightbulb, RefreshCw, AlertCircle } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { InterviewQuestion, InterviewSession as IInterviewSession } from "@shared/schema";
@@ -23,10 +23,13 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   const [isPlayingQuestion, setIsPlayingQuestion] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [feedback, setFeedback] = useState<{ score: number; strengths: string[]; improvements: string[] } | null>(null);
+  const [error, setError] = useState<{ message: string; type: 'processing' | 'recording' | 'general' } | null>(null);
+  const [retryCount, setRetryCount] = useState(0);
   const { toast } = useToast();
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
+  const lastFailedRequestRef = useRef<{ question: string; transcript: string } | null>(null);
 
   const { data: questions = [], isLoading: questionsLoading } = useQuery<InterviewQuestion[]>({
     queryKey: [`/api/questions/${role}?difficulty=${difficulty}`],
@@ -149,10 +152,11 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
     const reader = new FileReader();
     reader.readAsDataURL(audioBlob);
     reader.onloadend = async () => {
+      let transcriptData: { text: string } | null = null;
       try {
         const base64Audio = reader.result?.toString().split(",")[1];
 
-        const transcriptData = await apiRequest('/api/ai/speech-to-text', 'POST', { audio: base64Audio });
+        transcriptData = await apiRequest('/api/ai/speech-to-text', 'POST', { audio: base64Audio });
         setTranscript(transcriptData.text);
 
         const feedbackData = await apiRequest('/api/ai/analyze-response', 'POST', {
@@ -178,15 +182,62 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
         });
       } catch (error: any) {
         console.error('Response processing error:', error);
+        const currentTranscript = transcriptData?.text || transcript;
+        setError({ message: error.message || "Failed to process response. Please try again.", type: 'processing' });
+        lastFailedRequestRef.current = { question: questions[currentQuestionIndex].questionText, transcript: currentTranscript };
+        setRetryCount(prev => prev + 1);
         toast({
           title: "Error",
-          description: error.message || "Failed to process response. Please try recording again.",
+          description: error.message || "Failed to process response. Click retry to try again.",
           variant: "destructive",
         });
       } finally {
         setIsProcessing(false);
       }
     };
+  };
+
+  const retryProcessing = async () => {
+    if (!lastFailedRequestRef.current) return;
+    
+    setError(null);
+    setIsProcessing(true);
+    
+    try {
+      const feedbackData = await apiRequest('/api/ai/analyze-response', 'POST', {
+        question: lastFailedRequestRef.current.question,
+        answer: lastFailedRequestRef.current.transcript,
+        role: role,
+      });
+
+      setFeedback(feedbackData);
+
+      await createResponseMutation.mutateAsync({
+        sessionId: sessionId,
+        questionId: questions[currentQuestionIndex].id,
+        transcript: lastFailedRequestRef.current.transcript,
+        score: feedbackData.score,
+        strengths: feedbackData.strengths,
+        improvements: feedbackData.improvements,
+      });
+
+      setError(null);
+      lastFailedRequestRef.current = null;
+      
+      toast({
+        title: "Response Analyzed",
+        description: `Score: ${feedbackData.score}/100`,
+      });
+    } catch (error: any) {
+      setError({ message: error.message || "Retry failed. Please try recording again.", type: 'processing' });
+      toast({
+        title: "Error",
+        description: error.message || "Retry failed. Please try recording again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const completeSession = async () => {
@@ -288,6 +339,27 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
               <div className="p-4 bg-muted rounded-lg">
                 <p className="text-sm font-medium mb-2">Your Response:</p>
                 <p className="text-sm text-muted-foreground" data-testid="text-transcript">{transcript}</p>
+              </div>
+            )}
+
+            {error && (
+              <div className="p-4 bg-red-50 dark:bg-red-900/20 rounded-lg border border-red-200 dark:border-red-800 animate-scale-in">
+                <div className="flex items-start gap-3 mb-3">
+                  <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="font-semibold text-red-900 dark:text-red-100 mb-1">Something went wrong</p>
+                    <p className="text-sm text-red-800 dark:text-red-200">{error.message}</p>
+                  </div>
+                </div>
+                <Button
+                  onClick={retryProcessing}
+                  variant="outline"
+                  className="w-full border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/30"
+                  disabled={isProcessing}
+                >
+                  <RefreshCw className={`w-4 h-4 mr-2 ${isProcessing ? 'animate-spin' : ''}`} />
+                  Retry Processing
+                </Button>
               </div>
             )}
 

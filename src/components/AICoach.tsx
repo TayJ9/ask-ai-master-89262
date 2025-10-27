@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Bot, Send, Loader2, MessageSquare, ChevronDown } from "lucide-react";
+import { Bot, Send, Loader2, MessageSquare, ChevronDown, RefreshCw, AlertCircle } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -15,6 +15,7 @@ export default function AICoach({ role }: AICoachProps) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [showScrollHint, setShowScrollHint] = useState(false);
+  const [lastFailedMessage, setLastFailedMessage] = useState<string | null>(null);
   const { toast } = useToast();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -40,13 +41,17 @@ export default function AICoach({ role }: AICoachProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, loading]);
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+  const sendMessage = async (retryMessage?: string) => {
+    const messageToSend = retryMessage || input;
+    if (!messageToSend.trim() || loading) return;
     
-    const userMessage = input;
-    setInput("");
+    const userMessage = messageToSend;
+    if (!retryMessage) {
+      setInput("");
+    }
     setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
     setLoading(true);
+    setLastFailedMessage(null);
 
     try {
       const data = await apiRequest('/api/ai/coach', 'POST', { 
@@ -54,15 +59,29 @@ export default function AICoach({ role }: AICoachProps) {
         role 
       });
       setMessages(prev => [...prev, { role: 'assistant', content: data.response }]);
+      setLastFailedMessage(null);
     } catch (error: any) {
       console.error(error);
+      setLastFailedMessage(userMessage);
+      setMessages(prev => [...prev, { 
+        role: 'assistant', 
+        content: '❌ Error: Failed to get coach response. Click retry to try again.' 
+      }]);
       toast({
         title: "Error",
-        description: error.message || "Failed to get coach response",
+        description: error.message || "Failed to get coach response. Please try again.",
         variant: "destructive",
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const retryLastMessage = () => {
+    if (lastFailedMessage) {
+      // Remove the error message from UI
+      setMessages(prev => prev.slice(0, -1));
+      sendMessage(lastFailedMessage);
     }
   };
 
@@ -128,17 +147,36 @@ export default function AICoach({ role }: AICoachProps) {
               <p className="text-sm">No conversation yet. Ask me anything!</p>
             </div>
           ) : null}
-          {messages.map((msg, idx) => (
-            <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[85%] p-3 rounded-lg ${
-                msg.role === 'user' 
-                  ? 'bg-primary text-primary-foreground rounded-br-none' 
-                  : 'bg-muted rounded-bl-none'
-              }`}>
-                <p className="text-sm whitespace-pre-wrap">{msg.content}</p>
+          {messages.map((msg, idx) => {
+            const isError = msg.content.includes('❌ Error:');
+            return (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                <div className={`max-w-[85%] p-3 rounded-lg ${
+                  msg.role === 'user' 
+                    ? 'bg-primary text-primary-foreground rounded-br-none' 
+                    : isError
+                    ? 'bg-red-50 dark:bg-red-900/20 border-2 border-red-300 dark:border-red-700 rounded-bl-none'
+                    : 'bg-muted rounded-bl-none'
+                }`}>
+                  <p className={`text-sm whitespace-pre-wrap ${isError ? 'text-red-900 dark:text-red-100' : ''}`}>
+                    {msg.content}
+                  </p>
+                  {isError && lastFailedMessage && (
+                    <Button
+                      onClick={retryLastMessage}
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 border-red-300 dark:border-red-700 hover:bg-red-100 dark:hover:bg-red-900/30"
+                      disabled={loading}
+                    >
+                      <RefreshCw className={`w-3 h-3 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                      Retry
+                    </Button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {loading && (
             <div className="flex justify-start">
               <div className="bg-muted p-3 rounded-lg rounded-bl-none">
@@ -161,7 +199,7 @@ export default function AICoach({ role }: AICoachProps) {
             maxLength={500}
             autoFocus={false}
           />
-          <Button onClick={sendMessage} disabled={loading || !input.trim()}>
+          <Button onClick={() => sendMessage()} disabled={loading || !input.trim()}>
             {loading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
