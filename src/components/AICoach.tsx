@@ -198,6 +198,7 @@ export default function AICoach({ role }: AICoachProps) {
             disabled={loading}
             maxLength={500}
             autoFocus={false}
+            className={input.length > 450 ? 'border-orange-400' : ''}
           />
           <Button onClick={() => sendMessage()} disabled={loading || !input.trim()}>
             {loading ? (
@@ -207,8 +208,8 @@ export default function AICoach({ role }: AICoachProps) {
             )}
           </Button>
         </div>
-        <p className="text-xs text-muted-foreground text-center">
-          AI-powered coaching • {input.length}/500 characters
+        <p className={`text-xs text-center ${input.length > 450 ? 'text-orange-600 font-semibold' : 'text-muted-foreground'}`}>
+          {input.length > 490 ? '⚠️ Character limit almost reached' : 'AI-powered coaching'} • {input.length}/500 characters
         </p>
       </CardContent>
     </Card>
