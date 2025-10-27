@@ -78,40 +78,40 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Difficulty Level</label>
                     <div className="grid grid-cols-3 gap-2">
-                      <button
+                      <Button
+                        type="button"
+                        variant={difficulties[role.id] === "easy" ? "default" : "outline"}
+                        size="sm"
                         onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "easy" }))}
-                        className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          difficulties[role.id] === "easy"
-                            ? "bg-primary text-primary-foreground font-semibold"
-                            : "bg-muted hover:bg-muted/80"
-                        }`}
+                        className={`${difficulties[role.id] === "easy" ? "bg-primary text-primary-foreground" : ""}`}
                       >
                         Easy
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={difficulties[role.id] === "medium" ? "default" : "outline"}
+                        size="sm"
                         onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "medium" }))}
-                        className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          difficulties[role.id] === "medium"
-                            ? "bg-primary text-primary-foreground font-semibold"
-                            : "bg-muted hover:bg-muted/80"
-                        }`}
+                        className={`${difficulties[role.id] === "medium" ? "bg-primary text-primary-foreground" : ""}`}
                       >
                         Medium
-                      </button>
-                      <button
+                      </Button>
+                      <Button
+                        type="button"
+                        variant={difficulties[role.id] === "hard" ? "default" : "outline"}
+                        size="sm"
                         onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "hard" }))}
-                        className={`px-3 py-2 rounded-md text-sm transition-all ${
-                          difficulties[role.id] === "hard"
-                            ? "bg-primary text-primary-foreground font-semibold"
-                            : "bg-muted hover:bg-muted/80"
-                        }`}
+                        className={`${difficulties[role.id] === "hard" ? "bg-primary text-primary-foreground" : ""}`}
                       >
                         Hard
-                      </button>
+                      </Button>
                     </div>
                   </div>
                   <Button
-                    onClick={() => onSelectRole(role.id, difficulties[role.id])}
+                    onClick={() => {
+                      console.log('Button clicked:', role.id, difficulties[role.id]);
+                      onSelectRole(role.id, difficulties[role.id]);
+                    }}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
                   >
