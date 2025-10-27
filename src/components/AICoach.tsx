@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Bot, Send, Loader2, MessageSquare } from "lucide-react";
+import { Bot, Send, Loader2, MessageSquare, ChevronDown } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -14,7 +14,31 @@ export default function AICoach({ role }: AICoachProps) {
   const [messages, setMessages] = useState<Array<{role: 'user' | 'assistant', content: string}>>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showScrollHint, setShowScrollHint] = useState(false);
   const { toast } = useToast();
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to input box when component mounts (on mobile)
+  useEffect(() => {
+    // Check if user is on mobile
+    const isMobile = window.innerWidth < 768;
+    if (isMobile && inputRef.current) {
+      // Small delay to ensure DOM is ready
+      setTimeout(() => {
+        inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        // Show scroll hint briefly
+        setShowScrollHint(true);
+        setTimeout(() => setShowScrollHint(false), 3000);
+      }, 300);
+    }
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, loading]);
 
   const sendMessage = async () => {
     if (!input.trim() || loading) return;
@@ -61,6 +85,16 @@ export default function AICoach({ role }: AICoachProps) {
         </p>
       </CardHeader>
       <CardContent className="space-y-4 p-6">
+        {/* Mobile scroll hint */}
+        {showScrollHint && (
+          <div className="md:hidden fixed bottom-20 left-0 right-0 flex justify-center z-50 animate-bounce pointer-events-none">
+            <div className="bg-primary text-primary-foreground px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
+              <ChevronDown className="w-4 h-4" />
+              <span className="text-sm font-medium">Scroll down to chat</span>
+            </div>
+          </div>
+        )}
+
         {/* Quick suggestions */}
         {messages.length === 0 && (
           <div className="space-y-2">
@@ -71,7 +105,11 @@ export default function AICoach({ role }: AICoachProps) {
                   key={idx}
                   variant="outline"
                   size="sm"
-                  onClick={() => setInput(suggestion)}
+                  onClick={() => {
+                    setInput(suggestion);
+                    // Auto-scroll to input after selecting suggestion
+                    setTimeout(() => inputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 100);
+                  }}
                   className="text-xs justify-start h-auto py-2 px-3 text-left whitespace-normal"
                 >
                   <MessageSquare className="w-3 h-3 mr-2 flex-shrink-0" />
@@ -83,13 +121,13 @@ export default function AICoach({ role }: AICoachProps) {
         )}
 
         {/* Messages */}
-        <div className="space-y-3 min-h-[200px] max-h-[400px] overflow-y-auto pr-2">
-          {messages.length === 0 && (
+        <div ref={messagesContainerRef} className="space-y-3 min-h-[200px] max-h-[400px] overflow-y-auto pr-2">
+          {messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <Bot className="w-12 h-12 mx-auto mb-3 opacity-50" />
               <p className="text-sm">No conversation yet. Ask me anything!</p>
             </div>
-          )}
+          ) : null}
           {messages.map((msg, idx) => (
             <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`max-w-[85%] p-3 rounded-lg ${
@@ -108,10 +146,12 @@ export default function AICoach({ role }: AICoachProps) {
               </div>
             </div>
           )}
+          {/* Invisible element to scroll to */}
+          <div ref={messagesEndRef} />
         </div>
         
         {/* Input */}
-        <div className="flex gap-2">
+        <div ref={inputRef} className="flex gap-2">
           <Input
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -119,6 +159,7 @@ export default function AICoach({ role }: AICoachProps) {
             placeholder="Ask for interview tips..."
             disabled={loading}
             maxLength={500}
+            autoFocus={false}
           />
           <Button onClick={sendMessage} disabled={loading || !input.trim()}>
             {loading ? (
@@ -135,6 +176,3 @@ export default function AICoach({ role }: AICoachProps) {
     </Card>
   );
 }
-
-
-
