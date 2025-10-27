@@ -1,7 +1,7 @@
 import OpenAI, { toFile } from "openai";
 
 // This integration uses OpenAI's API, which points to OpenAI's API servers and requires your own API key.
-// The newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+// Using gpt-4o for reliable performance across all features
 
 if (!process.env.OPENAI_API_KEY) {
   console.error('CRITICAL ERROR: OPENAI_API_KEY environment variable is not set!');
@@ -59,9 +59,9 @@ Return only valid JSON with this exact structure:
   "improvements": ["improvement 1", "improvement 2"]
 }`;
 
-  // The newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+  // Using gpt-4o for reliable analysis
   const response = await openai.chat.completions.create({
-    model: "gpt-5",
+    model: "gpt-4o",
     messages: [{ role: "user", content: prompt }],
     response_format: { type: "json_object" },
   });
@@ -116,9 +116,9 @@ Role context: ${roleTips}
 
 Remember: Real interviews are conversations, not interrogations. Help them feel prepared and confident. Speak like a trusted mentor, not a corporate handbook.`;
 
-  // The newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+  // Using gpt-4o for reliable coaching responses
   const response = await openai.chat.completions.create({
-    model: "gpt-5",
+    model: "gpt-4o",
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userMessage }
