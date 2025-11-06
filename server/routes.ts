@@ -522,7 +522,8 @@ export function registerRoutes(app: Express) {
   // Voice interview endpoints (proxy to Python Flask server)
   // IMPORTANT: Python backend must run on a DIFFERENT port than Node.js server (5000)
   // Default to 5001 to avoid conflict with Node.js server on port 5000
-  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:5001";
+  // Use 127.0.0.1 instead of localhost for better compatibility in Replit
+  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://127.0.0.1:5001";
   
   app.post("/api/voice-interview/start", authenticateToken, async (req: any, res) => {
     try {
