@@ -6,8 +6,8 @@ Handles interview sessions, transcript saving, and scoring
 import os
 import json
 from typing import Dict, List, Optional
-from google.cloud.dialogflow_cx_v3.services.sessions import SessionsClient
-from google.cloud.dialogflow_cx_v3.types import DetectIntentRequest, QueryInput, QueryParameters
+from google.cloud.dialogflowcx import SessionsClient
+from google.cloud.dialogflowcx_v3 import DetectIntentRequest, QueryInput, QueryParameters
 from google.oauth2 import service_account
 import google.generativeai as genai
 
@@ -86,9 +86,11 @@ def get_session_path(session_id: str) -> str:
 try:
     credentials = get_credentials()
     dialogflow_config = get_dialogflow_config()
-    # Set API endpoint based on location
+    # Set API endpoint based on location using ClientOptions
+    from google.api_core import client_options as ClientOptions
     api_endpoint = f"{dialogflow_config['location_id']}-dialogflow.googleapis.com"
-    dialogflow_client = SessionsClient(credentials=credentials, api_endpoint=api_endpoint)
+    client_options = ClientOptions.ClientOptions(api_endpoint=api_endpoint)
+    dialogflow_client = SessionsClient(credentials=credentials, client_options=client_options)
     print(f"Dialogflow client initialized for {dialogflow_config['location_id']}")
 except Exception as e:
     print(f"Error initializing Dialogflow client: {e}")
@@ -98,7 +100,25 @@ except Exception as e:
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    gemini_model = genai.GenerativeModel('gemini-pro')
+    # Try gemini-2.5-flash first, then fallback to other models
+    try:
+        gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+        print("Gemini 2.5 Flash model initialized for scoring")
+    except:
+        try:
+            gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
+            print("Gemini 2.0 Flash Experimental model initialized for scoring")
+        except:
+            try:
+                gemini_model = genai.GenerativeModel('gemini-1.5-flash')
+                print("Gemini 1.5 Flash model initialized for scoring")
+            except:
+                try:
+                    gemini_model = genai.GenerativeModel('gemini-1.5-pro')
+                    print("Gemini 1.5 Pro model initialized for scoring")
+                except:
+                    gemini_model = genai.GenerativeModel('gemini-pro')
+                    print("Gemini Pro model initialized for scoring")
 else:
     print("Warning: GEMINI_API_KEY not set. Scoring will not work.")
     gemini_model = None

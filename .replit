@@ -1,4 +1,4 @@
-modules = ["nodejs-20", "web", "postgresql-16"]
+modules = ["nodejs-20", "postgresql-16", "python-3.11", "web"]
 [agent]
 expertMode = true
 integrations = ["javascript_database:1.0.0", "javascript_openai:1.0.0"]
@@ -29,12 +29,21 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
+args = "cd python_backend && PORT=5001 python app.py"
+waitForPort = 5001
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
 
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[[ports]]
+localPort = 5001
+externalPort = 3003
 
 [[ports]]
 localPort = 24678

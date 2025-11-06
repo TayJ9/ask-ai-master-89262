@@ -9,8 +9,8 @@ import os
 import json
 import base64
 from typing import Dict, Optional
-from google.cloud.dialogflow_cx_v3.services.sessions import SessionsClient
-from google.cloud.dialogflow_cx_v3.types import (
+from google.cloud.dialogflowcx import SessionsClient
+from google.cloud.dialogflowcx_v3 import (
     DetectIntentRequest, 
     QueryInput, 
     QueryParameters,
@@ -36,8 +36,11 @@ from dialogflow_interview import (
 try:
     credentials = get_credentials()
     dialogflow_config = get_dialogflow_config()
+    # Set API endpoint based on location using ClientOptions
+    from google.api_core import client_options as ClientOptions
     api_endpoint = f"{dialogflow_config['location_id']}-dialogflow.googleapis.com"
-    dialogflow_client = SessionsClient(credentials=credentials, api_endpoint=api_endpoint)
+    client_options = ClientOptions.ClientOptions(api_endpoint=api_endpoint)
+    dialogflow_client = SessionsClient(credentials=credentials, client_options=client_options)
     print(f"Dialogflow voice client initialized for {dialogflow_config['location_id']}")
 except Exception as e:
     print(f"Error initializing Dialogflow client: {e}")

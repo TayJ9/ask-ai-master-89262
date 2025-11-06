@@ -263,5 +263,8 @@ def health():
     return jsonify({"status": "healthy"})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    # Default to port 5001 to avoid conflict with Node.js server on port 5000
+    port = int(os.environ.get('PORT', 5001))
+    print(f"Starting Python Flask backend on port {port}")
+    print(f"Set PORT environment variable to use a different port")
     app.run(host='0.0.0.0', port=port, debug=True)

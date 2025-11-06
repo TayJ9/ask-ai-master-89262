@@ -6,10 +6,21 @@ async function handleResponse(response: Response) {
   if (!response.ok) {
     // Only redirect on actual authentication errors, not on other errors
     // Check if the error message indicates authentication failure
-    const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+    let errorData;
+    try {
+      errorData = await response.json();
+    } catch {
+      // If response is not JSON, try to get text
+      const text = await response.text().catch(() => 'Request failed');
+      errorData = { error: text || 'Request failed' };
+    }
+    
     const errorMessage = errorData.error || 'Request failed';
     
-    // Only treat as auth error if it's explicitly about tokens or authentication
+    console.log(`Error response: status=${response.status}, message=${errorMessage}`);
+    
+    // Only treat as auth error if it's explicitly a 401/403 status AND about tokens
+    // If it's a 500 with "No token provided", it's likely a backend error, not auth
     const isAuthError = (response.status === 401 || response.status === 403) && 
                        (errorMessage.includes('token') || 
                         errorMessage.includes('authentication') || 
@@ -17,10 +28,17 @@ async function handleResponse(response: Response) {
                         errorMessage.includes('No token'));
     
     if (isAuthError) {
+      console.log('Detected authentication error, clearing token and redirecting');
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
       window.location.href = '/';
       return;
+    }
+    
+    // For 500 errors with "No token provided", this is likely a backend/proxy issue
+    if (response.status === 500 && errorMessage.includes('No token provided')) {
+      console.error('Got 500 error with "No token provided" - this is likely a backend issue');
+      throw new Error('Server error: Unable to process request. Please check if the Python backend is running.');
     }
     
     throw new Error(errorMessage);

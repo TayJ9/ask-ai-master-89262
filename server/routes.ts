@@ -520,7 +520,9 @@ export function registerRoutes(app: Express) {
   });
 
   // Voice interview endpoints (proxy to Python Flask server)
-  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:5000";
+  // IMPORTANT: Python backend must run on a DIFFERENT port than Node.js server (5000)
+  // Default to 5001 to avoid conflict with Node.js server on port 5000
+  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:5001";
   
   app.post("/api/voice-interview/start", authenticateToken, async (req: any, res) => {
     try {
@@ -530,32 +532,46 @@ export function registerRoutes(app: Express) {
         return res.status(500).json({ error: "Python backend URL not configured. Please set PYTHON_BACKEND_URL environment variable." });
       }
 
-      console.log(`Proxying voice interview start to ${PYTHON_BACKEND_URL}/api/voice-interview/start`);
-      console.log("Request body:", JSON.stringify(req.body));
-      console.log("Request userId:", req.userId);
+      console.log(`[VOICE-INTERVIEW-START] Proxying to ${PYTHON_BACKEND_URL}/api/voice-interview/start`);
+      console.log("[VOICE-INTERVIEW-START] Request body:", JSON.stringify(req.body));
+      console.log("[VOICE-INTERVIEW-START] Request userId:", req.userId);
+      console.log("[VOICE-INTERVIEW-START] Python backend URL:", PYTHON_BACKEND_URL);
 
       let response;
       try {
-        response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
+        const fetchUrl = `${PYTHON_BACKEND_URL}/api/voice-interview/start`;
+        console.log(`[VOICE-INTERVIEW-START] Attempting fetch to: ${fetchUrl}`);
+        
+        response = await fetch(fetchUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify(req.body),
         });
+        
+        console.log(`[VOICE-INTERVIEW-START] Fetch completed, status: ${response.status}`);
       } catch (fetchError: any) {
-        console.error("Fetch error connecting to Python backend:", fetchError);
-        console.error("Error name:", fetchError.name);
-        console.error("Error code:", fetchError.code);
-        console.error("Error message:", fetchError.message);
+        console.error("[VOICE-INTERVIEW-START] Fetch error connecting to Python backend:", fetchError);
+        console.error("[VOICE-INTERVIEW-START] Error name:", fetchError.name);
+        console.error("[VOICE-INTERVIEW-START] Error code:", fetchError.code);
+        console.error("[VOICE-INTERVIEW-START] Error message:", fetchError.message);
+        console.error("[VOICE-INTERVIEW-START] Full error:", fetchError);
         
         // Check if it's a connection error
-        if (fetchError.code === 'ECONNREFUSED' || fetchError.message.includes('fetch failed') || fetchError.message.includes('ECONNREFUSED')) {
+        if (fetchError.code === 'ECONNREFUSED' || 
+            fetchError.message?.includes('fetch failed') || 
+            fetchError.message?.includes('ECONNREFUSED') ||
+            fetchError.name === 'TypeError' && fetchError.message?.includes('fetch')) {
           return res.status(500).json({ 
-            error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running.` 
+            error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running and accessible.` 
           });
         }
-        throw fetchError;
+        
+        // For any other fetch error
+        return res.status(500).json({ 
+          error: `Failed to connect to Python backend: ${fetchError.message || 'Unknown error'}` 
+        });
       }
 
       console.log(`Python backend response status: ${response.status}`);
@@ -597,6 +613,16 @@ export function registerRoutes(app: Express) {
       if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
         return res.status(500).json({ 
           error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running.` 
+        });
+      }
+      
+      // If error message contains "No token provided", it might be from Python backend
+      // but that shouldn't happen since Python backend doesn't do auth
+      if (error.message && error.message.includes('No token provided')) {
+        console.error("ERROR: Got 'No token provided' error - this suggests auth middleware issue");
+        console.error("This should not happen if authenticateToken middleware ran successfully");
+        return res.status(500).json({ 
+          error: "Internal server error. Please check if the Python backend is running and accessible." 
         });
       }
       
