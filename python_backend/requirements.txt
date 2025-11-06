@@ -1,8 +1,0 @@
-google-cloud-dialogflow-cx>=2.0.0
-google-auth>=2.0.0
-google-generativeai>=0.3.0
-google-cloud-firestore>=2.0.0
-replit>=3.0.0
-flask>=3.0.0
-flask-cors>=4.0.0
-
