@@ -512,6 +512,11 @@ export function registerRoutes(app: Express) {
   
   app.post("/api/voice-interview/start", authenticateToken, async (req: any, res) => {
     try {
+      // Check if Python backend is configured
+      if (!PYTHON_BACKEND_URL) {
+        return res.status(500).json({ error: "Python backend URL not configured. Please set PYTHON_BACKEND_URL environment variable." });
+      }
+
       const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
         method: "POST",
         headers: {
@@ -521,43 +526,136 @@ export function registerRoutes(app: Express) {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        return res.status(response.status).json(error);
+        // Try to parse error, but don't fail if it's not JSON
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { error: `Python backend returned status ${response.status}` };
+        }
+        
+        // Don't pass through auth errors from Python backend - they're not auth errors for our API
+        // Python backend doesn't do auth, so any error is a backend issue
+        return res.status(500).json({ 
+          error: errorData.error || "Failed to start voice interview. Please check if the Python backend is running." 
+        });
       }
 
       const data = await response.json();
       res.json(data);
     } catch (error: any) {
       console.error("Error proxying voice interview start:", error);
+      
+      // Check if it's a connection error
+      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+        return res.status(500).json({ 
+          error: "Cannot connect to Python backend. Please ensure the Python backend is running on " + PYTHON_BACKEND_URL 
+        });
+      }
+      
       res.status(500).json({ error: error.message || "Failed to start voice interview" });
     }
   });
 
-  app.post("/api/voice-interview/send-audio", authenticateToken, async (req: any, res) => {
+  // Multer for parsing multipart/form-data (audio files)
+  const audioUpload = multer({ storage: multer.memoryStorage() });
+  
+  app.post("/api/voice-interview/send-audio", authenticateToken, audioUpload.single('audio'), async (req: any, res) => {
     try {
-      const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(req.body),
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        return res.status(response.status).json(error);
+      // Check if Python backend is configured
+      if (!PYTHON_BACKEND_URL) {
+        return res.status(500).json({ error: "Python backend URL not configured." });
       }
 
-      const data = await response.json();
-      res.json(data);
+      // Handle multipart/form-data (audio file) or JSON
+      let pythonResponse;
+      
+      if (req.file) {
+        // Multipart/form-data: audio file was uploaded
+        // Use form-data package for Node.js
+        const FormData = require('form-data');
+        const formData = new FormData();
+        
+        // Add audio file
+        formData.append('audio', req.file.buffer, {
+          filename: req.file.originalname || 'recording.webm',
+          contentType: req.file.mimetype || 'audio/webm',
+        });
+        
+        // Add other form fields
+        if (req.body.session_id) formData.append('session_id', req.body.session_id);
+        if (req.body.audioEncoding) formData.append('audioEncoding', req.body.audioEncoding);
+        if (req.body.sampleRate) formData.append('sampleRate', req.body.sampleRate);
+        
+        // Forward to Python backend
+        pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
+          method: "POST",
+          headers: formData.getHeaders(),
+          body: formData,
+        });
+      } else {
+        // JSON request (base64 audio)
+        pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(req.body),
+        });
+      }
+
+      if (!pythonResponse.ok) {
+        // Try to parse error
+        let errorData;
+        try {
+          errorData = await pythonResponse.json();
+        } catch {
+          errorData = { error: `Python backend returned status ${pythonResponse.status}` };
+        }
+        
+        return res.status(500).json({ 
+          error: errorData.error || "Failed to send audio. Please check if the Python backend is running." 
+        });
+      }
+
+      // Check if response is audio or JSON
+      const responseContentType = pythonResponse.headers.get('content-type') || '';
+      
+      if (responseContentType.includes('audio/')) {
+        // Forward audio response directly
+        const audioBuffer = await pythonResponse.arrayBuffer();
+        res.setHeader('Content-Type', responseContentType);
+        res.setHeader('X-Response-Text', pythonResponse.headers.get('X-Response-Text') || '');
+        res.setHeader('X-Response-Transcript', pythonResponse.headers.get('X-Response-Transcript') || '');
+        res.setHeader('X-Response-IsEnd', pythonResponse.headers.get('X-Response-IsEnd') || 'false');
+        res.setHeader('X-Response-Intent', pythonResponse.headers.get('X-Response-Intent') || '');
+        res.send(Buffer.from(audioBuffer));
+      } else {
+        // Forward JSON response
+        const data = await pythonResponse.json();
+        res.json(data);
+      }
     } catch (error: any) {
       console.error("Error proxying audio:", error);
+      
+      // Check if it's a connection error
+      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+        return res.status(500).json({ 
+          error: "Cannot connect to Python backend. Please ensure the Python backend is running." 
+        });
+      }
+      
       res.status(500).json({ error: error.message || "Failed to send audio" });
     }
   });
 
   app.post("/api/voice-interview/score", authenticateToken, async (req: any, res) => {
     try {
+      // Check if Python backend is configured
+      if (!PYTHON_BACKEND_URL) {
+        return res.status(500).json({ error: "Python backend URL not configured." });
+      }
+
       const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/score`, {
         method: "POST",
         headers: {
@@ -567,14 +665,30 @@ export function registerRoutes(app: Express) {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        return res.status(response.status).json(error);
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { error: `Python backend returned status ${response.status}` };
+        }
+        
+        return res.status(500).json({ 
+          error: errorData.error || "Failed to score interview. Please check if the Python backend is running." 
+        });
       }
 
       const data = await response.json();
       res.json(data);
     } catch (error: any) {
       console.error("Error proxying voice interview score:", error);
+      
+      // Check if it's a connection error
+      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+        return res.status(500).json({ 
+          error: "Cannot connect to Python backend. Please ensure the Python backend is running." 
+        });
+      }
+      
       res.status(500).json({ error: error.message || "Failed to score interview" });
     }
   });

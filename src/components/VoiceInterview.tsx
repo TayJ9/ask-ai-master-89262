@@ -47,7 +47,13 @@ export default function VoiceInterview({
   const { toast } = useToast();
 
   // Get auth token
-  const getAuthToken = () => localStorage.getItem('auth_token');
+  const getAuthToken = () => {
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      throw new Error('No authentication token found. Please log in again.');
+    }
+    return token;
+  };
 
   // Play audio response from Dialogflow
   const playAudioResponse = useCallback((audioBase64: string) => {
@@ -115,18 +121,23 @@ export default function VoiceInterview({
   const handleRecordingStop = useCallback(async () => {
     setIsProcessing(true);
     
-    try {
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
-      
-      // Create FormData to send raw audio file
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.webm');
-      formData.append('session_id', sessionId);
-      formData.append('audioEncoding', 'AUDIO_ENCODING_WEBM_OPUS');
-      formData.append('sampleRate', '24000');
+      try {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
+        
+        // Create FormData to send raw audio file
+        const formData = new FormData();
+        formData.append('audio', audioBlob, 'recording.webm');
+        formData.append('session_id', sessionId);
+        formData.append('audioEncoding', 'AUDIO_ENCODING_WEBM_OPUS');
+        formData.append('sampleRate', '24000');
 
-      const token = getAuthToken();
-      const response = await fetch('/api/voice-interview/send-audio', {
+        // Check for token first
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+          throw new Error('No authentication token found. Please log in again.');
+        }
+        
+        const response = await fetch('/api/voice-interview/send-audio', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -136,6 +147,13 @@ export default function VoiceInterview({
       });
 
       if (!response.ok) {
+        // Handle 401/403 specifically
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+          throw new Error('Session expired. Please log in again.');
+        }
+        
         // Try to parse error as JSON
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
@@ -333,7 +351,12 @@ export default function VoiceInterview({
       try {
         setIsProcessing(true);
         
-        const token = getAuthToken();
+        // Check for token first
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+          throw new Error('No authentication token found. Please log in again.');
+        }
+        
         const response = await fetch('/api/voice-interview/start', {
           method: 'POST',
           headers: {
@@ -349,7 +372,13 @@ export default function VoiceInterview({
         });
 
         if (!response.ok) {
-          const error = await response.json();
+          const error = await response.json().catch(() => ({ error: 'Failed to start voice interview' }));
+          // Handle 401/403 specifically
+          if (response.status === 401 || response.status === 403) {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('user');
+            throw new Error('Session expired. Please log in again.');
+          }
           throw new Error(error.error || 'Failed to start voice interview');
         }
 
@@ -366,11 +395,28 @@ export default function VoiceInterview({
         });
       } catch (error: any) {
         console.error('Error starting voice interview:', error);
-        toast({
-          title: "Error",
-          description: error.message || "Failed to start voice interview.",
-          variant: "destructive",
-        });
+        const errorMessage = error.message || "Failed to start voice interview.";
+        
+        // Check if it's an authentication error
+        if (errorMessage.includes('token') || errorMessage.includes('authentication') || errorMessage.includes('401') || errorMessage.includes('403')) {
+          toast({
+            title: "Authentication Error",
+            description: "Your session has expired. Please log in again to continue.",
+            variant: "destructive",
+          });
+          // Clear auth data and redirect
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 2000);
+        } else {
+          toast({
+            title: "Error",
+            description: errorMessage,
+            variant: "destructive",
+          });
+        }
       } finally {
         setIsProcessing(false);
       }
@@ -409,7 +455,12 @@ export default function VoiceInterview({
       try {
         setIsProcessing(true);
         
-        const token = getAuthToken();
+        // Check for token first
+        const token = localStorage.getItem('auth_token');
+        if (!token) {
+          throw new Error('No authentication token found. Please log in again.');
+        }
+        
         const response = await fetch('/api/voice-interview/score', {
           method: 'POST',
           headers: {
@@ -422,7 +473,14 @@ export default function VoiceInterview({
         });
 
         if (!response.ok) {
-          const error = await response.json();
+          // Handle 401/403 specifically
+          if (response.status === 401 || response.status === 403) {
+            localStorage.removeItem('auth_token');
+            localStorage.removeItem('user');
+            throw new Error('Session expired. Please log in again.');
+          }
+          
+          const error = await response.json().catch(() => ({ error: 'Failed to score interview' }));
           throw new Error(error.error || 'Failed to score interview');
         }
 

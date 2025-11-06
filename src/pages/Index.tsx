@@ -61,6 +61,18 @@ export default function Index() {
   const handleResumeUploaded = async (resume: string) => {
     setResumeText(resume);
     
+    // Check authentication before starting interview
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to start an interview.",
+        variant: "destructive",
+      });
+      setCurrentView("roles");
+      return;
+    }
+    
     // Start Dialogflow interview session (text or voice)
     try {
       console.log("Starting interview with resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
@@ -110,15 +122,43 @@ export default function Index() {
       }
     } catch (error: any) {
       console.error("Error starting interview:", error);
-      toast({
-        title: "Failed to Start Interview",
-        description: error.message || error.error || "Failed to start interview. Please check your Dialogflow configuration and try again.",
-        variant: "destructive",
-      });
+      const errorMessage = error.message || error.error || "Failed to start interview.";
+      
+      // Check if it's an authentication error
+      if (errorMessage.includes('token') || errorMessage.includes('No token') || errorMessage.includes('401') || errorMessage.includes('403')) {
+        toast({
+          title: "Authentication Error",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        // Clear auth data and redirect
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        setUser(null);
+        setCurrentView("roles");
+      } else {
+        toast({
+          title: "Failed to Start Interview",
+          description: errorMessage + " Please check your Dialogflow configuration and try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
   const handleSkipResume = async () => {
+    // Check authentication before starting interview
+    const token = localStorage.getItem('auth_token');
+    if (!token) {
+      toast({
+        title: "Authentication Required",
+        description: "Please log in to start an interview.",
+        variant: "destructive",
+      });
+      setCurrentView("roles");
+      return;
+    }
+    
     // Start Dialogflow interview session without resume
     try {
       console.log("Starting interview without resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
@@ -169,11 +209,27 @@ export default function Index() {
       }
     } catch (error: any) {
       console.error("Error starting interview:", error);
-      toast({
-        title: "Failed to Start Interview",
-        description: error.message || error.error || "Failed to start interview. Please check your Dialogflow configuration and try again.",
-        variant: "destructive",
-      });
+      const errorMessage = error.message || error.error || "Failed to start interview.";
+      
+      // Check if it's an authentication error
+      if (errorMessage.includes('token') || errorMessage.includes('No token') || errorMessage.includes('401') || errorMessage.includes('403')) {
+        toast({
+          title: "Authentication Error",
+          description: "Your session has expired. Please log in again.",
+          variant: "destructive",
+        });
+        // Clear auth data and redirect
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('user');
+        setUser(null);
+        setCurrentView("roles");
+      } else {
+        toast({
+          title: "Failed to Start Interview",
+          description: errorMessage + " Please check your Dialogflow configuration and try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 

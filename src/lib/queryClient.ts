@@ -4,13 +4,26 @@ const getAuthToken = () => localStorage.getItem('auth_token');
 
 async function handleResponse(response: Response) {
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) {
+    // Only redirect on actual authentication errors, not on other errors
+    // Check if the error message indicates authentication failure
+    const errorData = await response.json().catch(() => ({ error: 'Request failed' }));
+    const errorMessage = errorData.error || 'Request failed';
+    
+    // Only treat as auth error if it's explicitly about tokens or authentication
+    const isAuthError = (response.status === 401 || response.status === 403) && 
+                       (errorMessage.includes('token') || 
+                        errorMessage.includes('authentication') || 
+                        errorMessage.includes('unauthorized') ||
+                        errorMessage.includes('No token'));
+    
+    if (isAuthError) {
       localStorage.removeItem('auth_token');
       localStorage.removeItem('user');
       window.location.href = '/';
+      return;
     }
-    const error = await response.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(error.error || 'Request failed');
+    
+    throw new Error(errorMessage);
   }
   return response.json();
 }
