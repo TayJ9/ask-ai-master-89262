@@ -640,7 +640,11 @@ export function registerRoutes(app: Express) {
   });
 
   // Multer for parsing multipart/form-data (audio files)
-  const audioUpload = multer({ storage: multer.memoryStorage() });
+  // Note: multer parses form fields to req.body, but only when content-type is multipart/form-data
+  const audioUpload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  });
   
   app.post("/api/voice-interview/send-audio", authenticateToken, audioUpload.single('audio'), async (req: any, res) => {
     try {
@@ -648,6 +652,13 @@ export function registerRoutes(app: Express) {
       if (!PYTHON_BACKEND_URL) {
         return res.status(500).json({ error: "Python backend URL not configured." });
       }
+
+      console.log("[AUDIO-PROXY] Received request:", {
+        hasFile: !!req.file,
+        fileSize: req.file?.size,
+        body: req.body,
+        contentType: req.headers['content-type']
+      });
 
       // Handle multipart/form-data (audio file) or JSON
       let pythonResponse;
@@ -663,10 +674,21 @@ export function registerRoutes(app: Express) {
           contentType: req.file.mimetype || 'audio/webm',
         });
         
-        // Add other form fields
-        if (req.body.session_id) formData.append('session_id', req.body.session_id);
-        if (req.body.audioEncoding) formData.append('audioEncoding', req.body.audioEncoding);
-        if (req.body.sampleRate) formData.append('sampleRate', req.body.sampleRate);
+        // Get session_id from req.body (multer puts form fields there)
+        const sessionId = req.body?.session_id;
+        if (!sessionId) {
+          return res.status(400).json({ error: "session_id is required" });
+        }
+        
+        formData.append('session_id', sessionId);
+        if (req.body?.audioEncoding) formData.append('audioEncoding', req.body.audioEncoding);
+        if (req.body?.sampleRate) formData.append('sampleRate', req.body.sampleRate);
+        
+        console.log("[AUDIO-PROXY] Forwarding to Python backend:", {
+          sessionId,
+          audioSize: req.file.size,
+          url: `${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`
+        });
         
         // Forward to Python backend
         pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
@@ -675,7 +697,11 @@ export function registerRoutes(app: Express) {
           body: formData,
         });
       } else {
-        // JSON request (base64 audio)
+        // JSON request (base64 audio) - not typically used but handle it
+        if (!req.body || !req.body.session_id) {
+          return res.status(400).json({ error: "session_id is required" });
+        }
+        
         pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
           method: "POST",
           headers: {
@@ -685,25 +711,31 @@ export function registerRoutes(app: Express) {
         });
       }
 
+      console.log("[AUDIO-PROXY] Python response status:", pythonResponse.status);
+
       if (!pythonResponse.ok) {
         // Try to parse error
         let errorData;
+        let errorText = '';
         try {
-          errorData = await pythonResponse.json();
+          errorText = await pythonResponse.text();
+          errorData = JSON.parse(errorText);
         } catch {
-          errorData = { error: `Python backend returned status ${pythonResponse.status}` };
+          errorData = { error: `Python backend returned status ${pythonResponse.status}: ${errorText || 'Unknown error'}` };
         }
         
+        console.error("[AUDIO-PROXY] Python backend error:", errorData);
         return res.status(500).json({ 
           error: errorData.error || "Failed to send audio. Please check if the Python backend is running." 
         });
       }
 
-      // Check if response is audio or JSON
+      // Python backend returns JSON (not raw audio)
+      // Check content type to be safe
       const responseContentType = pythonResponse.headers.get('content-type') || '';
       
       if (responseContentType.includes('audio/')) {
-        // Forward audio response directly
+        // Forward audio response directly (unlikely but handle it)
         const audioBuffer = await pythonResponse.arrayBuffer();
         res.setHeader('Content-Type', responseContentType);
         res.setHeader('X-Response-Text', pythonResponse.headers.get('X-Response-Text') || '');
@@ -712,21 +744,32 @@ export function registerRoutes(app: Express) {
         res.setHeader('X-Response-Intent', pythonResponse.headers.get('X-Response-Intent') || '');
         res.send(Buffer.from(audioBuffer));
       } else {
-        // Forward JSON response
+        // Forward JSON response (Python returns JSON with base64 audio)
         const data = await pythonResponse.json();
+        console.log("[AUDIO-PROXY] Python response:", {
+          hasAudio: !!data.audioResponse,
+          audioLength: data.audioResponse?.length || 0,
+          hasText: !!data.agentResponseText,
+          hasTranscript: !!data.userTranscript,
+          isEnd: data.isEnd
+        });
         res.json(data);
       }
     } catch (error: any) {
-      console.error("Error proxying audio:", error);
+      console.error("[AUDIO-PROXY] Error proxying audio:", error);
+      console.error("[AUDIO-PROXY] Error stack:", error.stack);
       
       // Check if it's a connection error
-      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
         return res.status(500).json({ 
-          error: "Cannot connect to Python backend. Please ensure the Python backend is running." 
+          error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running.` 
         });
       }
       
-      res.status(500).json({ error: error.message || "Failed to send audio" });
+      res.status(500).json({ 
+        error: error.message || "Failed to send audio",
+        details: error.stack 
+      });
     }
   });
 
