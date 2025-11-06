@@ -186,9 +186,9 @@ def start_voice_interview_session(
         
         query_input = QueryInput(
             text=TextInput(
-                text="Hello, I'm ready to start the interview.",
-                language_code=get_dialogflow_config()["language_code"]
-            )
+                text="Hello, I'm ready to start the interview."
+            ),
+            language_code=get_dialogflow_config()["language_code"]
         )
         
         # Configure output audio
