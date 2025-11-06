@@ -10,6 +10,7 @@ import { analyzeInterviewSession } from "./scoring";
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import { Readable } from "stream";
+import FormData from "form-data";
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
   if (process.env.NODE_ENV === 'production') {
@@ -647,7 +648,6 @@ export function registerRoutes(app: Express) {
       if (req.file) {
         // Multipart/form-data: audio file was uploaded
         // Use form-data package for Node.js
-        const FormData = require('form-data');
         const formData = new FormData();
         
         // Add audio file

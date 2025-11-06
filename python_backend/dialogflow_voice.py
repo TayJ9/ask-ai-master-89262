@@ -77,13 +77,14 @@ def detect_intent_with_audio(
         )
         
         # Configure audio output (TTS)
+        from google.cloud.dialogflowcx_v3 import SynthesizeSpeechConfig, VoiceSelectionParams
         output_audio_config = OutputAudioConfig(
             audio_encoding=OutputAudioEncoding.OUTPUT_AUDIO_ENCODING_MP3,
-            synthesize_speech_config={
-                "voice": {
-                    "name": "en-US-Journey-O"  # High-quality Chirp HD voice
-                }
-            }
+            synthesize_speech_config=SynthesizeSpeechConfig(
+                voice=VoiceSelectionParams(
+                    name="en-US-Journey-O"  # High-quality Chirp HD voice
+                )
+            )
         )
         
         # Create query input with audio
@@ -192,13 +193,14 @@ def start_voice_interview_session(
         )
         
         # Configure output audio
+        from google.cloud.dialogflowcx_v3 import SynthesizeSpeechConfig, VoiceSelectionParams
         output_audio_config = OutputAudioConfig(
             audio_encoding=OutputAudioEncoding.OUTPUT_AUDIO_ENCODING_MP3,
-            synthesize_speech_config={
-                "voice": {
-                    "name": "en-US-Journey-O"  # High-quality Chirp HD voice
-                }
-            }
+            synthesize_speech_config=SynthesizeSpeechConfig(
+                voice=VoiceSelectionParams(
+                    name="en-US-Journey-O"  # High-quality Chirp HD voice
+                )
+            )
         )
         
         # Create request with session parameters

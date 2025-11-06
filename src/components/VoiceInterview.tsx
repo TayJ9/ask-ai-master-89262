@@ -56,12 +56,26 @@ export default function VoiceInterview({
   };
 
   // Play audio response from Dialogflow
-  const playAudioResponse = useCallback((audioBase64: string) => {
+  const playAudioResponse = useCallback((audioBase64: string, agentText?: string) => {
     try {
       // Stop any currently playing audio
       if (audioPlayerRef.current) {
         audioPlayerRef.current.pause();
         audioPlayerRef.current = null;
+      }
+
+      // If no audio but we have text, use text-to-speech as fallback or just continue
+      if (!audioBase64 || audioBase64.trim() === '') {
+        console.warn('No audio response received, continuing with text response');
+        // Auto-start recording after a short delay if no audio
+        if (!isInterviewComplete && !isProcessing) {
+          setTimeout(() => {
+            if (startRecordingRef.current) {
+              startRecordingRef.current();
+            }
+          }, 500);
+        }
+        return;
       }
 
       // Create audio blob from base64
@@ -100,20 +114,39 @@ export default function VoiceInterview({
       audio.onerror = (e) => {
         setIsPlaying(false);
         console.error('Audio playback error:', e);
-        toast({
-          title: "Audio Error",
-          description: "Could not play audio response.",
-          variant: "destructive",
-        });
+        // Auto-start recording even if audio fails
+        if (!isInterviewComplete && !isProcessing) {
+          setTimeout(() => {
+            if (startRecordingRef.current) {
+              startRecordingRef.current();
+            }
+          }, 300);
+        }
       };
 
       audio.play().catch((err) => {
         setIsPlaying(false);
         console.error('Audio play error:', err);
+        // Auto-start recording even if play fails
+        if (!isInterviewComplete && !isProcessing) {
+          setTimeout(() => {
+            if (startRecordingRef.current) {
+              startRecordingRef.current();
+            }
+          }, 300);
+        }
       });
     } catch (error) {
       console.error('Error playing audio:', error);
       setIsPlaying(false);
+      // Auto-start recording even on error
+      if (!isInterviewComplete && !isProcessing) {
+        setTimeout(() => {
+          if (startRecordingRef.current) {
+            startRecordingRef.current();
+          }
+        }, 300);
+      }
     }
   }, [isInterviewComplete, isProcessing, toast]);
 
@@ -221,29 +254,48 @@ export default function VoiceInterview({
         audio.onerror = (e) => {
           setIsPlaying(false);
           console.error('Audio playback error:', e);
-          toast({
-            title: "Audio Error",
-            description: "Could not play audio response.",
-            variant: "destructive",
-          });
+          // Auto-start recording even if audio fails
+          if (!isInterviewComplete && !isProcessing) {
+            setTimeout(() => {
+              if (startRecordingRef.current) {
+                startRecordingRef.current();
+              }
+            }, 300);
+          }
         };
 
         audio.play().catch((err) => {
           setIsPlaying(false);
           console.error('Audio play error:', err);
+          // Auto-start recording even if play fails
+          if (!isInterviewComplete && !isProcessing) {
+            setTimeout(() => {
+              if (startRecordingRef.current) {
+                startRecordingRef.current();
+              }
+            }, 300);
+          }
         });
       } else {
         // Response is JSON (fallback if no audio)
         const data = await response.json();
-        if (data.audioResponse) {
-          // If base64 audio in JSON (backward compatibility)
-          playAudioResponse(data.audioResponse);
+        if (data.audioResponse || data.agentResponseText) {
+          // Play audio response (will auto-start recording if no audio)
+          playAudioResponse(data.audioResponse || '', data.agentResponseText);
         } else if (data.error) {
           toast({
             title: "Warning",
             description: data.error || "No audio response received.",
             variant: "destructive",
           });
+          // Auto-start recording even on error
+          if (!isInterviewComplete && !isProcessing) {
+            setTimeout(() => {
+              if (startRecordingRef.current) {
+                startRecordingRef.current();
+              }
+            }, 500);
+          }
         }
       }
 
@@ -331,12 +383,21 @@ export default function VoiceInterview({
   // Start voice interview session (only if not already started by parent)
   useEffect(() => {
     // If we have initial audio response, session was already started by parent
-    if (initialAudioResponse) {
-      // Play the initial audio response
-      playAudioResponse(initialAudioResponse);
+    if (initialAudioResponse || initialAgentText) {
+      // Play the initial audio response (even if empty, will auto-start recording)
+      if (initialAudioResponse) {
+        playAudioResponse(initialAudioResponse, initialAgentText);
+      } else if (initialAgentText) {
+        // If no audio but we have text, still auto-start recording after a moment
+        setTimeout(() => {
+          if (startRecordingRef.current) {
+            startRecordingRef.current();
+          }
+        }, 1000);
+      }
       toast({
         title: "Voice Interview Started",
-        description: "You can now speak to the AI interviewer.",
+        description: "Listen for the AI's question, then speak your answer.",
       });
       return;
     }
@@ -384,14 +445,12 @@ export default function VoiceInterview({
 
         const data = await response.json();
         
-        // Play the first audio response
-        if (data.audioResponse) {
-          playAudioResponse(data.audioResponse);
-        }
+        // Play the first audio response (will auto-start recording if no audio)
+        playAudioResponse(data.audioResponse || '', data.agentResponseText);
         
         toast({
           title: "Voice Interview Started",
-          description: "You can now speak to the AI interviewer.",
+          description: "Listen for the AI's question, then speak your answer.",
         });
       } catch (error: any) {
         console.error('Error starting voice interview:', error);
