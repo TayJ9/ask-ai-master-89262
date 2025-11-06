@@ -42,6 +42,8 @@ export default function VoiceInterview({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
+  const handleRecordingStopRef = useRef<(() => Promise<void>) | null>(null);
+  const startRecordingRef = useRef<(() => Promise<void>) | null>(null);
   const { toast } = useToast();
 
   // Get auth token
@@ -82,7 +84,9 @@ export default function VoiceInterview({
         // Auto-start recording after AI finishes speaking
         if (!isInterviewComplete && !isProcessing) {
           setTimeout(() => {
-            startRecording();
+            if (startRecordingRef.current) {
+              startRecordingRef.current();
+            }
           }, 300);
         }
       };
@@ -105,61 +109,7 @@ export default function VoiceInterview({
       console.error('Error playing audio:', error);
       setIsPlaying(false);
     }
-  }, [isInterviewComplete, isProcessing, toast, startRecording]);
-
-  // Start recording microphone
-  const startRecording = useCallback(async () => {
-    try {
-      // Stop any playing audio
-      if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
-        audioPlayerRef.current.pause();
-        setIsPlaying(false);
-      }
-
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          sampleRate: 24000,
-        }
-      });
-
-      // Use WebM Opus codec for better compatibility with Dialogflow
-      const options = {
-        mimeType: 'audio/webm;codecs=opus',
-        audioBitsPerSecond: 64000
-      };
-
-      const mediaRecorder = new MediaRecorder(stream, options);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
-
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
-          audioChunksRef.current.push(event.data);
-        }
-      };
-
-      mediaRecorder.onstop = handleRecordingStop;
-      mediaRecorder.start(1000); // Collect data every second
-      setIsRecording(true);
-      setRecordingDuration(0);
-
-      // Start duration timer
-      recordingTimerRef.current = setInterval(() => {
-        setRecordingDuration((prev) => prev + 1);
-      }, 1000);
-
-      console.log("Recording started");
-    } catch (error) {
-      console.error("Microphone error:", error);
-      toast({
-        title: "Microphone Error",
-        description: "Could not access microphone. Please check permissions.",
-        variant: "destructive",
-      });
-    }
-  }, [toast, handleRecordingStop]);
+  }, [isInterviewComplete, isProcessing, toast]);
 
   // Handle recording stop and send to Dialogflow
   const handleRecordingStop = useCallback(async () => {
@@ -243,7 +193,9 @@ export default function VoiceInterview({
           // Auto-start recording after AI finishes speaking
           if (!isInterviewComplete && !isProcessing) {
             setTimeout(() => {
-              startRecording();
+              if (startRecordingRef.current) {
+                startRecordingRef.current();
+              }
             }, 300);
           }
         };
@@ -288,7 +240,75 @@ export default function VoiceInterview({
     } finally {
       setIsProcessing(false);
     }
-  }, [sessionId, playAudioResponse, toast, isInterviewComplete, isProcessing, startRecording]);
+  }, [sessionId, playAudioResponse, toast, isInterviewComplete, isProcessing]);
+
+  // Update refs whenever functions change
+  useEffect(() => {
+    handleRecordingStopRef.current = handleRecordingStop;
+  }, [handleRecordingStop]);
+
+  // Start recording microphone - uses ref to avoid circular dependency
+  const startRecording = useCallback(async () => {
+    try {
+      // Stop any playing audio
+      if (audioPlayerRef.current && !audioPlayerRef.current.paused) {
+        audioPlayerRef.current.pause();
+        setIsPlaying(false);
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          sampleRate: 24000,
+        }
+      });
+
+      // Use WebM Opus codec for better compatibility with Dialogflow
+      const options = {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 64000
+      };
+
+      const mediaRecorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        if (handleRecordingStopRef.current) {
+          handleRecordingStopRef.current();
+        }
+      };
+      mediaRecorder.start(1000); // Collect data every second
+      setIsRecording(true);
+      setRecordingDuration(0);
+
+      // Start duration timer
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((prev) => prev + 1);
+      }, 1000);
+
+      console.log("Recording started");
+    } catch (error) {
+      console.error("Microphone error:", error);
+      toast({
+        title: "Microphone Error",
+        description: "Could not access microphone. Please check permissions.",
+        variant: "destructive",
+      });
+    }
+  }, [toast]);
+
+  // Update startRecording ref
+  useEffect(() => {
+    startRecordingRef.current = startRecording;
+  }, [startRecording]);
 
   // Start voice interview session (only if not already started by parent)
   useEffect(() => {
@@ -381,90 +401,7 @@ export default function VoiceInterview({
         console.error("Error stopping recording:", error);
       }
     }
-  }, [isRecording, handleRecordingStop]);
-
-  // Complete interview
-  const handleCompleteInterview = async () => {
-    setIsProcessing(true);
-    
-    try {
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm;codecs=opus' });
-      
-      // Convert to base64 for sending
-      const reader = new FileReader();
-      reader.readAsDataURL(audioBlob);
-      
-      reader.onloadend = async () => {
-        try {
-          const base64Audio = reader.result?.toString().split(',')[1];
-          
-          if (!base64Audio) {
-            throw new Error('Failed to encode audio');
-          }
-
-          const token = getAuthToken();
-          const response = await fetch('/api/voice-interview/send-audio', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              session_id: sessionId,
-              audio: base64Audio,
-              audioEncoding: 'AUDIO_ENCODING_WEBM_OPUS',
-              sampleRate: 24000,
-            }),
-          });
-
-          if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Failed to send audio');
-          }
-
-          const data = await response.json();
-          
-          // Update transcript
-          if (data.userTranscript) {
-            setLastTranscript(data.userTranscript);
-          }
-
-          // Check if interview is complete
-          if (data.isEnd) {
-            setIsInterviewComplete(true);
-            toast({
-              title: "Interview Complete! 🎉",
-              description: "You can now end the interview to see your results.",
-            });
-          }
-
-          // Play the audio response
-          if (data.audioResponse) {
-            playAudioResponse(data.audioResponse);
-          }
-
-          setRecordingDuration(0);
-        } catch (error: any) {
-          console.error('Error sending audio:', error);
-          toast({
-            title: "Error",
-            description: error.message || "Failed to process audio. Please try again.",
-            variant: "destructive",
-          });
-        } finally {
-          setIsProcessing(false);
-        }
-      };
-    } catch (error: any) {
-      console.error('Error processing recording:', error);
-      setIsProcessing(false);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to process recording.",
-        variant: "destructive",
-      });
-    }
-  }, [sessionId, playAudioResponse, toast]);
+  }, [isRecording]);
 
   // Complete interview
   const handleCompleteInterview = useCallback(async () => {
