@@ -23,26 +23,32 @@ interface AuthRequest extends Express.Request {
 }
 
 function authenticateToken(req: any, res: any, next: any) {
-  const authHeader = req.headers['authorization'];
-  console.log('Authentication check for:', req.path);
-  console.log('Authorization header present:', !!authHeader);
-  
-  const token = authHeader && authHeader.split(' ')[1];
+  try {
+    const authHeader = req.headers['authorization'];
+    console.log('Authentication check for:', req.path);
+    console.log('Authorization header present:', !!authHeader);
+    console.log('Authorization header value:', authHeader ? authHeader.substring(0, 20) + '...' : 'null');
+    
+    const token = authHeader && authHeader.split(' ')[1];
 
-  if (!token) {
-    console.error('No token provided for:', req.path);
-    return res.status(401).json({ error: 'No token provided' });
-  }
-
-  jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
-    if (err) {
-      console.error('Token verification failed:', err.message);
-      return res.status(403).json({ error: 'Invalid token' });
+    if (!token) {
+      console.error('No token provided for:', req.path);
+      return res.status(401).json({ error: 'No token provided' });
     }
-    req.userId = decoded.userId;
-    console.log('Token verified for user:', req.userId);
-    next();
-  });
+
+    jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
+      if (err) {
+        console.error('Token verification failed:', err.message);
+        return res.status(403).json({ error: 'Invalid token' });
+      }
+      req.userId = decoded.userId;
+      console.log('Token verified for user:', req.userId);
+      next();
+    });
+  } catch (error: any) {
+    console.error('Error in authenticateToken middleware:', error);
+    return res.status(500).json({ error: 'Authentication error: ' + error.message });
+  }
 }
 
 export function registerRoutes(app: Express) {
@@ -526,28 +532,48 @@ export function registerRoutes(app: Express) {
 
       console.log(`Proxying voice interview start to ${PYTHON_BACKEND_URL}/api/voice-interview/start`);
       console.log("Request body:", JSON.stringify(req.body));
+      console.log("Request userId:", req.userId);
 
-      const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(req.body),
-      });
+      let response;
+      try {
+        response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(req.body),
+        });
+      } catch (fetchError: any) {
+        console.error("Fetch error connecting to Python backend:", fetchError);
+        console.error("Error name:", fetchError.name);
+        console.error("Error code:", fetchError.code);
+        console.error("Error message:", fetchError.message);
+        
+        // Check if it's a connection error
+        if (fetchError.code === 'ECONNREFUSED' || fetchError.message.includes('fetch failed') || fetchError.message.includes('ECONNREFUSED')) {
+          return res.status(500).json({ 
+            error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running.` 
+          });
+        }
+        throw fetchError;
+      }
 
       console.log(`Python backend response status: ${response.status}`);
+      console.log(`Python backend response headers:`, Object.fromEntries(response.headers.entries()));
 
       if (!response.ok) {
         // Try to parse error, but don't fail if it's not JSON
         let errorData;
+        let errorText = '';
         try {
-          errorData = await response.json();
+          errorText = await response.text();
+          errorData = JSON.parse(errorText);
         } catch {
-          const text = await response.text().catch(() => 'Unknown error');
-          errorData = { error: `Python backend returned status ${response.status}: ${text}` };
+          errorData = { error: `Python backend returned status ${response.status}: ${errorText || 'Unknown error'}` };
         }
         
-        console.error("Python backend error:", errorData);
+        console.error("Python backend error response:", errorData);
+        console.error("Python backend error text:", errorText);
         
         // Don't pass through auth errors from Python backend - they're not auth errors for our API
         // Python backend doesn't do auth, so any error is a backend issue
