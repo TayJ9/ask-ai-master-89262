@@ -29,6 +29,7 @@ def get_dialogflow_config():
     project_id = os.environ.get("GCP_PROJECT_ID") or os.environ.get("DIALOGFLOW_PROJECT_ID")
     location_id = os.environ.get("DF_LOCATION_ID") or os.environ.get("DIALOGFLOW_LOCATION_ID", "us-central1")
     agent_id = os.environ.get("DF_AGENT_ID") or os.environ.get("DIALOGFLOW_AGENT_ID")
+    environment_id = os.environ.get("DF_ENVIRONMENT_ID") or os.environ.get("DIALOGFLOW_ENVIRONMENT_ID", "DRAFT")
     language_code = os.environ.get("DIALOGFLOW_LANGUAGE_CODE", "en")
     
     if not project_id:
@@ -40,6 +41,7 @@ def get_dialogflow_config():
         "project_id": project_id,
         "location_id": location_id,
         "agent_id": agent_id,
+        "environment_id": environment_id,
         "language_code": language_code
     }
 
@@ -70,14 +72,11 @@ def initialize_firestore():
     return db_client
 
 def get_session_path(session_id: str) -> str:
-    """Generate session path for Dialogflow"""
+    """Generate session path for Dialogflow CX (requires environment)"""
     config = get_dialogflow_config()
-    return SessionsClient.session_path(
-        project=config["project_id"],
-        location=config["location_id"],
-        agent=config["agent_id"],
-        session=session_id
-    )
+    # Dialogflow CX requires: projects/{project}/locations/{location}/agents/{agent}/environments/{environment}/sessions/{session}
+    # SessionsClient.session_path() doesn't support environment, so we construct it manually
+    return f"projects/{config['project_id']}/locations/{config['location_id']}/agents/{config['agent_id']}/environments/{config['environment_id']}/sessions/{session_id}"
 
 # Initialize Dialogflow client
 try:
