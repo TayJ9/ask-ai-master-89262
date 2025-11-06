@@ -5,6 +5,11 @@ import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
 import { textToSpeech, speechToText, analyzeInterviewResponse, chatWithCoach } from "./openai";
+import { startInterviewSession, sendMessageToDialogflow, generateSessionId } from "./dialogflow";
+import { analyzeInterviewSession } from "./scoring";
+import multer from "multer";
+import pdfParse from "pdf-parse";
+import { Readable } from "stream";
 
 const JWT_SECRET = process.env.JWT_SECRET || (() => {
   if (process.env.NODE_ENV === 'production') {
@@ -308,6 +313,308 @@ export function registerRoutes(app: Express) {
       console.error("Coach error:", error);
       res.status(500).json({ 
         error: 'Failed to get coach response',
+        details: error.message || String(error)
+      });
+    }
+  });
+
+  // Resume upload endpoint
+  const upload = multer({ storage: multer.memoryStorage() });
+  
+  app.post("/api/resume/upload", authenticateToken, upload.single('file'), async (req: any, res) => {
+    try {
+      let resumeText = "";
+
+      if (req.file) {
+        // PDF file uploaded
+        try {
+          const pdfBuffer = req.file.buffer;
+          const pdfData = await pdfParse(pdfBuffer);
+          resumeText = pdfData.text;
+        } catch (error: any) {
+          return res.status(400).json({ 
+            error: 'Failed to parse PDF file',
+            details: error.message 
+          });
+        }
+      } else if (req.body.text) {
+        // Text pasted directly
+        resumeText = req.body.text;
+      } else {
+        return res.status(400).json({ error: 'No file or text provided' });
+      }
+
+      if (!resumeText || resumeText.trim().length === 0) {
+        return res.status(400).json({ error: 'Resume text is empty' });
+      }
+
+      // Limit resume text length (optional, adjust as needed)
+      const maxLength = 5000;
+      if (resumeText.length > maxLength) {
+        resumeText = resumeText.substring(0, maxLength) + "...";
+      }
+
+      res.json({ resumeText: resumeText.trim() });
+    } catch (error: any) {
+      console.error("Resume upload error:", error);
+      res.status(500).json({ 
+        error: 'Failed to process resume',
+        details: error.message || String(error)
+      });
+    }
+  });
+
+  // Dialogflow interview endpoints
+  app.post("/api/dialogflow/start-interview", authenticateToken, async (req: any, res) => {
+    try {
+      const { role, resumeText, persona, difficulty } = req.body;
+
+      if (!role) {
+        return res.status(400).json({ error: 'Role is required' });
+      }
+
+      console.log("Starting interview:", { role, hasResume: !!resumeText, difficulty });
+
+      // Create interview session
+      const session = await storage.createSession({
+        userId: req.userId,
+        role,
+        status: "in_progress",
+        resumeText: resumeText || null,
+        difficulty: difficulty || "Medium",
+      });
+
+      console.log("Session created:", session.id);
+
+      // Generate Dialogflow session ID
+      const dialogflowSessionId = generateSessionId(req.userId, session.id);
+
+      // Start Dialogflow session
+      const roleSelection = `I want to interview for the ${role} role.`;
+      
+      console.log("Calling Dialogflow startInterviewSession...");
+      const result = await startInterviewSession(
+        dialogflowSessionId,
+        roleSelection,
+        resumeText || "",
+        persona || "",
+        difficulty || "Medium"
+      );
+
+      console.log("Dialogflow response received:", { hasResponse: !!result.agentResponse });
+
+      // Update session with Dialogflow session ID
+      await storage.updateSession(session.id, {
+        dialogflowSessionId,
+      });
+
+      // Store first turn (agent's first question)
+      await storage.createTurn({
+        sessionId: session.id,
+        turnNumber: 1,
+        agentMessage: result.agentResponse,
+        userTranscript: null,
+      });
+
+      console.log("Interview started successfully:", session.id);
+
+      res.json({
+        sessionId: session.id,
+        dialogflowSessionId,
+        firstQuestion: result.agentResponse,
+      });
+    } catch (error: any) {
+      console.error("Start interview error:", error);
+      console.error("Error stack:", error.stack);
+      
+      // Provide more helpful error messages
+      let errorMessage = 'Failed to start interview';
+      if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      // Check for common Dialogflow errors
+      if (error.message?.includes('GOOGLE_CREDENTIALS')) {
+        errorMessage = 'Dialogflow credentials not configured. Please check your environment variables.';
+      } else if (error.message?.includes('DIALOGFLOW_PROJECT_ID') || error.message?.includes('DIALOGFLOW_AGENT_ID')) {
+        errorMessage = 'Dialogflow configuration missing. Please check your environment variables.';
+      } else if (error.message?.includes('permission') || error.message?.includes('authentication')) {
+        errorMessage = 'Dialogflow authentication failed. Please check your service account credentials.';
+      }
+      
+      res.status(500).json({ 
+        error: errorMessage,
+        details: error.message || String(error)
+      });
+    }
+  });
+
+  app.post("/api/dialogflow/send-message", authenticateToken, async (req: any, res) => {
+    try {
+      const { sessionId, userMessage } = req.body;
+
+      if (!sessionId || !userMessage) {
+        return res.status(400).json({ error: 'Session ID and user message are required' });
+      }
+
+      // Verify session belongs to user
+      const session = await storage.getSessionById(sessionId);
+      if (!session || session.userId !== req.userId) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      if (!session.dialogflowSessionId) {
+        return res.status(400).json({ error: 'Dialogflow session not initialized' });
+      }
+
+      // Get existing turns to determine next turn number
+      const existingTurns = await storage.getTurnsBySessionId(sessionId);
+      const nextTurnNumber = existingTurns.length + 1;
+
+      // Send message to Dialogflow
+      const result = await sendMessageToDialogflow(
+        session.dialogflowSessionId,
+        userMessage
+      );
+
+      // Store user's message turn
+      await storage.createTurn({
+        sessionId,
+        turnNumber: nextTurnNumber,
+        agentMessage: null,
+        userTranscript: userMessage,
+      });
+
+      // Store agent's response turn
+      await storage.createTurn({
+        sessionId,
+        turnNumber: nextTurnNumber + 1,
+        agentMessage: result.agentResponse,
+        userTranscript: null,
+      });
+
+      res.json({
+        agentResponse: result.agentResponse,
+        isInterviewComplete: result.isComplete,
+        intent: result.intent,
+      });
+    } catch (error: any) {
+      console.error("Send message error:", error);
+      res.status(500).json({ 
+        error: 'Failed to send message',
+        details: error.message || String(error)
+      });
+    }
+  });
+
+  // Voice interview endpoints (proxy to Python Flask server)
+  const PYTHON_BACKEND_URL = process.env.PYTHON_BACKEND_URL || "http://localhost:5000";
+  
+  app.post("/api/voice-interview/start", authenticateToken, async (req: any, res) => {
+    try {
+      const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return res.status(response.status).json(error);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error proxying voice interview start:", error);
+      res.status(500).json({ error: error.message || "Failed to start voice interview" });
+    }
+  });
+
+  app.post("/api/voice-interview/send-audio", authenticateToken, async (req: any, res) => {
+    try {
+      const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return res.status(response.status).json(error);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error proxying audio:", error);
+      res.status(500).json({ error: error.message || "Failed to send audio" });
+    }
+  });
+
+  app.post("/api/voice-interview/score", authenticateToken, async (req: any, res) => {
+    try {
+      const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/score`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(req.body),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        return res.status(response.status).json(error);
+      }
+
+      const data = await response.json();
+      res.json(data);
+    } catch (error: any) {
+      console.error("Error proxying voice interview score:", error);
+      res.status(500).json({ error: error.message || "Failed to score interview" });
+    }
+  });
+
+  app.post("/api/dialogflow/complete-interview", authenticateToken, async (req: any, res) => {
+    try {
+      const { sessionId } = req.body;
+
+      if (!sessionId) {
+        return res.status(400).json({ error: 'Session ID is required' });
+      }
+
+      // Verify session belongs to user
+      const session = await storage.getSessionById(sessionId);
+      if (!session || session.userId !== req.userId) {
+        return res.status(403).json({ error: 'Unauthorized' });
+      }
+
+      // Analyze entire interview session
+      const analysis = await analyzeInterviewSession(sessionId);
+
+      // Update session with results
+      await storage.updateSession(sessionId, {
+        status: "completed",
+        overallScore: analysis.overallScore,
+        feedbackSummary: analysis.feedbackSummary,
+        completedAt: new Date(),
+      });
+
+      res.json({
+        overallScore: analysis.overallScore,
+        feedbackSummary: analysis.feedbackSummary,
+        strengths: analysis.strengths,
+        improvements: analysis.improvements,
+        scoresByDimension: analysis.scoresByDimension,
+      });
+    } catch (error: any) {
+      console.error("Complete interview error:", error);
+      res.status(500).json({ 
+        error: 'Failed to complete interview',
         details: error.message || String(error)
       });
     }

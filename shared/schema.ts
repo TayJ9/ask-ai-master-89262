@@ -42,6 +42,9 @@ export const interviewSessions = pgTable("interview_sessions", {
   status: text("status").notNull().default("in_progress"),
   overallScore: integer("overall_score"),
   feedbackSummary: text("feedback_summary"),
+  resumeText: text("resume_text"),
+  dialogflowSessionId: text("dialogflow_session_id"),
+  difficulty: text("difficulty"),
   startedAt: timestamp("started_at").defaultNow(),
   completedAt: timestamp("completed_at"),
 });
@@ -71,3 +74,20 @@ export const insertInterviewResponseSchema = createInsertSchema(interviewRespons
 });
 export type InsertInterviewResponse = z.infer<typeof insertInterviewResponseSchema>;
 export type InterviewResponse = typeof interviewResponses.$inferSelect;
+
+// Interview turns for Dialogflow conversational flow
+export const interviewTurns = pgTable("interview_turns", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  sessionId: uuid("session_id").notNull().references(() => interviewSessions.id, { onDelete: "cascade" }),
+  turnNumber: integer("turn_number").notNull(),
+  agentMessage: text("agent_message"),
+  userTranscript: text("user_transcript"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInterviewTurnSchema = createInsertSchema(interviewTurns).omit({ 
+  id: true, 
+  createdAt: true 
+});
+export type InsertInterviewTurn = z.infer<typeof insertInterviewTurnSchema>;
+export type InterviewTurn = typeof interviewTurns.$inferSelect;

@@ -5,6 +5,7 @@ import {
   interviewQuestions, 
   interviewSessions, 
   interviewResponses,
+  interviewTurns,
   InsertProfile,
   Profile,
   InsertInterviewQuestion,
@@ -12,7 +13,9 @@ import {
   InsertInterviewSession,
   InterviewSession,
   InsertInterviewResponse,
-  InterviewResponse
+  InterviewResponse,
+  InsertInterviewTurn,
+  InterviewTurn
 } from "@shared/schema";
 
 export interface IStorage {
@@ -33,6 +36,10 @@ export interface IStorage {
   // Interview Responses
   createResponse(data: InsertInterviewResponse): Promise<InterviewResponse>;
   getResponsesBySessionId(sessionId: string): Promise<InterviewResponse[]>;
+  
+  // Interview Turns (for Dialogflow)
+  createTurn(data: InsertInterviewTurn): Promise<InterviewTurn>;
+  getTurnsBySessionId(sessionId: string): Promise<InterviewTurn[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -100,6 +107,18 @@ export class DatabaseStorage implements IStorage {
     return await db.query.interviewResponses.findMany({
       where: eq(interviewResponses.sessionId, sessionId),
       orderBy: [interviewResponses.createdAt],
+    });
+  }
+
+  async createTurn(data: InsertInterviewTurn): Promise<InterviewTurn> {
+    const [turn] = await db.insert(interviewTurns).values(data).returning();
+    return turn;
+  }
+
+  async getTurnsBySessionId(sessionId: string): Promise<InterviewTurn[]> {
+    return await db.query.interviewTurns.findMany({
+      where: eq(interviewTurns.sessionId, sessionId),
+      orderBy: [interviewTurns.turnNumber, interviewTurns.createdAt],
     });
   }
 }
