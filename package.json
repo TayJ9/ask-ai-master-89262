@@ -9,7 +9,12 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "preview": "vite preview",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx server/seed.ts"
+    "db:fix": "tsx fix_schema.ts",
+    "db:seed": "tsx server/seed.ts",
+    "test:full": "tsx test_full_system.ts",
+    "test:python": "cd python_backend && python3 ../test_python_backend.py",
+    "test": "tsx test_system.ts",
+    "test:voice": "cd python_backend && python ../test_voice_pipeline.py"
   },
   "dependencies": {
     "@google-cloud/dialogflow-cx": "^5.4.0",

@@ -52,9 +52,7 @@ db_client = None
 if USE_REPLIT_DB:
     try:
         from replit import db
-        print("Using Replit Database")
     except ImportError:
-        print("Replit Database not available. Install with: pip install replit")
         USE_REPLIT_DB = False
 
 def initialize_firestore():
@@ -65,9 +63,7 @@ def initialize_firestore():
             from google.cloud import firestore
             credentials = get_credentials()
             db_client = firestore.Client(credentials=credentials)
-            print("Using Google Firestore")
         except Exception as e:
-            print(f"Firestore initialization error: {e}")
             raise
     return db_client
 
@@ -105,7 +101,6 @@ def get_session_path(session_id: str) -> str:
                 location_id = parts[loc_idx + 1]
     
     session_path = f"projects/{project_id}/locations/{location_id}/agents/{agent_id}/environments/{config['environment_id']}/sessions/{session_id}"
-    print(f"Generated session path: {session_path}")  # Debug logging
     return session_path
 
 # Initialize Dialogflow client
@@ -116,9 +111,7 @@ try:
     api_endpoint = f"{dialogflow_config['location_id']}-dialogflow.googleapis.com"
     client_options = ClientOptions.ClientOptions(api_endpoint=api_endpoint)
     dialogflow_client = SessionsClient(credentials=credentials, client_options=client_options)
-    print(f"Dialogflow client initialized for {dialogflow_config['location_id']}")
 except Exception as e:
-    print(f"Error initializing Dialogflow client: {e}")
     raise
 
 # Initialize Gemini for scoring
@@ -127,24 +120,18 @@ if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
     try:
         gemini_model = genai.GenerativeModel('gemini-2.5-flash')
-        print("Gemini 2.5 Flash model initialized for scoring")
     except:
         try:
             gemini_model = genai.GenerativeModel('gemini-2.0-flash-exp')
-            print("Gemini 2.0 Flash Experimental model initialized for scoring")
         except:
             try:
                 gemini_model = genai.GenerativeModel('gemini-1.5-flash')
-                print("Gemini 1.5 Flash model initialized for scoring")
             except:
                 try:
                     gemini_model = genai.GenerativeModel('gemini-1.5-pro')
-                    print("Gemini 1.5 Pro model initialized for scoring")
                 except:
                     gemini_model = genai.GenerativeModel('gemini-pro')
-                    print("Gemini Pro model initialized for scoring")
 else:
-    print("Warning: GEMINI_API_KEY not set. Scoring will not work.")
     gemini_model = None
 
 # Database helper functions
@@ -178,7 +165,6 @@ def save_transcript_entry(session_id: str, turn_number: int, question: str, answ
         "answer": answer
     })
     save_to_database(session_id, "transcript", transcript)
-    print(f"Saved transcript entry {turn_number} for session {session_id}")
 
 def get_transcript(session_id: str) -> List[Dict]:
     """Get full transcript for a session"""
@@ -197,8 +183,6 @@ def score_interview(session_id: str) -> Dict:
         transcript = get_transcript(session_id)
         if not transcript or len(transcript) == 0:
             raise ValueError(f"No transcript found for session {session_id}")
-        
-        print(f"Found {len(transcript)} Q&A pairs in transcript")
         
         transcript_text = "Interview Transcript:\n\n"
         for entry in transcript:
@@ -253,7 +237,6 @@ Please provide your analysis in the following JSON format (make sure all {num_qu
   "summary": "Overall, you demonstrated solid technical foundations with hands-on experience that shows you've worked on real projects. Your strength lies in practical implementation experience - you were able to speak confidently about technologies you've used and challenges you've faced. Throughout the interview, you showed particular strength in discussing system architecture and database fundamentals, which indicates good foundational knowledge. However, there are some areas that need attention: your answers would benefit from deeper theoretical understanding of distributed systems concepts, more exposure to system design trade-offs, and stronger articulation of why you made certain technical decisions. To advance your skills, I recommend focusing on studying system design patterns and principles (read 'Designing Data-Intensive Applications' by Martin Kleppmann), practicing explaining technical trade-offs (e.g., consistency vs. availability, vertical vs. horizontal scaling), and working on articulating the reasoning behind your technical choices. You're currently at a solid mid-level engineer stage, and with focused study on these areas, you'll be well-positioned for senior-level roles. For now, you'd be a good fit for a mid-level engineering position where you can continue to grow while contributing meaningfully to projects."
 }}"""
         
-        print(f"Calling Gemini API to score {num_questions} questions...")
         try:
             response = gemini_model.generate_content(scoring_prompt)
             response_text = response.text
@@ -275,7 +258,8 @@ Please provide your analysis in the following JSON format (make sure all {num_qu
         
         question_scores = score_data.get('question_scores', [])
         if len(question_scores) != num_questions:
-            print(f"Warning: Expected {num_questions} question scores, but got {len(question_scores)}")
+            # Log warning but continue with available scores
+            pass
         
         if 'overall_score' not in score_data:
             raise ValueError("Missing 'overall_score' in response")
@@ -287,15 +271,10 @@ Please provide your analysis in the following JSON format (make sure all {num_qu
         save_to_database(session_id, "score_report", score_data)
         save_to_database(session_id, "scored_at", json.dumps({"timestamp": str(__import__("datetime").datetime.now())}))
         
-        print(f"Interview scored for session {session_id}")
-        print(f"Scored {len(question_scores)} individual questions")
-        print(f"Overall score: {score_data.get('overall_score', 'N/A')}/100")
+        # Scoring completed successfully
         
         return score_data
     
     except Exception as e:
-        print(f"Error scoring interview: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 

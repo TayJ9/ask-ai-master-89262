@@ -26,9 +26,7 @@ interface AuthRequest extends Express.Request {
 function authenticateToken(req: any, res: any, next: any) {
   try {
     const authHeader = req.headers['authorization'];
-    console.log('Authentication check for:', req.path);
-    console.log('Authorization header present:', !!authHeader);
-    console.log('Authorization header value:', authHeader ? authHeader.substring(0, 20) + '...' : 'null');
+    // Authentication check
     
     const token = authHeader && authHeader.split(' ')[1];
 
@@ -43,7 +41,7 @@ function authenticateToken(req: any, res: any, next: any) {
         return res.status(403).json({ error: 'Invalid token' });
       }
       req.userId = decoded.userId;
-      console.log('Token verified for user:', req.userId);
+      // Token verified
       next();
     });
   } catch (error: any) {
@@ -386,7 +384,7 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'Role is required' });
       }
 
-      console.log("Starting interview:", { role, hasResume: !!resumeText, difficulty });
+      // Starting interview session
 
       // Create interview session
       // Only include resumeText if it has a value (conditionally build the object)
@@ -404,15 +402,12 @@ export function registerRoutes(app: Express) {
       
       const session = await storage.createSession(sessionData);
 
-      console.log("Session created:", session.id);
-
       // Generate Dialogflow session ID
       const dialogflowSessionId = generateSessionId(req.userId, session.id);
 
       // Start Dialogflow session
       const roleSelection = `I want to interview for the ${role} role.`;
       
-      console.log("Calling Dialogflow startInterviewSession...");
       const result = await startInterviewSession(
         dialogflowSessionId,
         roleSelection,
@@ -420,8 +415,6 @@ export function registerRoutes(app: Express) {
         persona || "",
         difficulty || "Medium"
       );
-
-      console.log("Dialogflow response received:", { hasResponse: !!result.agentResponse });
 
       // Update session with Dialogflow session ID
       await storage.updateSession(session.id, {
@@ -435,8 +428,6 @@ export function registerRoutes(app: Express) {
         agentMessage: result.agentResponse,
         userTranscript: null,
       });
-
-      console.log("Interview started successfully:", session.id);
 
       res.json({
         sessionId: session.id,
@@ -541,16 +532,11 @@ export function registerRoutes(app: Express) {
         return res.status(500).json({ error: "Python backend URL not configured. Please set PYTHON_BACKEND_URL environment variable." });
       }
 
-      console.log(`[VOICE-INTERVIEW-START] Proxying to ${PYTHON_BACKEND_URL}/api/voice-interview/start`);
-      console.log("[VOICE-INTERVIEW-START] Request body:", JSON.stringify(req.body));
-      console.log("[VOICE-INTERVIEW-START] Request userId:", req.userId);
-      console.log("[VOICE-INTERVIEW-START] Python backend URL:", PYTHON_BACKEND_URL);
+      // Proxying voice interview start request to Python backend
 
       let response;
       try {
         const fetchUrl = `${PYTHON_BACKEND_URL}/api/voice-interview/start`;
-        console.log(`[VOICE-INTERVIEW-START] Attempting fetch to: ${fetchUrl}`);
-        
         response = await fetch(fetchUrl, {
           method: "POST",
           headers: {
@@ -558,8 +544,6 @@ export function registerRoutes(app: Express) {
           },
           body: JSON.stringify(req.body),
         });
-        
-        console.log(`[VOICE-INTERVIEW-START] Fetch completed, status: ${response.status}`);
       } catch (fetchError: any) {
         console.error("[VOICE-INTERVIEW-START] Fetch error connecting to Python backend:", fetchError);
         console.error("[VOICE-INTERVIEW-START] Error name:", fetchError.name);
@@ -583,9 +567,6 @@ export function registerRoutes(app: Express) {
         });
       }
 
-      console.log(`Python backend response status: ${response.status}`);
-      console.log(`Python backend response headers:`, Object.fromEntries(response.headers.entries()));
-
       if (!response.ok) {
         // Try to parse error, but don't fail if it's not JSON
         let errorData;
@@ -608,7 +589,6 @@ export function registerRoutes(app: Express) {
       }
 
       const data = await response.json();
-      console.log("Python backend success response");
       res.json(data);
     } catch (error: any) {
       console.error("Error proxying voice interview start:", error);
@@ -653,12 +633,7 @@ export function registerRoutes(app: Express) {
         return res.status(500).json({ error: "Python backend URL not configured." });
       }
 
-      console.log("[AUDIO-PROXY] Received request:", {
-        hasFile: !!req.file,
-        fileSize: req.file?.size,
-        body: req.body,
-        contentType: req.headers['content-type']
-      });
+      // Processing audio request
 
       // Handle multipart/form-data (audio file) or JSON
       let pythonResponse;
@@ -684,12 +659,6 @@ export function registerRoutes(app: Express) {
         if (req.body?.audioEncoding) formData.append('audioEncoding', req.body.audioEncoding);
         if (req.body?.sampleRate) formData.append('sampleRate', req.body.sampleRate);
         
-        console.log("[AUDIO-PROXY] Forwarding to Python backend:", {
-          sessionId,
-          audioSize: req.file.size,
-          url: `${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`
-        });
-        
         // Forward to Python backend
         pythonResponse = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/send-audio`, {
           method: "POST",
@@ -710,8 +679,6 @@ export function registerRoutes(app: Express) {
           body: JSON.stringify(req.body),
         });
       }
-
-      console.log("[AUDIO-PROXY] Python response status:", pythonResponse.status);
 
       if (!pythonResponse.ok) {
         // Try to parse error
@@ -746,13 +713,6 @@ export function registerRoutes(app: Express) {
       } else {
         // Forward JSON response (Python returns JSON with base64 audio)
         const data = await pythonResponse.json();
-        console.log("[AUDIO-PROXY] Python response:", {
-          hasAudio: !!data.audioResponse,
-          audioLength: data.audioResponse?.length || 0,
-          hasText: !!data.agentResponseText,
-          hasTranscript: !!data.userTranscript,
-          isEnd: data.isEnd
-        });
         res.json(data);
       }
     } catch (error: any) {

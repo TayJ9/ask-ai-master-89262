@@ -35,7 +35,6 @@ def start_voice_interview():
         if not role:
             return jsonify({"error": "role is required"}), 400
         
-        print(f"Starting voice interview session {session_id} for role {role}")
         result = start_voice_interview_session(session_id, role, resume_text, difficulty)
         
         # Encode audio to base64 for JSON response
@@ -49,9 +48,6 @@ def start_voice_interview():
         })
     
     except Exception as e:
-        print(f"Error starting voice interview: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/voice-interview/send-audio', methods=['POST'])
@@ -76,8 +72,7 @@ def send_audio():
         # Read audio data (this is temporary, will be discarded after transcription)
         audio_data = audio_file.read()
         
-        print(f"Received audio for session {session_id}, size: {len(audio_data)} bytes")
-        print("CRITICAL: This audio data is NOT being saved - only transcribed text will be stored")
+        # Audio data is temporary - only transcribed text is stored
         
         # Get last agent question for transcript saving
         from dialogflow_interview import get_from_database
@@ -108,9 +103,6 @@ def send_audio():
         })
     
     except Exception as e:
-        print(f"Error processing audio: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/voice-interview/score', methods=['POST'])
@@ -125,15 +117,11 @@ def score_interview_endpoint():
         if not session_id:
             return jsonify({"error": "session_id is required"}), 400
         
-        print(f"Scoring interview for session {session_id} - using text transcript only")
         score_report = score_interview(session_id)
         
         return jsonify(score_report)
     
     except Exception as e:
-        print(f"Error scoring interview: {e}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 @app.route('/health', methods=['GET'])
@@ -144,7 +132,7 @@ def health():
 if __name__ == '__main__':
     # Default to port 5001 to avoid conflict with Node.js server on port 5000
     port = int(os.environ.get('PORT', 5001))
-    print(f"Starting Python Flask backend on port {port}")
-    print(f"Set PORT environment variable to use a different port")
-    app.run(host='0.0.0.0', port=port, debug=True)
+    # Production mode: debug=False for security
+    debug_mode = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    app.run(host='0.0.0.0', port=port, debug=debug_mode)
 

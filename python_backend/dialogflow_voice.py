@@ -39,9 +39,7 @@ try:
     api_endpoint = f"{dialogflow_config['location_id']}-dialogflow.googleapis.com"
     client_options = ClientOptions.ClientOptions(api_endpoint=api_endpoint)
     dialogflow_client = SessionsClient(credentials=credentials, client_options=client_options)
-    print(f"Dialogflow voice client initialized for {dialogflow_config['location_id']}")
 except Exception as e:
-    print(f"Error initializing Dialogflow client: {e}")
     raise
 
 def detect_intent_with_audio(
@@ -119,7 +117,8 @@ def detect_intent_with_audio(
         output_audio = response.output_audio if response.output_audio else b""
         
         if not output_audio:
-            print("Warning: No audio response from Dialogflow")
+            # No audio response - frontend will handle gracefully
+            pass
         
         # Get intent
         intent_name = response.query_result.intent.display_name if response.query_result.intent else ""
@@ -133,14 +132,16 @@ def detect_intent_with_audio(
                 turn_number = len(transcript) + 1
                 save_transcript_entry(session_id, turn_number, last_agent_question, user_transcript)
             except Exception as db_error:
-                print(f"Warning: Could not save transcript entry: {db_error}")
+                # Transcript save failed - non-fatal, continue
+                pass
         
         # Store the current agent question for next turn
         if agent_response_text:
             try:
                 save_to_database(session_id, "last_agent_question", agent_response_text)
             except Exception as db_error:
-                print(f"Warning: Could not save last_agent_question: {db_error}")
+                # Last agent question save failed - non-fatal, continue
+                pass
         
         return {
             "audio_response": output_audio,
@@ -151,9 +152,6 @@ def detect_intent_with_audio(
         }
     
     except Exception as e:
-        print(f"Error in detect_intent_with_audio: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
 def start_voice_interview_session(
@@ -237,7 +235,8 @@ def start_voice_interview_session(
             try:
                 save_to_database(session_id, "last_agent_question", agent_response_text)
             except Exception as db_error:
-                print(f"Warning: Could not save initial question: {db_error}")
+                # Initial question save failed - non-fatal, continue
+                pass
         
         return {
             "audio_response": output_audio,
@@ -246,8 +245,5 @@ def start_voice_interview_session(
         }
     
     except Exception as e:
-        print(f"Error starting voice interview session: {e}")
-        import traceback
-        traceback.print_exc()
         raise
 
