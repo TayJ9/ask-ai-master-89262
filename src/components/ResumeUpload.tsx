@@ -2,16 +2,17 @@ import { useState, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Upload, FileText, X, CheckCircle2 } from "lucide-react";
+import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string) => void;
   onSkip: () => void;
+  onBack?: () => void;
 }
 
-export default function ResumeUpload({ onResumeUploaded, onSkip }: ResumeUploadProps) {
+export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   const [resumeText, setResumeText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
@@ -119,6 +120,20 @@ export default function ResumeUpload({ onResumeUploaded, onSkip }: ResumeUploadP
     <div className="min-h-screen p-6 gradient-secondary flex items-center justify-center">
       <Card className="max-w-2xl w-full shadow-xl">
         <CardHeader>
+          <div className="flex items-start justify-between mb-2">
+            {onBack && (
+              <Button
+                onClick={onBack}
+                variant="outline"
+                size="sm"
+                className="gap-2"
+              >
+                <ArrowLeft className="w-4 h-4" />
+                Back
+              </Button>
+            )}
+            <div className="flex-1" />
+          </div>
           <CardTitle className="text-3xl">Upload Your Resume (Optional)</CardTitle>
           <CardDescription className="text-base">
             Upload your resume to help the interviewer personalize questions based on your experience. 

@@ -79,6 +79,9 @@ export async function apiRequest(url: string, method: RequestMethod, body?: any)
   
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
+  } else {
+    console.error('No auth token found when making request to:', url);
+    throw new Error('No authentication token found. Please log in again.');
   }
 
   // Add timeout to prevent hanging
@@ -86,6 +89,8 @@ export async function apiRequest(url: string, method: RequestMethod, body?: any)
   const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
 
   try {
+    console.log(`Making ${method} request to ${url}`, { hasToken: !!token, bodyKeys: body ? Object.keys(body) : [] });
+    
     const response = await fetch(url, {
       method,
       headers,
@@ -94,12 +99,14 @@ export async function apiRequest(url: string, method: RequestMethod, body?: any)
     });
     
     clearTimeout(timeoutId);
+    console.log(`Response status for ${url}:`, response.status);
     return handleResponse(response);
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
       throw new Error('Request timed out. Please try again.');
     }
+    console.error(`Error in apiRequest for ${url}:`, error);
     throw error;
   }
 }

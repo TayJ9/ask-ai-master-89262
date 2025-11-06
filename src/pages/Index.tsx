@@ -7,7 +7,7 @@ import VoiceInterview from "@/components/VoiceInterview";
 import ResumeUpload from "@/components/ResumeUpload";
 import SessionHistory from "@/components/SessionHistory";
 import { Button } from "@/components/ui/button";
-import { LogOut, History } from "lucide-react";
+import { LogOut, History, ArrowLeft } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 
@@ -254,8 +254,22 @@ export default function Index() {
 
   return (
     <>
-      {currentView !== "interview" && currentView !== "dialogflow" && currentView !== "resume" && (
+      {currentView !== "interview" && currentView !== "dialogflow" && (
         <div className="fixed top-4 right-4 flex gap-2 z-50">
+          {currentView === "resume" && (
+            <Button
+              onClick={() => {
+                setCurrentView("roles");
+                setSelectedRole("");
+                setResumeText("");
+              }}
+              variant="outline"
+              className="gap-2 bg-card shadow-md"
+            >
+              <ArrowLeft className="w-4 h-4" />
+              Back
+            </Button>
+          )}
           {currentView === "roles" && (
             <Button
               onClick={() => setCurrentView("history")}
@@ -285,6 +299,11 @@ export default function Index() {
         <ResumeUpload
           onResumeUploaded={handleResumeUploaded}
           onSkip={handleSkipResume}
+          onBack={() => {
+            setCurrentView("roles");
+            setSelectedRole("");
+            setResumeText("");
+          }}
         />
       )}
       

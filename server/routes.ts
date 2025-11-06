@@ -24,17 +24,23 @@ interface AuthRequest extends Express.Request {
 
 function authenticateToken(req: any, res: any, next: any) {
   const authHeader = req.headers['authorization'];
+  console.log('Authentication check for:', req.path);
+  console.log('Authorization header present:', !!authHeader);
+  
   const token = authHeader && authHeader.split(' ')[1];
 
   if (!token) {
+    console.error('No token provided for:', req.path);
     return res.status(401).json({ error: 'No token provided' });
   }
 
   jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
     if (err) {
+      console.error('Token verification failed:', err.message);
       return res.status(403).json({ error: 'Invalid token' });
     }
     req.userId = decoded.userId;
+    console.log('Token verified for user:', req.userId);
     next();
   });
 }
@@ -514,8 +520,12 @@ export function registerRoutes(app: Express) {
     try {
       // Check if Python backend is configured
       if (!PYTHON_BACKEND_URL) {
+        console.error("PYTHON_BACKEND_URL not configured");
         return res.status(500).json({ error: "Python backend URL not configured. Please set PYTHON_BACKEND_URL environment variable." });
       }
+
+      console.log(`Proxying voice interview start to ${PYTHON_BACKEND_URL}/api/voice-interview/start`);
+      console.log("Request body:", JSON.stringify(req.body));
 
       const response = await fetch(`${PYTHON_BACKEND_URL}/api/voice-interview/start`, {
         method: "POST",
@@ -525,14 +535,19 @@ export function registerRoutes(app: Express) {
         body: JSON.stringify(req.body),
       });
 
+      console.log(`Python backend response status: ${response.status}`);
+
       if (!response.ok) {
         // Try to parse error, but don't fail if it's not JSON
         let errorData;
         try {
           errorData = await response.json();
         } catch {
-          errorData = { error: `Python backend returned status ${response.status}` };
+          const text = await response.text().catch(() => 'Unknown error');
+          errorData = { error: `Python backend returned status ${response.status}: ${text}` };
         }
+        
+        console.error("Python backend error:", errorData);
         
         // Don't pass through auth errors from Python backend - they're not auth errors for our API
         // Python backend doesn't do auth, so any error is a backend issue
@@ -542,14 +557,20 @@ export function registerRoutes(app: Express) {
       }
 
       const data = await response.json();
+      console.log("Python backend success response");
       res.json(data);
     } catch (error: any) {
       console.error("Error proxying voice interview start:", error);
+      console.error("Error details:", {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
       
       // Check if it's a connection error
-      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed')) {
+      if (error.code === 'ECONNREFUSED' || error.message.includes('fetch failed') || error.message.includes('ECONNREFUSED')) {
         return res.status(500).json({ 
-          error: "Cannot connect to Python backend. Please ensure the Python backend is running on " + PYTHON_BACKEND_URL 
+          error: `Cannot connect to Python backend at ${PYTHON_BACKEND_URL}. Please ensure the Python backend is running.` 
         });
       }
       
