@@ -76,7 +76,37 @@ def get_session_path(session_id: str) -> str:
     config = get_dialogflow_config()
     # Dialogflow CX requires: projects/{project}/locations/{location}/agents/{agent}/environments/{environment}/sessions/{session}
     # SessionsClient.session_path() doesn't support environment, so we construct it manually
-    return f"projects/{config['project_id']}/locations/{config['location_id']}/agents/{config['agent_id']}/environments/{config['environment_id']}/sessions/{session_id}"
+    
+    # Extract agent ID if it's a full path (in case agent_id contains full path)
+    agent_id = config['agent_id']
+    if '/' in agent_id:
+        # If agent_id is a path like "projects/.../agents/xxx", extract just the ID
+        parts = agent_id.split('/')
+        if 'agents' in parts:
+            agent_idx = parts.index('agents')
+            if agent_idx + 1 < len(parts):
+                agent_id = parts[agent_idx + 1]
+    
+    # Also clean project_id and location_id in case they contain paths
+    project_id = config['project_id']
+    if '/' in project_id:
+        parts = project_id.split('/')
+        if 'projects' in parts:
+            proj_idx = parts.index('projects')
+            if proj_idx + 1 < len(parts):
+                project_id = parts[proj_idx + 1]
+    
+    location_id = config['location_id']
+    if '/' in location_id:
+        parts = location_id.split('/')
+        if 'locations' in parts:
+            loc_idx = parts.index('locations')
+            if loc_idx + 1 < len(parts):
+                location_id = parts[loc_idx + 1]
+    
+    session_path = f"projects/{project_id}/locations/{location_id}/agents/{agent_id}/environments/{config['environment_id']}/sessions/{session_id}"
+    print(f"Generated session path: {session_path}")  # Debug logging
+    return session_path
 
 # Initialize Dialogflow client
 try:
