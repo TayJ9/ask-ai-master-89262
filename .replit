@@ -29,6 +29,11 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
+args = "cd python_backend && PORT=5001 python app.py"
+waitForPort = 5001
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
 args = "npm run dev"
 waitForPort = 5000
 
@@ -46,10 +51,6 @@ externalPort = 3003
 [[ports]]
 localPort = 24678
 externalPort = 3001
-
-[[ports]]
-localPort = 34591
-externalPort = 4200
 
 [[ports]]
 localPort = 36327
