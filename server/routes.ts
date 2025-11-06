@@ -389,13 +389,20 @@ export function registerRoutes(app: Express) {
       console.log("Starting interview:", { role, hasResume: !!resumeText, difficulty });
 
       // Create interview session
-      const session = await storage.createSession({
+      // Only include resumeText if it has a value (conditionally build the object)
+      const sessionData: any = {
         userId: req.userId,
         role,
         status: "in_progress",
-        resumeText: resumeText || null,
         difficulty: difficulty || "Medium",
-      });
+      };
+      
+      // Only include resumeText if it's not empty
+      if (resumeText && resumeText.trim()) {
+        sessionData.resumeText = resumeText.trim();
+      }
+      
+      const session = await storage.createSession(sessionData);
 
       console.log("Session created:", session.id);
 
