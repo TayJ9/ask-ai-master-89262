@@ -139,6 +139,20 @@ wss.on('connection', (ws) => {
 // ============================================================================
 // Routes define what happens when someone visits a specific URL
 
+// Root endpoint - welcome page
+app.get('/', (req, res) => {
+  res.json({
+    message: 'AI Interview Server is running!',
+    version: '1.0.0',
+    endpoints: {
+      health: 'GET /health',
+      uploadResume: 'POST /api/upload-resume',
+      voiceInterview: 'ws://your-domain/voice'
+    },
+    status: 'operational'
+  });
+});
+
 // Health check endpoint - useful for monitoring if the server is running
 // GET /health returns a JSON response indicating the server is healthy
 app.get('/health', async (req, res) => {
@@ -152,6 +166,7 @@ app.get('/health', async (req, res) => {
   res.json({ status: 'healthy' });
 });
 
+console.log('✓ Root route registered at GET /');
 console.log('✓ Health check route registered at GET /health');
 
 // ============================================================================
