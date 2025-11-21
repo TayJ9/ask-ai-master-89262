@@ -11,7 +11,7 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "start": "functions-framework --target=dialogflowWebhook",
+    "start": "node server.js",
     "test": "node test/run-tests.js",
     "dev": "nodemon server.js",
     "server": "node server.js"
