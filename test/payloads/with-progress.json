@@ -1,0 +1,29 @@
+{
+  "fulfillmentInfo": {
+    "tag": "Interview"
+  },
+  "pageInfo": {
+    "currentPage": {
+      "displayName": "Interview"
+    }
+  },
+  "sessionInfo": {
+    "parameters": {
+      "major": "Cybersecurity",
+      "section_question_count": {
+        "Interest and Motivation": 1,
+        "Academic Experience": 1
+      },
+      "completed_sections": [
+        "Interest and Motivation",
+        "Academic Experience"
+      ],
+      "asked_questions": [
+        "What motivated you to pursue a career in this field?",
+        "Can you walk me through a project from class that challenged you?"
+      ],
+      "next_page": "Transferable Skills"
+    }
+  }
+}
+

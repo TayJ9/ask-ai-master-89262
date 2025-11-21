@@ -1,0 +1,16 @@
+{
+  "fulfillmentInfo": {
+    "tag": "Interview"
+  },
+  "pageInfo": {
+    "currentPage": {
+      "displayName": "Interview"
+    }
+  },
+  "sessionInfo": {
+    "parameters": {
+      "major": "Computer Science"
+    }
+  }
+}
+

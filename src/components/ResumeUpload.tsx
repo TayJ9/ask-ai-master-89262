@@ -2,12 +2,14 @@ import { useState, useRef } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 
 interface ResumeUploadProps {
-  onResumeUploaded: (resumeText: string) => void;
+  onResumeUploaded: (resumeText: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => void;
   onSkip: () => void;
   onBack?: () => void;
 }
@@ -16,8 +18,17 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   const [resumeText, setResumeText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [candidateName, setCandidateName] = useState("");
+  const [candidateMajor, setCandidateMajor] = useState("");
+  const [candidateYear, setCandidateYear] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+
+  // Get base URL for API calls (works with Replit deployment)
+  const getApiBaseUrl = () => {
+    // Use relative URLs for same-origin requests
+    return window.location.origin;
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -32,34 +43,60 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       return;
     }
 
+    // Validate candidate info
+    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in your name, major, and year before uploading.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsUploading(true);
     setUploadedFileName(file.name);
 
     try {
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("resume", file);
+      formData.append("name", candidateName.trim());
+      formData.append("major", candidateMajor.trim());
+      formData.append("year", candidateYear.trim());
 
-      const token = localStorage.getItem("auth_token");
-      const response = await fetch("/api/resume/upload", {
+      const apiBaseUrl = getApiBaseUrl();
+      const response = await fetch(`${apiBaseUrl}/api/upload-resume`, {
         method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
         body: formData,
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to upload resume");
+        const error = await response.json().catch(() => ({ error: "Failed to upload resume" }));
+        throw new Error(error.error || error.message || "Failed to upload resume");
       }
 
       const data = await response.json();
-      setResumeText(data.resumeText);
+      
+      // Store sessionId and candidate info
+      const candidateInfo = {
+        name: candidateName.trim(),
+        major: candidateMajor.trim(),
+        year: candidateYear.trim(),
+        sessionId: data.sessionId
+      };
+      
+      // Extract resume text from parsed data if available
+      const extractedResumeText = data.resumeText || resumeText || 
+        `Name: ${candidateName}\nMajor: ${candidateMajor}\nYear: ${candidateYear}`;
+      
+      setResumeText(extractedResumeText);
       
       toast({
         title: "Resume uploaded successfully",
-        description: "Your resume has been processed.",
+        description: `Session ID: ${data.sessionId}`,
       });
+      
+      // Call callback with resume text and candidate info
+      onResumeUploaded(extractedResumeText, candidateInfo);
     } catch (error: any) {
       console.error("Upload error:", error);
       toast({
@@ -83,11 +120,34 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       return;
     }
 
+    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in your name, major, and year.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setIsUploading(true);
 
     try {
-      const data = await apiRequest("/api/resume/upload", "POST", { text: resumeText });
-      setResumeText(data.resumeText);
+      const apiBaseUrl = getApiBaseUrl();
+      const response = await fetch(`${apiBaseUrl}/api/resume/upload`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ text: resumeText }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ error: "Failed to save resume" }));
+        throw new Error(error.error || "Failed to save resume text.");
+      }
+
+      const data = await response.json();
+      setResumeText(data.resumeText || resumeText);
       
       toast({
         title: "Resume saved",
@@ -105,8 +165,22 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   };
 
   const handleContinue = () => {
+    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+      toast({
+        title: "Missing Information",
+        description: "Please fill in your name, major, and year.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (resumeText.trim()) {
-      onResumeUploaded(resumeText);
+      const candidateInfo = {
+        name: candidateName.trim(),
+        major: candidateMajor.trim(),
+        year: candidateYear.trim()
+      };
+      onResumeUploaded(resumeText, candidateInfo);
     } else {
       toast({
         title: "No resume",
@@ -134,13 +208,48 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
             )}
             <div className="flex-1" />
           </div>
-          <CardTitle className="text-3xl">Upload Your Resume (Optional)</CardTitle>
+          <CardTitle className="text-3xl">Upload Your Resume</CardTitle>
           <CardDescription className="text-base">
-            Upload your resume to help the interviewer personalize questions based on your experience. 
-            You can upload a PDF file or paste your resume text below.
+            Upload your resume and provide your information to help personalize your interview.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/* Candidate Information Fields */}
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="name">Full Name *</Label>
+                <Input
+                  id="name"
+                  placeholder="John Doe"
+                  value={candidateName}
+                  onChange={(e) => setCandidateName(e.target.value)}
+                  disabled={isUploading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="major">Major/Field *</Label>
+                <Input
+                  id="major"
+                  placeholder="Computer Science"
+                  value={candidateMajor}
+                  onChange={(e) => setCandidateMajor(e.target.value)}
+                  disabled={isUploading}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="year">Academic Year *</Label>
+                <Input
+                  id="year"
+                  placeholder="Junior"
+                  value={candidateYear}
+                  onChange={(e) => setCandidateYear(e.target.value)}
+                  disabled={isUploading}
+                />
+              </div>
+            </div>
+          </div>
+
           {/* File Upload Section */}
           <div className="space-y-4">
             <div className="flex items-center gap-4">
@@ -153,7 +262,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               />
               <Button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading}
+                disabled={isUploading || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
                 variant="outline"
                 className="flex items-center gap-2"
               >
@@ -202,7 +311,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               />
               <Button
                 onClick={handleTextPaste}
-                disabled={isUploading || !resumeText.trim()}
+                disabled={isUploading || !resumeText.trim() || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
                 variant="outline"
                 size="sm"
                 className="w-full"
@@ -239,7 +348,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
             </Button>
             <Button
               onClick={handleContinue}
-              disabled={!resumeText.trim() || isUploading}
+              disabled={!resumeText.trim() || isUploading || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
               className="flex-1 gradient-primary text-white"
             >
               Continue with Resume

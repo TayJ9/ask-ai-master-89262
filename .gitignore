@@ -138,3 +138,6 @@ Desktop.ini
 
 # Supabase
 .supabase/
+
+# Temporary uploads directory
+uploads/

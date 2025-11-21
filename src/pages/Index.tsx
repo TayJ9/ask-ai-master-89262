@@ -4,6 +4,7 @@ import RoleSelection from "@/components/RoleSelection";
 import InterviewSession from "@/components/InterviewSession";
 import DialogflowInterviewSession from "@/components/DialogflowInterviewSession";
 import VoiceInterview from "@/components/VoiceInterview";
+import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
 import ResumeUpload from "@/components/ResumeUpload";
 import SessionHistory from "@/components/SessionHistory";
 import { Button } from "@/components/ui/button";
@@ -21,6 +22,7 @@ export default function Index() {
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
+  const [candidateContext, setCandidateContext] = useState<{name: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string} | null>(null);
   const { toast } = useToast();
   
   // Debug logging
@@ -58,8 +60,18 @@ export default function Index() {
     console.log('View changed to resume upload');
   };
 
-  const handleResumeUploaded = async (resume: string) => {
+  const handleResumeUploaded = async (resume: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => {
     setResumeText(resume);
+    
+    // Store candidate info for voice interview
+    if (candidateInfo) {
+      setCandidateContext({
+        name: candidateInfo.name,
+        major: candidateInfo.major,
+        year: candidateInfo.year,
+        sessionId: candidateInfo.sessionId
+      });
+    }
     
     // Check authentication before starting interview
     const token = localStorage.getItem('auth_token');
@@ -78,7 +90,15 @@ export default function Index() {
       console.log("Starting interview with resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
       
       if (interviewMode === "voice") {
-        // Voice interview - use voice endpoint
+        // Voice interview - use WebSocket if we have candidate context and sessionId
+        if (candidateInfo && candidateInfo.sessionId) {
+          // Use WebSocket-based voice interview
+          setDialogflowSessionId(candidateInfo.sessionId);
+          setCurrentView("voice");
+          return;
+        }
+        
+        // Fallback to Dialogflow voice interview
         // Generate session ID (use user.id if available, otherwise generate unique ID)
         const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
         const response = await apiRequest("/api/voice-interview/start", "POST", {
@@ -164,30 +184,13 @@ export default function Index() {
       console.log("Starting interview without resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
       
       if (interviewMode === "voice") {
-        // Voice interview - use voice endpoint
-        // Generate session ID (use user.id if available, otherwise generate unique ID)
-        const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
-        const response = await apiRequest("/api/voice-interview/start", "POST", {
-          session_id: sessionId,
-          role: selectedRole,
-          resumeText: "",
-          difficulty: selectedDifficulty,
+        // For voice interviews without resume, we still need candidate info
+        toast({
+          title: "Information Required",
+          description: "Please provide your name, major, and year for voice interviews.",
+          variant: "destructive",
         });
-        
-        console.log("Voice interview started successfully:", response);
-        
-        if (!response.sessionId) {
-          throw new Error("Invalid response from server. Missing session ID.");
-        }
-        
-        // Store voice interview data so VoiceInterview component doesn't need to start again
-        setVoiceInterviewData({
-          sessionId: response.sessionId,
-          audioResponse: response.audioResponse,
-          agentResponseText: response.agentResponseText
-        });
-        setDialogflowSessionId(response.sessionId);
-        setCurrentView("voice");
+        return;
       } else {
         // Text interview - use existing endpoint
         const response = await apiRequest("/api/dialogflow/start-interview", "POST", {
@@ -246,6 +249,7 @@ export default function Index() {
     setDialogflowSessionId(null);
     setFirstQuestion("");
     setVoiceInterviewData(null);
+    setCandidateContext(null);
   };
 
   if (!user) {
@@ -329,16 +333,36 @@ export default function Index() {
       )}
 
       {currentView === "voice" && dialogflowSessionId && (
-        <VoiceInterview
-          sessionId={dialogflowSessionId}
-          userId={user.id}
-          role={selectedRole}
-          difficulty={selectedDifficulty}
-          resumeText={resumeText}
-          initialAudioResponse={voiceInterviewData?.audioResponse}
-          initialAgentText={voiceInterviewData?.agentResponseText}
-          onComplete={handleCompleteInterview}
-        />
+        <>
+          {/* Use WebSocket-based voice interview if we have candidate context */}
+          {candidateContext && candidateContext.sessionId ? (
+            <VoiceInterviewWebSocket
+              sessionId={candidateContext.sessionId}
+              candidateContext={{
+                name: candidateContext.name,
+                major: candidateContext.major,
+                year: candidateContext.year,
+                skills: candidateContext.skills || [],
+                experience: candidateContext.experience,
+                education: candidateContext.education,
+                summary: candidateContext.summary
+              }}
+              onComplete={handleCompleteInterview}
+            />
+          ) : (
+            /* Fallback to Dialogflow voice interview */
+            <VoiceInterview
+              sessionId={dialogflowSessionId}
+              userId={user.id}
+              role={selectedRole}
+              difficulty={selectedDifficulty}
+              resumeText={resumeText}
+              initialAudioResponse={voiceInterviewData?.audioResponse}
+              initialAgentText={voiceInterviewData?.agentResponseText}
+              onComplete={handleCompleteInterview}
+            />
+          )}
+        </>
       )}
       
       {currentView === "history" && (
