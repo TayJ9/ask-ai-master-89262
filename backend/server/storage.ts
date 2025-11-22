@@ -124,9 +124,15 @@ export class DatabaseStorage implements IStorage {
 
   async checkDbConnection(): Promise<boolean> {
     try {
-      // Simple query to test database connection
-      await db.execute(sql`SELECT 1`);
-      return true;
+      // Simple query to test database connection using pool directly
+      const { pool } = await import('./db');
+      const client = await pool.connect();
+      try {
+        await client.query('SELECT 1');
+        return true;
+      } finally {
+        client.release();
+      }
     } catch (error) {
       console.error("Database connection check failed:", error);
       return false;
