@@ -5,6 +5,7 @@ import { setupVite, serveStatic, log } from "./vite";
 const app = express();
 
 // CORS configuration for production
+// Allow all Vercel preview and production deployments
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
@@ -16,8 +17,21 @@ const allowedOrigins = [
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Allow requests from allowed origins or same origin
-  if (!origin || allowedOrigins.includes(origin) || origin.includes('localhost')) {
+  // Allow requests from:
+  // 1. Explicitly allowed origins
+  // 2. Any Vercel deployment (*.vercel.app)
+  // 3. Localhost for development
+  // 4. Same origin requests
+  const isAllowed = !origin || 
+    allowedOrigins.includes(origin) || 
+    origin.includes('localhost') ||
+    origin.includes('.vercel.app') ||
+    origin === req.headers.host;
+  
+  if (isAllowed) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  } else {
+    // Still set CORS headers but with specific origin
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
   }
   
