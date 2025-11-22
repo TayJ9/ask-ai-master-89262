@@ -86,6 +86,10 @@ export function registerRoutes(app: Express) {
     try {
       const { email, password, fullName } = req.body;
       
+      if (!email || !password || !fullName) {
+        return res.status(400).json({ error: "Email, password, and full name are required" });
+      }
+      
       const existingUser = await storage.getProfileByEmail(email.toLowerCase().trim());
       if (existingUser) {
         return res.status(400).json({ error: "Email already exists" });
@@ -99,15 +103,23 @@ export function registerRoutes(app: Express) {
       });
 
       res.json({ message: "Account created successfully" });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Signup error:", error);
-      res.status(500).json({ error: "Signup failed" });
+      console.error("Error stack:", error?.stack);
+      res.status(500).json({ 
+        error: "Signup failed",
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+      });
     }
   });
 
   app.post("/api/auth/signin", async (req, res) => {
     try {
       const { email, password } = req.body;
+      
+      if (!email || !password) {
+        return res.status(400).json({ error: "Email and password are required" });
+      }
       
       const profile = await storage.getProfileByEmail(email.toLowerCase().trim());
       if (!profile || !profile.passwordHash) {
@@ -129,9 +141,13 @@ export function registerRoutes(app: Express) {
           fullName: profile.fullName,
         }
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Signin error:", error);
-      res.status(500).json({ error: "Signin failed" });
+      console.error("Error stack:", error?.stack);
+      res.status(500).json({ 
+        error: "Signin failed",
+        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+      });
     }
   });
 
