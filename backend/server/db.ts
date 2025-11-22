@@ -17,13 +17,13 @@ const isNeonDatabase = process.env.DATABASE_URL.includes('neon.tech') ||
                        process.env.USE_NEON === 'true';
 
 let pool: NeonPool | PgPool;
-let db: any;
+let db: ReturnType<typeof drizzlePg>;
 
 if (isNeonDatabase) {
   // Use Neon serverless driver for Neon databases
   neonConfig.webSocketConstructor = ws;
   pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
-  db = drizzleNeon({ client: pool as any, schema });
+  db = drizzleNeon({ client: pool as any, schema }) as any;
 } else {
   // Use standard PostgreSQL driver for Railway and other standard PostgreSQL instances
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
