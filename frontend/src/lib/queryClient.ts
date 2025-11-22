@@ -62,7 +62,7 @@ export const queryClient = new QueryClient({
   },
 });
 
-type RequestMethod = 'POST' | 'PATCH' | 'PUT' | 'DELETE';
+type RequestMethod = 'POST' | 'PATCH' | 'PUT' | 'DELETE' | 'GET';
 
 /**
  * Legacy apiRequest function - use apiPost, apiGet, etc. from ./api instead

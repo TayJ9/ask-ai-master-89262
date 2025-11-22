@@ -133,7 +133,6 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       toast({
         title: "Failed to save",
         description: errorMessage,
-        description: error.message || "Failed to save resume text.",
         variant: "destructive",
       });
     } finally {

@@ -78,6 +78,15 @@
     "typescript": "^5.2.2",
     "vite": "^7.2.4",
     "zod": "^3.22.4"
+  },
+  "overrides": {
+    "rimraf": "^4.0.0",
+    "glob": "^9.0.0",
+    "inflight": "npm:@npmcli/inflight@^1.0.0",
+    "@humanwhocodes/object-schema": "npm:@eslint/object-schema@^2.1.0",
+    "@humanwhocodes/config-array": "npm:@eslint/config-array@^0.18.0",
+    "eslint": "^9.39.1",
+    "esbuild": "^0.25.12"
   }
 }
 
