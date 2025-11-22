@@ -27,7 +27,9 @@ if (isNeonDatabase) {
 } else {
   // Use standard PostgreSQL driver for Railway and other standard PostgreSQL instances
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
-  db = drizzlePg({ client: pool, schema });
+  // Try the older API format: drizzle(pool, { schema })
+  // This might be the issue - drizzle-orm 0.29 might use different syntax
+  db = drizzlePg(pool, { schema });
   
   // Debug: Verify db.query and db.query.profiles exist
   if (!db.query) {
