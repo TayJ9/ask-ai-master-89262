@@ -1,6 +1,6 @@
 /**
  * Voice Interview Component
- * Uses Dialogflow CX native STT/TTS for voice conversation
+ * Voice interview component with audio recording and playback
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
@@ -55,7 +55,7 @@ export default function VoiceInterview({
     return token;
   };
 
-  // Play audio response from Dialogflow
+  // Play audio response
   const playAudioResponse = useCallback((audioBase64: string, agentText?: string) => {
     try {
       // Stop any currently playing audio
@@ -150,7 +150,7 @@ export default function VoiceInterview({
     }
   }, [isInterviewComplete, isProcessing, toast]);
 
-  // Handle recording stop and send to Dialogflow
+  // Handle recording stop and send audio
   const handleRecordingStop = useCallback(async () => {
     setIsProcessing(true);
     
@@ -334,7 +334,7 @@ export default function VoiceInterview({
         }
       });
 
-      // Use WebM Opus codec for better compatibility with Dialogflow
+      // Use WebM Opus codec for better compatibility
       const options = {
         mimeType: 'audio/webm;codecs=opus',
         audioBitsPerSecond: 64000

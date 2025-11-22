@@ -37,7 +37,7 @@ export interface IStorage {
   createResponse(data: InsertInterviewResponse): Promise<InterviewResponse>;
   getResponsesBySessionId(sessionId: string): Promise<InterviewResponse[]>;
   
-  // Interview Turns (for Dialogflow)
+  // Interview Turns
   createTurn(data: InsertInterviewTurn): Promise<InterviewTurn>;
   getTurnsBySessionId(sessionId: string): Promise<InterviewTurn[]>;
 }

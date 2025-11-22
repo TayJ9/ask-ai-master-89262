@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
 import InterviewSession from "@/components/InterviewSession";
-import DialogflowInterviewSession from "@/components/DialogflowInterviewSession";
 import VoiceInterview from "@/components/VoiceInterview";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
 import ResumeUpload from "@/components/ResumeUpload";
@@ -14,11 +13,11 @@ import { useToast } from "@/hooks/use-toast";
 
 export default function Index() {
   const [user, setUser] = useState<any>(null);
-  const [currentView, setCurrentView] = useState<"roles" | "resume" | "interview" | "dialogflow" | "voice" | "history">("roles");
+  const [currentView, setCurrentView] = useState<"roles" | "resume" | "interview" | "voice" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
   const [resumeText, setResumeText] = useState<string>("");
-  const [dialogflowSessionId, setDialogflowSessionId] = useState<string | null>(null);
+  const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
@@ -85,7 +84,7 @@ export default function Index() {
       return;
     }
     
-    // Start Dialogflow interview session (text or voice)
+    // Start interview session (text or voice)
     try {
       console.log("Starting interview with resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
       
@@ -93,12 +92,12 @@ export default function Index() {
         // Voice interview - use WebSocket if we have candidate context and sessionId
         if (candidateInfo && candidateInfo.sessionId) {
           // Use WebSocket-based voice interview
-          setDialogflowSessionId(candidateInfo.sessionId);
+          setVoiceSessionId(candidateInfo.sessionId);
           setCurrentView("voice");
           return;
         }
         
-        // Fallback to Dialogflow voice interview
+        // Start voice interview
         // Generate session ID (use user.id if available, otherwise generate unique ID)
         const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
         const response = await apiRequest("/api/voice-interview/start", "POST", {
@@ -120,25 +119,11 @@ export default function Index() {
           audioResponse: response.audioResponse,
           agentResponseText: response.agentResponseText
         });
-        setDialogflowSessionId(response.sessionId);
+        setVoiceSessionId(response.sessionId);
         setCurrentView("voice");
       } else {
-        // Text interview - use existing endpoint
-        const response = await apiRequest("/api/dialogflow/start-interview", "POST", {
-          role: selectedRole,
-          resumeText: resume,
-          difficulty: selectedDifficulty,
-        });
-        
-        console.log("Interview started successfully:", response);
-        
-        if (!response.sessionId || !response.firstQuestion) {
-          throw new Error("Invalid response from server. Missing session ID or first question.");
-        }
-        
-        setDialogflowSessionId(response.sessionId);
-        setFirstQuestion(response.firstQuestion);
-        setCurrentView("dialogflow");
+        // Text interview - use InterviewSession component
+        setCurrentView("interview");
       }
     } catch (error: any) {
       console.error("Error starting interview:", error);
@@ -159,7 +144,7 @@ export default function Index() {
       } else {
         toast({
           title: "Failed to Start Interview",
-          description: errorMessage + " Please check your Dialogflow configuration and try again.",
+          description: errorMessage + " Please try again.",
           variant: "destructive",
         });
       }
@@ -179,7 +164,7 @@ export default function Index() {
       return;
     }
     
-    // Start Dialogflow interview session without resume
+    // Start interview session without resume
     try {
       console.log("Starting interview without resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
       
@@ -192,23 +177,8 @@ export default function Index() {
         });
         return;
       } else {
-        // Text interview - use existing endpoint
-        const response = await apiRequest("/api/dialogflow/start-interview", "POST", {
-          role: selectedRole,
-          difficulty: selectedDifficulty,
-          // Explicitly pass empty string for resumeText to avoid undefined
-          resumeText: "",
-        });
-        
-        console.log("Interview started successfully:", response);
-        
-        if (!response.sessionId || !response.firstQuestion) {
-          throw new Error("Invalid response from server. Missing session ID or first question.");
-        }
-        
-        setDialogflowSessionId(response.sessionId);
-        setFirstQuestion(response.firstQuestion);
-        setCurrentView("dialogflow");
+        // Text interview - use InterviewSession component
+        setCurrentView("interview");
       }
     } catch (error: any) {
       console.error("Error starting interview:", error);
@@ -229,7 +199,7 @@ export default function Index() {
       } else {
         toast({
           title: "Failed to Start Interview",
-          description: errorMessage + " Please check your Dialogflow configuration and try again.",
+          description: errorMessage + " Please try again.",
           variant: "destructive",
         });
       }
@@ -246,7 +216,7 @@ export default function Index() {
     setCurrentView("roles");
     setSelectedRole("");
     setResumeText("");
-    setDialogflowSessionId(null);
+    setVoiceSessionId(null);
     setFirstQuestion("");
     setVoiceInterviewData(null);
     setCandidateContext(null);
@@ -258,7 +228,7 @@ export default function Index() {
 
   return (
     <>
-      {currentView !== "interview" && currentView !== "dialogflow" && (
+      {currentView !== "interview" && (
         <div className="fixed top-4 right-4 flex gap-2 z-50">
           {currentView === "resume" && (
             <Button
@@ -320,19 +290,7 @@ export default function Index() {
         />
       )}
 
-      {currentView === "dialogflow" && dialogflowSessionId && (
-        <DialogflowInterviewSession
-          sessionId={dialogflowSessionId}
-          userId={user.id}
-          role={selectedRole}
-          difficulty={selectedDifficulty}
-          resumeText={resumeText}
-          firstQuestion={firstQuestion}
-          onComplete={handleCompleteInterview}
-        />
-      )}
-
-      {currentView === "voice" && dialogflowSessionId && (
+      {currentView === "voice" && voiceSessionId && (
         <>
           {/* Use WebSocket-based voice interview if we have candidate context */}
           {candidateContext && candidateContext.sessionId ? (
@@ -350,9 +308,8 @@ export default function Index() {
               onComplete={handleCompleteInterview}
             />
           ) : (
-            /* Fallback to Dialogflow voice interview */
             <VoiceInterview
-              sessionId={dialogflowSessionId}
+              sessionId={voiceSessionId}
               userId={user.id}
               role={selectedRole}
               difficulty={selectedDifficulty}

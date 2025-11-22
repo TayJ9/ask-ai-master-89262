@@ -1,23 +1,19 @@
 {
-  "main": "index.js",
-  "type": "commonjs",
-  "dependencies": {
-    "@google-cloud/functions-framework": "^3.0.0",
-    "cors": "^2.8.5",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
-    "multer": "^2.0.2",
-    "uuid": "^13.0.0",
-    "ws": "^8.18.3"
-  },
+  "name": "ai-interview-coach",
+  "version": "1.0.0",
+  "description": "AI Interview Coach - Full Stack Application",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
   "scripts": {
-    "start": "node server.js",
-    "test": "node test/run-tests.js",
-    "dev": "tsx server/index.ts",
-    "server": "node server.js"
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build",
+    "install:all": "cd backend && npm install && cd ../frontend && npm install"
   },
-  "devDependencies": {
-    "nodemon": "^3.1.11",
-    "tsx": "^4.7.0"
+  "engines": {
+    "node": ">=18.0.0"
   }
 }

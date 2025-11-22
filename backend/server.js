@@ -1,43 +1,45 @@
 // ============================================================================
 // AI Interview Server - Express HTTP Server with WebSocket Support
 // ============================================================================
-// This server provides both HTTP endpoints and WebSocket connections for
-// real-time communication. Perfect for building an AI interview application.
+// This is a JavaScript entry point for Railway deployment.
+// The main TypeScript server is at server/index.ts
+//
+// Railway will use the "start" script in package.json which runs:
+//   tsx server/index.ts
+//
+// This server.js file is a fallback option if needed.
 //
 // To run this server:
-//   1. Install dependencies: npm install express cors dotenv ws multer uuid
-//   2. Create a .env file with:
-//      - PORT=3001 (optional - defaults to 3001)
-//      - OPENAI_API_KEY=your_key_here (required for resume parsing)
-//   3. Run with Node: node server.js
-//   4. Run with nodemon for auto-restart: npm run dev
+//   1. Install dependencies: npm install
+//   2. Set environment variables:
+//      - PORT (optional - defaults to 5000)
+//      - DATABASE_URL (required for database)
+//      - JWT_SECRET (required for authentication)
+//      - OPENAI_API_KEY (required for AI features)
+//   3. Run: npm start (recommended - uses TypeScript server) or node server.js
 //
 // Available endpoints:
 //   - GET  /health - Health check
 //   - POST /api/upload-resume - Upload and parse resume PDF
+//   - WebSocket /voice - Voice interview WebSocket connection
 // ============================================================================
 
-// Import required modules
+// Import required modules using ES6 import syntax
 // express: Creates the HTTP server
-const express = require('express');
+import express from 'express';
 
 // cors: Allows cross-origin requests (needed when frontend and backend are on different domains)
-const cors = require('cors');
+import cors from 'cors';
 
 // dotenv: Loads environment variables from a .env file
-require('dotenv').config();
+import dotenv from 'dotenv';
+dotenv.config();
 
 // ws: WebSocket library for real-time bidirectional communication
-const WebSocket = require('ws');
+import { WebSocketServer } from 'ws';
 
 // http: Built-in Node.js module needed to create an HTTP server that WebSocket can attach to
-const http = require('http');
-
-// upload: Import the resume upload route handler
-const uploadRouter = require('./upload');
-
-// voiceServer: Import the voice interview WebSocket server
-const { createVoiceServer } = require('./backend/voiceServer');
+import http from 'http';
 
 // ============================================================================
 // STEP 1: Create Express Application
@@ -60,16 +62,10 @@ app.use(cors());
 // Parse JSON request bodies (allows us to read JSON data from POST requests)
 app.use(express.json());
 
+// Parse URL-encoded request bodies (allows us to read form data)
+app.use(express.urlencoded({ extended: true }));
+
 console.log('✓ Middleware configured (CORS and JSON parsing enabled)');
-
-// ============================================================================
-// STEP 2.5: Mount Route Handlers
-// ============================================================================
-// Mount the upload router at /api prefix
-// This means all routes in upload.js will be accessible at /api/...
-app.use('/api', uploadRouter);
-
-console.log('✓ Upload routes mounted at /api');
 
 // ============================================================================
 // STEP 3: Create HTTP Server
@@ -81,22 +77,13 @@ const server = http.createServer(app);
 console.log('✓ HTTP server created');
 
 // ============================================================================
-// STEP 3.5: Set Up Voice Interview WebSocket Server
-// ============================================================================
-// Create the voice interview WebSocket server
-// This handles real-time voice communication with OpenAI Realtime API
-const voiceWss = createVoiceServer(server);
-
-console.log('✓ Voice interview WebSocket server created');
-
-// ============================================================================
-// STEP 4: Set Up General WebSocket Server
+// STEP 4: Set Up WebSocket Server
 // ============================================================================
 // WebSocket allows real-time, bidirectional communication between client and server
 // Unlike HTTP (request-response), WebSocket keeps a connection open for instant messaging
 
 // Create a WebSocket server attached to our HTTP server
-const wss = new WebSocket.Server({ server });
+const wss = new WebSocketServer({ server });
 
 console.log('✓ WebSocket server created');
 
@@ -108,18 +95,32 @@ wss.on('connection', (ws) => {
 
   // Send a welcome message to the newly connected client
   // ws.send() sends data to this specific client
-  ws.send('Welcome to the AI Interview Server');
+  ws.send(JSON.stringify({ 
+    type: 'welcome',
+    message: 'Welcome to the AI Interview Server'
+  }));
   
   console.log('✓ Welcome message sent to client');
 
   // Handle messages received from the client
   ws.on('message', (message) => {
     // This runs whenever the client sends us a message
-    console.log('📨 Message received from client:', message.toString());
-    
-    // You can add your message handling logic here
-    // For example, echo the message back:
-    // ws.send(`Echo: ${message}`);
+    try {
+      const data = JSON.parse(message.toString());
+      console.log('📨 Message received from client:', data);
+      
+      // Echo the message back to the client (you can add your logic here)
+      ws.send(JSON.stringify({
+        type: 'echo',
+        original: data
+      }));
+    } catch (error) {
+      console.error('❌ Error parsing WebSocket message:', error);
+      ws.send(JSON.stringify({
+        type: 'error',
+        message: 'Invalid message format'
+      }));
+    }
   });
 
   // Handle client disconnection
@@ -146,24 +147,22 @@ app.get('/', (req, res) => {
     version: '1.0.0',
     endpoints: {
       health: 'GET /health',
-      uploadResume: 'POST /api/upload-resume',
-      voiceInterview: 'ws://your-domain/voice'
+      websocket: 'ws://your-domain/voice'
     },
-    status: 'operational'
+    status: 'operational',
+    note: 'This is the JavaScript fallback server. For full features, use the TypeScript server at server/index.ts via npm start'
   });
 });
 
 // Health check endpoint - useful for monitoring if the server is running
 // GET /health returns a JSON response indicating the server is healthy
-app.get('/health', async (req, res) => {
-  // async/await allows us to write asynchronous code in a cleaner way
-  // Even though this endpoint doesn't need async operations, we're using
-  // async to demonstrate modern JavaScript syntax
-  
-  console.log('✓ Health check endpoint accessed');
-  
-  // Send JSON response with status information
-  res.json({ status: 'healthy' });
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    server: 'JavaScript fallback server'
+  });
 });
 
 console.log('✓ Root route registered at GET /');
@@ -172,29 +171,37 @@ console.log('✓ Health check route registered at GET /health');
 // ============================================================================
 // STEP 6: Start the Server
 // ============================================================================
-// Determine which port to use: check environment variable first, fallback to 3001
-// process.env.PORT is useful for deployment platforms (like Heroku) that set this automatically
-const PORT = process.env.PORT || 3001;
+// Determine which port to use: check environment variable first, fallback to 5000
+// process.env.PORT is useful for deployment platforms (like Railway) that set this automatically
+const PORT = process.env.PORT || 5000;
 
 // Start listening for HTTP requests and WebSocket connections
-server.listen(PORT, async () => {
-  // Using async/await syntax (even though we don't need it here)
-  // This demonstrates modern JavaScript patterns
+server.listen(PORT, '0.0.0.0', () => {
+  // Using 0.0.0.0 allows the server to accept connections from any network interface
+  // This is important for cloud deployments like Railway
   
   console.log('='.repeat(60));
   console.log(`🚀 Server is running!`);
   console.log(`📡 HTTP Server: http://localhost:${PORT}`);
   console.log(`🔌 WebSocket Server: ws://localhost:${PORT}`);
-  console.log(`🎤 Voice Interview: ws://localhost:${PORT}/voice`);
   console.log(`💚 Health Check: http://localhost:${PORT}/health`);
-  console.log(`📤 Resume Upload: POST http://localhost:${PORT}/api/upload-resume`);
   console.log('='.repeat(60));
   console.log('✓ Server is ready to accept connections');
   
-  // Check if OPENAI_API_KEY is set (warn if missing)
+  // Check if required environment variables are set (warn if missing)
+  if (!process.env.DATABASE_URL) {
+    console.warn('⚠️  WARNING: DATABASE_URL environment variable is not set');
+    console.warn('   Database features will not work. Set it in your .env file or Railway dashboard.');
+  }
+  
+  if (!process.env.JWT_SECRET) {
+    console.warn('⚠️  WARNING: JWT_SECRET environment variable is not set');
+    console.warn('   Authentication features will not work. Set it in your .env file or Railway dashboard.');
+  }
+  
   if (!process.env.OPENAI_API_KEY) {
     console.warn('⚠️  WARNING: OPENAI_API_KEY environment variable is not set');
-    console.warn('   Resume parsing will fail. Set it in your .env file.');
+    console.warn('   AI features will not work. Set it in your .env file or Railway dashboard.');
   } else {
     console.log('✓ OPENAI_API_KEY is configured');
   }
@@ -210,6 +217,7 @@ server.on('error', (error) => {
   // If the port is already in use, provide helpful error message
   if (error.code === 'EADDRINUSE') {
     console.error(`⚠️  Port ${PORT} is already in use. Try a different port.`);
+    process.exit(1);
   }
 });
 
@@ -218,3 +226,8 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});

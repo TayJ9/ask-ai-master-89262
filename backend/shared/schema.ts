@@ -74,7 +74,7 @@ export const insertInterviewResponseSchema = createInsertSchema(interviewRespons
 export type InsertInterviewResponse = z.infer<typeof insertInterviewResponseSchema>;
 export type InterviewResponse = typeof interviewResponses.$inferSelect;
 
-// Interview turns for conversational flow
+// Interview turns for Dialogflow conversational flow
 export const interviewTurns = pgTable("interview_turns", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   sessionId: uuid("session_id").notNull().references(() => interviewSessions.id, { onDelete: "cascade" }),

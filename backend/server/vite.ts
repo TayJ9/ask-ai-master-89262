@@ -21,7 +21,7 @@ export async function setupVite(app: Express) {
   const vite = await createViteServer({
     server: { middlewareMode: true },
     appType: "custom",
-    configFile: path.resolve(__dirname, "../vite.config.ts"),
+    configFile: path.resolve(__dirname, "../../frontend/vite.config.ts"),
   });
 
   app.use(vite.middlewares);
@@ -34,7 +34,7 @@ export async function setupVite(app: Express) {
 
     try {
       const template = fs.readFileSync(
-        path.resolve(__dirname, "../index.html"),
+        path.resolve(__dirname, "../../frontend/index.html"),
         "utf-8"
       );
       const transformed = await vite.transformIndexHtml(url, template);
@@ -48,12 +48,30 @@ export async function setupVite(app: Express) {
 }
 
 export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "../dist/public");
+  const distPath = path.resolve(__dirname, "../../frontend/dist/public");
 
+  // Gracefully handle missing frontend build in production
+  // This allows the backend API to work even if frontend isn't deployed
   if (!fs.existsSync(distPath)) {
-    throw new Error(
-      `Could not find the build directory: ${distPath}, make sure to build the client first`
-    );
+    console.warn(`⚠️  Frontend build directory not found: ${distPath}`);
+    console.warn("   Backend API will work, but frontend routes will return 404");
+    console.warn("   To serve frontend: build it and ensure dist/public exists");
+    
+    // Return API info for root route instead of failing
+    app.get("/", (_req, res) => {
+      res.json({
+        message: "AI Interview Coach API",
+        version: "1.0.0",
+        status: "operational",
+        endpoints: {
+          health: "GET /health",
+          api: "All /api/* endpoints available"
+        },
+        note: "Frontend not deployed. API endpoints are available."
+      });
+    });
+    
+    return;
   }
 
   app.use(express.static(distPath));

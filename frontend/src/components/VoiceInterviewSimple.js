@@ -1,6 +1,6 @@
 /**
  * Simple Voice Interview JavaScript
- * Records microphone audio and plays Dialogflow TTS responses
+ * Records microphone audio and plays TTS responses
  */
 
 class VoiceInterview {
@@ -76,7 +76,7 @@ class VoiceInterview {
         }
       });
 
-      // Use WebM Opus for Dialogflow compatibility
+      // Use WebM Opus for audio compatibility
       const options = {
         mimeType: 'audio/webm;codecs=opus',
         audioBitsPerSecond: 64000
@@ -118,7 +118,7 @@ class VoiceInterview {
   }
 
   /**
-   * Handle recording stop and send to Dialogflow
+   * Handle recording stop and send audio
    */
   async handleRecordingStop() {
     this.isProcessing = true;
