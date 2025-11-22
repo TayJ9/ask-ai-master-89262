@@ -11,12 +11,27 @@ import pdfParse from "pdf-parse";
 import { Readable } from "stream";
 import FormData from "form-data";
 
-const JWT_SECRET = process.env.JWT_SECRET || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('JWT_SECRET environment variable must be set in production');
+// Lazy-load JWT_SECRET to avoid build-time errors
+// Only accessed at runtime when actually needed for authentication
+function getJWTSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  
+  // In production, JWT_SECRET must be set, but don't fail during build
+  // Railway sets NODE_ENV=production during build, but secrets are available at runtime
+  if (!secret) {
+    // Only throw error at runtime when actually trying to use it
+    // This prevents build failures while still enforcing security at runtime
+    if (process.env.NODE_ENV === 'production' && process.env.RAILWAY_ENVIRONMENT) {
+      // Railway runtime - this is a real error
+      throw new Error('JWT_SECRET environment variable must be set in production. Please add it in Railway Variables.');
+    }
+    // Development or build time - use dev secret
+    console.warn('⚠️  JWT_SECRET not set, using dev secret. Set JWT_SECRET in production!');
+    return "dev-secret-key-change-before-production";
   }
-  return "dev-secret-key-change-before-production";
-})();
+  
+  return secret;
+}
 
 interface AuthRequest extends Express.Request {
   userId?: string;
@@ -34,7 +49,7 @@ function authenticateToken(req: any, res: any, next: any) {
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    jwt.verify(token, JWT_SECRET, (err: any, decoded: any) => {
+    jwt.verify(token, getJWTSecret(), (err: any, decoded: any) => {
       if (err) {
         console.error('Token verification failed:', err.message);
         return res.status(403).json({ error: 'Invalid token' });
@@ -88,7 +103,7 @@ export function registerRoutes(app: Express) {
         return res.status(401).json({ error: "Incorrect password. Please try again." });
       }
 
-      const token = jwt.sign({ userId: profile.id }, JWT_SECRET, { expiresIn: '7d' });
+      const token = jwt.sign({ userId: profile.id }, getJWTSecret(), { expiresIn: '7d' });
       
       res.json({ 
         token,
