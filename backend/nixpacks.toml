@@ -1,8 +1,9 @@
 # Nixpacks configuration for Railway
 # This ensures secrets are only accessed at runtime, not during build
+# Note: npm comes bundled with nodejs_20, so we don't need to specify it separately
 
 [phases.setup]
-nixPkgs = ["nodejs_20", "npm"]
+nixPkgs = ["nodejs_20"]
 
 [phases.install]
 cmds = ["npm install"]
