@@ -25,6 +25,7 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "../shared"]
+  "include": ["src"],
+  "exclude": ["../shared"]
 }
 

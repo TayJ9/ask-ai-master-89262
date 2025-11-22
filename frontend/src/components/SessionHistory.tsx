@@ -10,7 +10,12 @@ interface SessionHistoryProps {
   onBack: () => void;
 }
 
-interface SessionWithResponses extends InterviewSession {
+interface SessionWithResponses extends Omit<InterviewSession, 'completedAt' | 'overallScore'> {
+  id: string;
+  role: string;
+  status: string;
+  overallScore: number | null;
+  completedAt: Date | string | null;
   responses?: Array<{ score: number; strengths: string[]; improvements: string[] }>;
 }
 

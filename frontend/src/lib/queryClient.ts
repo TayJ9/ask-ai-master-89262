@@ -46,7 +46,7 @@ async function handleResponse(response: Response) {
   return response.json();
 }
 
-const defaultQueryFn = async ({ queryKey }: { queryKey: any[] }) => {
+const defaultQueryFn = async ({ queryKey }: { queryKey: readonly unknown[] }) => {
   const token = getAuthToken();
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
