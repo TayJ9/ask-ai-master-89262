@@ -81,6 +81,26 @@ function authenticateToken(req: any, res: any, next: any) {
 }
 
 export function registerRoutes(app: Express) {
+  // Health check endpoint
+  app.get('/health', async (_req, res) => {
+    try {
+      // Check database connection
+      const dbConnected = await storage.checkDbConnection();
+      if (dbConnected) {
+        res.json({ status: 'healthy', database: 'connected' });
+      } else {
+        res.status(500).json({ status: 'unhealthy', database: 'disconnected' });
+      }
+    } catch (error: any) {
+      console.error('Health check error:', error);
+      res.status(500).json({ 
+        status: 'unhealthy', 
+        database: 'error',
+        error: process.env.NODE_ENV === 'development' ? error?.message : undefined
+      });
+    }
+  });
+
   // Auth endpoints
   app.post("/api/auth/signup", async (req, res) => {
     try {
