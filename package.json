@@ -13,10 +13,11 @@
   "scripts": {
     "start": "node server.js",
     "test": "node test/run-tests.js",
-    "dev": "nodemon server.js",
+    "dev": "tsx server/index.ts",
     "server": "node server.js"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.11",
+    "tsx": "^4.7.0"
   }
 }
