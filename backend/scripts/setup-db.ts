@@ -10,12 +10,28 @@ async function setupDatabase() {
   try {
     console.log('Setting up database tables...');
 
-    // Use the pool directly for raw SQL execution
-    const client = await pool.connect();
+    // Handle both Neon (pool.query) and standard PostgreSQL (pool.connect)
+    const isNeon = process.env.DATABASE_URL?.includes('neon.tech') || 
+                   process.env.DATABASE_URL?.includes('neon') ||
+                   process.env.USE_NEON === 'true';
 
-    try {
-      // Create profiles table
-      await client.query(`
+    const executeQuery = async (query: string) => {
+      if (isNeon) {
+        // Neon serverless uses pool.query directly
+        return await (pool as any).query(query);
+      } else {
+        // Standard PostgreSQL uses pool.connect()
+        const client = await (pool as any).connect();
+        try {
+          return await client.query(query);
+        } finally {
+          client.release();
+        }
+      }
+    };
+
+    // Create profiles table
+    await executeQuery(`
         CREATE TABLE IF NOT EXISTS profiles (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           email TEXT,
@@ -24,10 +40,10 @@ async function setupDatabase() {
           created_at TIMESTAMP DEFAULT NOW()
         );
       `);
-      console.log('✅ Created profiles table');
+    console.log('✅ Created profiles table');
 
-      // Create interview_questions table
-      await client.query(`
+    // Create interview_questions table
+    await executeQuery(`
         CREATE TABLE IF NOT EXISTS interview_questions (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           role TEXT NOT NULL,
@@ -38,10 +54,10 @@ async function setupDatabase() {
           created_at TIMESTAMP DEFAULT NOW()
         );
       `);
-      console.log('✅ Created interview_questions table');
+    console.log('✅ Created interview_questions table');
 
-      // Create interview_sessions table
-      await client.query(`
+    // Create interview_sessions table
+    await executeQuery(`
         CREATE TABLE IF NOT EXISTS interview_sessions (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
@@ -55,10 +71,10 @@ async function setupDatabase() {
           completed_at TIMESTAMP
         );
       `);
-      console.log('✅ Created interview_sessions table');
+    console.log('✅ Created interview_sessions table');
 
-      // Create interview_responses table
-      await client.query(`
+    // Create interview_responses table
+    await executeQuery(`
         CREATE TABLE IF NOT EXISTS interview_responses (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           session_id UUID NOT NULL REFERENCES interview_sessions(id) ON DELETE CASCADE,
@@ -71,10 +87,10 @@ async function setupDatabase() {
           created_at TIMESTAMP DEFAULT NOW()
         );
       `);
-      console.log('✅ Created interview_responses table');
+    console.log('✅ Created interview_responses table');
 
-      // Create interview_turns table
-      await client.query(`
+    // Create interview_turns table
+    await executeQuery(`
         CREATE TABLE IF NOT EXISTS interview_turns (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           session_id UUID NOT NULL REFERENCES interview_sessions(id) ON DELETE CASCADE,
@@ -84,22 +100,18 @@ async function setupDatabase() {
           created_at TIMESTAMP DEFAULT NOW()
         );
       `);
-      console.log('✅ Created interview_turns table');
+    console.log('✅ Created interview_turns table');
 
-      // Create indexes for better performance
-      await client.query(`
+    // Create indexes for better performance
+    await executeQuery(`
         CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON interview_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_responses_session_id ON interview_responses(session_id);
         CREATE INDEX IF NOT EXISTS idx_turns_session_id ON interview_turns(session_id);
       `);
-      console.log('✅ Created indexes');
+    console.log('✅ Created indexes');
 
-      console.log('\n✅ Database tables created successfully!');
-    } finally {
-      client.release();
-    }
-
+    console.log('\n✅ Database tables created successfully!');
     process.exit(0);
   } catch (error: any) {
     console.error('❌ Error setting up database:', error);
