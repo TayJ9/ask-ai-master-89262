@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useMemo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft, TrendingUp, Calendar, Award, Loader2 } from "lucide-react";
@@ -32,8 +33,8 @@ export default function SessionHistory({ userId, onBack }: SessionHistoryProps) 
     ? Math.round(completedSessions.reduce((sum, s) => sum + (s.overallScore || 0), 0) / completedSessions.length)
     : 0;
   
-  // Calculate streak
-  const calculateStreak = () => {
+  // Calculate streak - memoized to avoid impure function calls
+  const streak = useMemo(() => {
     if (completedSessions.length === 0) return 0;
     const dates = completedSessions
       .map(s => s.completedAt ? new Date(s.completedAt).toDateString() : null)
@@ -41,28 +42,28 @@ export default function SessionHistory({ userId, onBack }: SessionHistoryProps) 
       .sort()
       .reverse();
     
-    let streak = 0;
-    const today = new Date().toDateString();
-    const yesterday = new Date(Date.now() - 86400000).toDateString();
+    let streakCount = 0;
+    // Use a stable reference for date calculations
+    const now = Date.now();
+    const today = new Date(now).toDateString();
+    const yesterday = new Date(now - 86400000).toDateString();
     
     // Check if today or yesterday
-    if (dates[0] === today || dates[0] === yesterday) {
-      streak = 1;
+    if (dates.length > 0 && (dates[0] === today || dates[0] === yesterday)) {
+      streakCount = 1;
       for (let i = 1; i < dates.length; i++) {
         const currentDate = new Date(dates[i - 1]);
         const prevDate = new Date(currentDate.getTime() - 86400000);
         if (dates[i] === prevDate.toDateString()) {
-          streak++;
+          streakCount++;
         } else {
           break;
         }
       }
     }
     
-    return streak;
-  };
-  
-  const streak = calculateStreak();
+    return streakCount;
+  }, [completedSessions]);
 
   return (
     <div className="min-h-screen p-6 gradient-secondary">

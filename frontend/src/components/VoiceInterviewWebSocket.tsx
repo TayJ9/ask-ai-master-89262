@@ -69,6 +69,73 @@ export default function VoiceInterviewWebSocket({
     return pcm16;
   };
 
+  // Handle WebSocket messages (defined before useEffect to avoid hoisting issues)
+  const handleWebSocketMessage = useCallback((message: any) => {
+    console.log('Received message:', message.type);
+
+    switch (message.type) {
+      case 'session_started':
+        setIsInterviewActive(true);
+        setStatusMessage("Interview started. Speak when ready.");
+        break;
+      case 'transcript':
+        setTranscripts(prev => [...prev, {
+          type: message.speaker === 'assistant' ? 'ai' : 'student',
+          text: message.text,
+          isFinal: message.is_final || false,
+          timestamp: Date.now()
+        }]);
+        break;
+      case 'session_ended':
+        setIsInterviewActive(false);
+        setStatusMessage("Interview completed.");
+        break;
+      default:
+        console.log('Unknown message type:', message.type);
+    }
+  }, []);
+
+  // Play audio chunk (PCM16 format) - defined before useEffect
+  const playAudioChunk = useCallback(async (arrayBuffer: ArrayBuffer) => {
+    try {
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+      }
+
+      const audioContext = audioContextRef.current;
+      
+      // Convert PCM16 to Float32
+      const pcm16Data = new Int16Array(arrayBuffer);
+      const float32Data = new Float32Array(pcm16Data.length);
+      
+      for (let i = 0; i < pcm16Data.length; i++) {
+        float32Data[i] = pcm16Data[i] / (pcm16Data[i] >= 0 ? 32767 : 32768);
+      }
+      
+      // Create audio buffer from Float32 data
+      const audioBuffer = audioContext.createBuffer(1, float32Data.length, 24000);
+      audioBuffer.copyToChannel(float32Data, 0);
+      
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      setIsPlaying(true);
+      isPlayingRef.current = true;
+
+      source.onended = () => {
+        setIsPlaying(false);
+        isPlayingRef.current = false;
+      };
+
+      source.start(0);
+    } catch (error) {
+      console.error('Error playing audio chunk:', error);
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+    }
+  }, []);
+
   // Initialize WebSocket connection
   useEffect(() => {
     const connectWebSocket = () => {
@@ -156,130 +223,7 @@ export default function VoiceInterviewWebSocket({
       stopRecording();
       cleanupAudio();
     };
-  }, []);
-
-  // Handle WebSocket messages
-  const handleWebSocketMessage = (message: any) => {
-    console.log('Received message:', message.type);
-
-    switch (message.type) {
-      case 'connected':
-        setStatusMessage("Connected. Ready to start interview.");
-        break;
-
-      case 'interview_started':
-        setIsInterviewActive(true);
-        setStatusMessage("Interview started. Listening for AI...");
-        toast({
-          title: "Interview Started",
-          description: "The AI interviewer will begin speaking shortly.",
-        });
-        break;
-
-      case 'ai_transcription':
-        // Add AI transcription to transcript list
-        setTranscripts(prev => {
-          const newTranscripts = [...prev];
-          const lastIndex = newTranscripts.length - 1;
-          
-          if (lastIndex >= 0 && newTranscripts[lastIndex].type === 'ai' && !newTranscripts[lastIndex].isFinal) {
-            // Update existing incomplete transcript
-            newTranscripts[lastIndex] = {
-              type: 'ai',
-              text: message.text,
-              isFinal: message.is_final || false,
-              timestamp: Date.now()
-            };
-          } else {
-            // Add new transcript
-            newTranscripts.push({
-              type: 'ai',
-              text: message.text,
-              isFinal: message.is_final || false,
-              timestamp: Date.now()
-            });
-          }
-          
-          return newTranscripts;
-        });
-        break;
-
-      case 'student_transcription':
-        // Add student transcription
-        setTranscripts(prev => [...prev, {
-          type: 'student',
-          text: message.text,
-          isFinal: true,
-          timestamp: Date.now()
-        }]);
-        break;
-
-      case 'student_speech_started':
-        setStatusMessage("You're speaking...");
-        break;
-
-      case 'interview_ended':
-        setIsInterviewActive(false);
-        setStatusMessage("Interview ended.");
-        toast({
-          title: "Interview Ended",
-          description: "The interview session has been completed.",
-        });
-        break;
-
-      case 'error':
-        setStatusMessage(`Error: ${message.message}`);
-        toast({
-          title: "Error",
-          description: message.message || "An error occurred.",
-          variant: "destructive",
-        });
-        break;
-    }
-  };
-
-  // Play audio chunk (PCM16 format)
-  const playAudioChunk = async (arrayBuffer: ArrayBuffer) => {
-    try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-      }
-
-      const audioContext = audioContextRef.current;
-      
-      // Convert PCM16 to Float32
-      const pcm16Data = new Int16Array(arrayBuffer);
-      const float32Data = new Float32Array(pcm16Data.length);
-      
-      for (let i = 0; i < pcm16Data.length; i++) {
-        float32Data[i] = pcm16Data[i] / (pcm16Data[i] >= 0 ? 32767 : 32768);
-      }
-
-      // Create audio buffer
-      const audioBuffer = audioContext.createBuffer(1, float32Data.length, 24000);
-      audioBuffer.copyToChannel(float32Data, 0);
-
-      // Create source and play
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
-      source.connect(audioContext.destination);
-
-      setIsPlaying(true);
-      isPlayingRef.current = true;
-
-      source.onended = () => {
-        setIsPlaying(false);
-        isPlayingRef.current = false;
-        setStatusMessage("AI finished speaking. You can speak now.");
-      };
-
-      source.start(0);
-    } catch (error) {
-      console.error('Error playing audio:', error);
-      setIsPlaying(false);
-      isPlayingRef.current = false;
-    }
-  };
+  }, [candidateContext, handleWebSocketMessage, playAudioChunk, toast]);
 
   // Start recording microphone
   const startRecording = useCallback(async () => {
