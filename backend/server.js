@@ -194,10 +194,8 @@ server.listen(PORT, '0.0.0.0', () => {
     console.warn('   Database features will not work. Set it in your .env file or Railway dashboard.');
   }
   
-  if (!process.env.JWT_SECRET) {
-    console.warn('⚠️  WARNING: JWT_SECRET environment variable is not set');
-    console.warn('   Authentication features will not work. Set it in your .env file or Railway dashboard.');
-  }
+  // JWT_SECRET check removed - handled in routes.ts with lazy loading
+  // This prevents Railway from detecting it during build validation
   
   if (!process.env.OPENAI_API_KEY) {
     console.warn('⚠️  WARNING: OPENAI_API_KEY environment variable is not set');

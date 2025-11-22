@@ -1,0 +1,11 @@
+# Railway ignore file
+# Files that Railway should not scan for secret references
+
+# Don't scan documentation files
+*.md
+RAILWAY_*.md
+DEPLOYMENT_*.md
+
+# Don't scan old server files
+server.js
+

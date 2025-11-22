@@ -8,23 +8,5 @@
     "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
-  },
-  "variables": {
-    "JWT_SECRET": {
-      "description": "Secret key for JWT token signing - REQUIRED for production",
-      "required": true
-    },
-    "DATABASE_URL": {
-      "description": "PostgreSQL database connection string",
-      "required": true
-    },
-    "OPENAI_API_KEY": {
-      "description": "OpenAI API key for AI features",
-      "required": true
-    },
-    "NODE_ENV": {
-      "description": "Node environment - set to 'production'",
-      "default": "production"
-    }
   }
 }
