@@ -19,4 +19,11 @@ export default defineConfig({
     emptyOutDir: true,
   },
   base: "/",
+  // Expose environment variables to the client
+  // Support both VITE_API_URL (Vite convention) and NEXT_PUBLIC_API_URL (Vercel convention)
+  envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
+  define: {
+    // Make NEXT_PUBLIC_API_URL available via import.meta.env
+    'import.meta.env.NEXT_PUBLIC_API_URL': JSON.stringify(process.env.NEXT_PUBLIC_API_URL || process.env.VITE_API_URL || ''),
+  },
 });

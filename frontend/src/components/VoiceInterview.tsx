@@ -170,7 +170,10 @@ export default function VoiceInterview({
           throw new Error('No authentication token found. Please log in again.');
         }
         
-        const response = await fetch('/api/voice-interview/send-audio', {
+        const { getApiUrl } = await import('@/lib/api');
+        const url = getApiUrl('/api/voice-interview/send-audio');
+        
+        const response = await fetch(url, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -418,32 +421,13 @@ export default function VoiceInterview({
           throw new Error('No authentication token found. Please log in again.');
         }
         
-        const response = await fetch('/api/voice-interview/start', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            session_id: sessionId,
-            role: role,
-            resumeText: resumeText || '',
-            difficulty: difficulty,
-          }),
+        const { apiPost } = await import('@/lib/api');
+        const data = await apiPost('/api/voice-interview/start', {
+          session_id: sessionId,
+          role: role,
+          resumeText: resumeText || '',
+          difficulty: difficulty,
         });
-
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({ error: 'Failed to start voice interview' }));
-          // Handle 401/403 specifically
-          if (response.status === 401 || response.status === 403) {
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('user');
-            throw new Error('Session expired. Please log in again.');
-          }
-          throw new Error(error.error || 'Failed to start voice interview');
-        }
-
-        const data = await response.json();
         
         // Play the first audio response (will auto-start recording if no audio)
         playAudioResponse(data.audioResponse || '', data.agentResponseText);
@@ -520,30 +504,10 @@ export default function VoiceInterview({
           throw new Error('No authentication token found. Please log in again.');
         }
         
-        const response = await fetch('/api/voice-interview/score', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            session_id: sessionId,
-          }),
+        const { apiPost } = await import('@/lib/api');
+        const results = await apiPost('/api/voice-interview/score', {
+          session_id: sessionId,
         });
-
-        if (!response.ok) {
-          // Handle 401/403 specifically
-          if (response.status === 401 || response.status === 403) {
-            localStorage.removeItem('auth_token');
-            localStorage.removeItem('user');
-            throw new Error('Session expired. Please log in again.');
-          }
-          
-          const error = await response.json().catch(() => ({ error: 'Failed to score interview' }));
-          throw new Error(error.error || 'Failed to score interview');
-        }
-
-        const results = await response.json();
         onComplete(results);
       } catch (error: any) {
         toast({

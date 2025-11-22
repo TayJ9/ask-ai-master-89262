@@ -68,51 +68,35 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         ? { email: email.trim().toLowerCase(), password }
         : { email: email.trim().toLowerCase(), password, fullName: fullName.trim() };
 
-      // Add timeout to prevent hanging
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+      const { apiPost, ApiError } = await import('@/lib/api');
+      const data = await apiPost(endpoint, body);
 
-      try {
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: controller.signal,
+      if (isLogin) {
+        localStorage.setItem('auth_token', data.token);
+        localStorage.setItem('user', JSON.stringify(data.user));
+        toast({ title: "Welcome back!" });
+        onAuthSuccess(data.user, data.token);
+      } else {
+        toast({ 
+          title: "Success!", 
+          description: "Your account has been created successfully. You can now sign in with your credentials.",
         });
-
-        clearTimeout(timeoutId);
-
-        const data = await response.json();
-
-        if (!response.ok) {
-          throw new Error(data.error || 'Authentication failed');
-        }
-
-        if (isLogin) {
-          localStorage.setItem('auth_token', data.token);
-          localStorage.setItem('user', JSON.stringify(data.user));
-          toast({ title: "Welcome back!" });
-          onAuthSuccess(data.user, data.token);
-        } else {
-          toast({ 
-            title: "Success!", 
-            description: "Your account has been created successfully. You can now sign in with your credentials.",
-          });
-          setIsLogin(true);
-          setPassword("");
-        }
-      } catch (fetchError: any) {
-        clearTimeout(timeoutId);
-        if (fetchError.name === 'AbortError') {
-          throw new Error('Request timed out. Please check your connection and try again.');
-        }
-        throw fetchError;
+        setIsLogin(true);
+        setPassword("");
       }
     } catch (error: any) {
-      const sanitizedMessage = error.message?.replace(/[<>]/g, '') || 'An error occurred';
+      const { ApiError } = await import('@/lib/api');
+      let errorMessage = 'An error occurred';
+      
+      if (error instanceof ApiError) {
+        errorMessage = error.message;
+      } else if (error.message) {
+        errorMessage = error.message.replace(/[<>]/g, '');
+      }
+      
       toast({
         title: "Error",
-        description: sanitizedMessage,
+        description: errorMessage,
         variant: "destructive",
       });
     } finally {

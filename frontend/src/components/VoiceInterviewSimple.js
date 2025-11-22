@@ -6,7 +6,8 @@
 class VoiceInterview {
   constructor(options) {
     this.sessionId = options.sessionId;
-    this.apiBaseUrl = options.apiBaseUrl || '';
+    // Use provided apiBaseUrl or get from centralized utility
+    this.apiBaseUrl = options.apiBaseUrl || this.getApiBaseUrl();
     this.authToken = options.authToken || localStorage.getItem('auth_token');
     
     this.mediaRecorder = null;
@@ -18,6 +19,26 @@ class VoiceInterview {
     this.onTranscript = options.onTranscript || (() => {});
     this.onAgentResponse = options.onAgentResponse || (() => {});
     this.onError = options.onError || ((error) => console.error(error));
+  }
+
+  /**
+   * Get API base URL from environment or use relative URLs
+   */
+  getApiBaseUrl() {
+    // Check for NEXT_PUBLIC_API_URL (Vercel) or VITE_API_URL (Vite)
+    // In browser, these are available via window or build-time injection
+    if (typeof window !== 'undefined') {
+      // Check if injected at build time
+      const env = window.__ENV__ || {};
+      if (env.NEXT_PUBLIC_API_URL) {
+        return env.NEXT_PUBLIC_API_URL.replace(/\/$/, '');
+      }
+      if (env.VITE_API_URL) {
+        return env.VITE_API_URL.replace(/\/$/, '');
+      }
+    }
+    // Fallback to relative URLs
+    return '';
   }
 
   /**

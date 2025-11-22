@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
+import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => void;
@@ -23,12 +23,6 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   const [candidateYear, setCandidateYear] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
-
-  // Get base URL for API calls (works with Replit deployment)
-  const getApiBaseUrl = () => {
-    // Use relative URLs for same-origin requests
-    return window.location.origin;
-  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -63,18 +57,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       formData.append("major", candidateMajor.trim());
       formData.append("year", candidateYear.trim());
 
-      const apiBaseUrl = getApiBaseUrl();
-      const response = await fetch(`${apiBaseUrl}/api/upload-resume`, {
-        method: "POST",
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: "Failed to upload resume" }));
-        throw new Error(error.error || error.message || "Failed to upload resume");
-      }
-
-      const data = await response.json();
+      const data = await apiPostFormData('/api/upload-resume', formData);
       
       // Store sessionId and candidate info
       const candidateInfo = {
@@ -98,10 +81,13 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       // Call callback with resume text and candidate info
       onResumeUploaded(extractedResumeText, candidateInfo);
     } catch (error: any) {
-      console.error("Upload error:", error);
+      const errorMessage = error instanceof ApiError 
+        ? error.message 
+        : (error.message || "Failed to process resume. Please try again.");
+      
       toast({
         title: "Upload failed",
-        description: error.message || "Failed to process resume. Please try again.",
+        description: errorMessage,
         variant: "destructive",
       });
       setUploadedFileName(null);
@@ -132,21 +118,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     setIsUploading(true);
 
     try {
-      const apiBaseUrl = getApiBaseUrl();
-      const response = await fetch(`${apiBaseUrl}/api/resume/upload`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ text: resumeText }),
-      });
-
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: "Failed to save resume" }));
-        throw new Error(error.error || "Failed to save resume text.");
-      }
-
-      const data = await response.json();
+      const data = await apiPost('/api/resume/upload', { text: resumeText });
       setResumeText(data.resumeText || resumeText);
       
       toast({
@@ -154,8 +126,13 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
         description: "Your resume text has been saved.",
       });
     } catch (error: any) {
+      const errorMessage = error instanceof ApiError 
+        ? error.message 
+        : (error.message || "Failed to save resume text.");
+      
       toast({
         title: "Failed to save",
+        description: errorMessage,
         description: error.message || "Failed to save resume text.",
         variant: "destructive",
       });
