@@ -22,7 +22,9 @@ if (isNeonDatabase) {
   // Use Neon serverless driver for Neon databases
   neonConfig.webSocketConstructor = ws;
   pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
-  db = drizzle({ client: pool as any, schema });
+  // Import drizzle for Neon serverless
+  const { drizzle: drizzleNeon } = await import('drizzle-orm/neon-serverless');
+  db = drizzleNeon({ client: pool as any, schema });
 } else {
   // Use standard PostgreSQL driver for Railway and other standard PostgreSQL instances
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
