@@ -11,9 +11,10 @@
   "scripts": {
     "start": "tsx server/index.ts",
     "dev": "tsx server/index.ts",
-    "build": "echo 'TypeScript server runs directly with tsx - no build needed'",
+    "build": "echo 'No build step - TypeScript runs directly with tsx at runtime'",
     "test": "echo 'No tests specified'",
-    "postinstall": "echo 'Dependencies installed successfully'"
+    "postinstall": "echo 'Dependencies installed successfully'",
+    "railway-build": "echo 'Railway build phase - no code execution, just install dependencies'"
   },
   "keywords": [
     "express",

@@ -1,0 +1,15 @@
+# Nixpacks configuration for Railway
+# This ensures secrets are only accessed at runtime, not during build
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "npm"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = ["echo 'No build step needed - TypeScript runs directly with tsx'"]
+
+[start]
+cmd = "npm start"
+
