@@ -124,17 +124,28 @@ export class DatabaseStorage implements IStorage {
 
   async checkDbConnection(): Promise<boolean> {
     try {
-      // Simple query to test database connection using pool directly
-      const { pool } = await import('./db');
-      const client = await pool.connect();
-      try {
-        await client.query('SELECT 1');
-        return true;
-      } finally {
-        client.release();
-      }
-    } catch (error) {
+      // Neon serverless Pool uses pool.query() directly (no connect() method)
+      // Add a timeout to prevent hanging
+      const queryPromise = pool.query('SELECT 1');
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Database connection timeout')), 5000)
+      );
+      
+      await Promise.race([queryPromise, timeoutPromise]);
+      return true;
+    } catch (error: any) {
       console.error("Database connection check failed:", error);
+      // Log more details about the error
+      if (error?.code === 'ECONNREFUSED') {
+        console.error('   Connection refused - check DATABASE_URL and database accessibility');
+        console.error('   If using Railway PostgreSQL, ensure service is linked and running');
+      } else if (error?.message?.includes('timeout')) {
+        console.error('   Connection timeout - database may be slow or unreachable');
+      } else if (error?.message?.includes('WebSocket') || error?.type === 'error') {
+        console.error('   WebSocket connection failed - check DATABASE_URL format');
+        console.error('   DATABASE_URL should be a PostgreSQL connection string');
+        console.error('   Example: postgresql://user:pass@host:5432/db?sslmode=require');
+      }
       return false;
     }
   }
