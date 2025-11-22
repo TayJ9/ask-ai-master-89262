@@ -22,23 +22,25 @@ app.use((req, res, next) => {
   // 2. Any Vercel deployment (*.vercel.app)
   // 3. Localhost for development
   // 4. Same origin requests
-  const isAllowed = !origin || 
-    allowedOrigins.includes(origin) || 
-    origin.includes('localhost') ||
-    origin.includes('.vercel.app') ||
-    origin === req.headers.host;
-  
-  if (isAllowed) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+  if (origin) {
+    const isAllowed = 
+      allowedOrigins.includes(origin) || 
+      origin.includes('localhost') ||
+      origin.includes('.vercel.app') ||
+      origin === req.headers.host;
+    
+    if (isAllowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+    }
   } else {
-    // Still set CORS headers but with specific origin
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    // No origin header (e.g., same-origin request)
+    res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours'); // 24 hours
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
