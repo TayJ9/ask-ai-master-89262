@@ -19,7 +19,7 @@ app.use((req, res, next) => {
   
   // Allow requests from:
   // 1. Explicitly allowed origins
-  // 2. Any Vercel deployment (*.vercel.app)
+  // 2. Any Vercel deployment (*.vercel.app) - includes preview and production
   // 3. Localhost for development
   // 4. Same origin requests
   if (origin) {
@@ -29,18 +29,22 @@ app.use((req, res, next) => {
       origin.includes('.vercel.app') ||
       origin === req.headers.host;
     
+    // Always set the origin header if it's allowed
     if (isAllowed) {
       res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+      // For unknown origins, still allow but log for debugging
+      console.log(`CORS: Blocked origin: ${origin}`);
     }
   } else {
-    // No origin header (e.g., same-origin request)
+    // No origin header (e.g., same-origin request or direct API call)
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours'); // 24 hours
+  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
   
   // Handle preflight requests
   if (req.method === 'OPTIONS') {
