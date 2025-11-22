@@ -9,9 +9,3 @@ command = "npm install"
 [start]
 command = "npm start"
 
-# Tell Railway this is a runtime-only secret (not needed during build)
-[secrets]
-# JWT_SECRET is runtime-only, not needed during build
-# Railway will still validate it exists, but won't fail build if missing
-# Add it in Railway Variables before deploying
-
