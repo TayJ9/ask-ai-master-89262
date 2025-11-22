@@ -3,7 +3,17 @@ import { Pool as PgPool } from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
 import ws from "ws";
-import * as schema from "../shared/schema";
+import * as schemaModule from "../shared/schema";
+
+// Extract only the table definitions for drizzle schema
+// Drizzle needs only pgTable objects, not types or schemas
+const schema = {
+  profiles: schemaModule.profiles,
+  interviewQuestions: schemaModule.interviewQuestions,
+  interviewSessions: schemaModule.interviewSessions,
+  interviewResponses: schemaModule.interviewResponses,
+  interviewTurns: schemaModule.interviewTurns,
+};
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
