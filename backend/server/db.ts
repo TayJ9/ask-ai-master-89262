@@ -3,17 +3,7 @@ import { Pool as PgPool } from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
 import ws from "ws";
-import * as schemaModule from "../shared/schema";
-
-// Extract only the table definitions for drizzle schema
-// Drizzle needs only pgTable objects, not types or schemas
-const schema = {
-  profiles: schemaModule.profiles,
-  interviewQuestions: schemaModule.interviewQuestions,
-  interviewSessions: schemaModule.interviewSessions,
-  interviewResponses: schemaModule.interviewResponses,
-  interviewTurns: schemaModule.interviewTurns,
-};
+import * as schema from "../shared/schema";
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -39,7 +29,7 @@ if (isNeonDatabase) {
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
   db = drizzlePg({ client: pool, schema });
   
-  // Debug: Verify db.query exists
+  // Debug: Verify db.query and db.query.profiles exist
   if (!db.query) {
     console.error('❌ ERROR: db.query is undefined after drizzle initialization!');
     console.error('   Schema keys:', Object.keys(schema));
@@ -47,6 +37,17 @@ if (isNeonDatabase) {
     console.error('   db type:', typeof db);
     console.error('   db keys:', Object.keys(db));
     throw new Error('Drizzle query API not initialized. Check schema export.');
+  }
+  
+  // Check if tables are registered
+  if (!db.query.profiles) {
+    console.error('❌ ERROR: db.query.profiles is undefined!');
+    console.error('   db.query keys:', Object.keys(db.query));
+    console.error('   Schema keys:', Object.keys(schema));
+    console.error('   Schema.profiles type:', typeof schema.profiles);
+    console.error('   Schema.profiles:', schema.profiles);
+    console.error('   This means drizzle did not register the schema tables.');
+    throw new Error('Drizzle schema tables not registered. Check schema export format.');
   }
 }
 
