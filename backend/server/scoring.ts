@@ -124,11 +124,23 @@ IMPORTANT GUIDELINES:
   // Use OpenAI to analyze (you can switch to Vertex AI if preferred)
   const { default: OpenAI } = await import("openai");
   
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY not configured");
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    // Check for common typos
+    if (process.env.OPEN_API_KEY) {
+      throw new Error(
+        "OPENAI_API_KEY not configured. Found OPEN_API_KEY instead. " +
+        "Please rename the variable to OPENAI_API_KEY in Railway Variables."
+      );
+    }
+    throw new Error(
+      "OPENAI_API_KEY not configured. " +
+      "Please add it in Railway Variables. " +
+      "Get your API key from https://platform.openai.com/api-keys"
+    );
   }
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const openai = new OpenAI({ apiKey });
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o",

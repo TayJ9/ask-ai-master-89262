@@ -3,14 +3,37 @@ import OpenAI, { toFile } from "openai";
 // This integration uses OpenAI's API, which points to OpenAI's API servers and requires your own API key.
 // Using gpt-4o for reliable performance across all features
 
-if (!process.env.OPENAI_API_KEY) {
-  console.error('CRITICAL ERROR: OPENAI_API_KEY environment variable is not set!');
-  console.error('Available env vars:', Object.keys(process.env).filter(k => !k.includes('SECRET')));
+// Lazy-load OpenAI client to avoid crashing if API key is missing
+// Only instantiate when actually needed
+let openaiClient: OpenAI | null = null;
+
+function getOpenAIClient(): OpenAI {
+  if (!openaiClient) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    
+    if (!apiKey) {
+      // Check for common typos
+      const typoKey = process.env.OPEN_API_KEY;
+      if (typoKey) {
+        console.error('⚠️  WARNING: Found OPEN_API_KEY but need OPENAI_API_KEY');
+        console.error('   Please rename the variable from OPEN_API_KEY to OPENAI_API_KEY in Railway Variables');
+      }
+      
+      throw new Error(
+        'OPENAI_API_KEY environment variable is not set. ' +
+        'Please add it in Railway Variables. ' +
+        'Get your API key from https://platform.openai.com/api-keys'
+      );
+    }
+    
+    openaiClient = new OpenAI({ apiKey });
+  }
+  
+  return openaiClient;
 }
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 export async function textToSpeech(text: string): Promise<Buffer> {
+  const openai = getOpenAIClient();
   const response = await openai.audio.speech.create({
     model: "tts-1",
     voice: "alloy",
@@ -22,6 +45,7 @@ export async function textToSpeech(text: string): Promise<Buffer> {
 }
 
 export async function speechToText(audioBuffer: Buffer): Promise<string> {
+  const openai = getOpenAIClient();
   const transcription = await openai.audio.transcriptions.create({
     file: await toFile(audioBuffer, "audio.webm", { type: "audio/webm" }),
     model: "whisper-1",
@@ -95,6 +119,7 @@ IMPORTANT GUIDELINES:
 - Ensure strengths and improvements are balanced (neither overly harsh nor overly generous)`;
 
   // Using gpt-4o for reliable analysis
+  const openai = getOpenAIClient();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [{ role: "user", content: prompt }],
@@ -154,6 +179,7 @@ Role context: ${roleTips}
 Remember: Real interviews are conversations, not interrogations. Help them feel prepared and confident. Speak like a trusted mentor, not a corporate handbook.`;
 
   // Using gpt-4o for reliable coaching responses
+  const openai = getOpenAIClient();
   const response = await openai.chat.completions.create({
     model: "gpt-4o",
     messages: [
