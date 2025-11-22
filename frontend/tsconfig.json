@@ -25,7 +25,6 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
-  "include": ["src", "../shared"],
-  "references": [{ "path": "./tsconfig.app.json" }]
+  "include": ["src", "../shared"]
 }
 
