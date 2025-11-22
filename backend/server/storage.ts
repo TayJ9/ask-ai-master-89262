@@ -121,6 +121,17 @@ export class DatabaseStorage implements IStorage {
       orderBy: [interviewTurns.turnNumber, interviewTurns.createdAt],
     });
   }
+
+  async checkDbConnection(): Promise<boolean> {
+    try {
+      // Simple query to test database connection
+      await db.execute(sql`SELECT 1`);
+      return true;
+    } catch (error) {
+      console.error("Database connection check failed:", error);
+      return false;
+    }
+  }
 }
 
 export const storage = new DatabaseStorage();
