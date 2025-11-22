@@ -260,11 +260,12 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'No text provided' });
       }
 
-      if (!process.env.OPENAI_API_KEY) {
-        console.error('OPENAI_API_KEY is missing in environment');
+      // Support both OPENAI_API_KEY and OPEN_API_KEY
+      if (!process.env.OPENAI_API_KEY && !process.env.OPEN_API_KEY) {
+        console.error('OpenAI API key is missing in environment');
         return res.status(500).json({ 
           error: 'Text-to-speech failed', 
-          details: 'OPENAI_API_KEY not configured in production'
+          details: 'Please set either OPENAI_API_KEY or OPEN_API_KEY in Railway Variables'
         });
       }
 
