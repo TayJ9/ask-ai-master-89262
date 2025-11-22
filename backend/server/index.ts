@@ -117,6 +117,17 @@ app.use((req, res, next) => {
       log(`Server running on port ${PORT}`);
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
       log(`Health check: http://localhost:${PORT}/health`);
+      
+      // Check database connection on startup
+      storage.checkDbConnection().then(connected => {
+        if (connected) {
+          log(`✅ Database connection: OK`);
+        } else {
+          log(`⚠️  Database connection: FAILED - Check DATABASE_URL and ensure tables exist`);
+        }
+      }).catch(err => {
+        log(`⚠️  Database connection check error: ${err.message}`);
+      });
     });
   } catch (error: any) {
     console.error("❌ Failed to start server:", error);

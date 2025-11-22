@@ -110,24 +110,43 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: "Email, password, and full name are required" });
       }
       
+      console.log(`[SIGNUP] Attempting to create account for: ${email}`);
+      
       const existingUser = await storage.getProfileByEmail(email.toLowerCase().trim());
       if (existingUser) {
         return res.status(400).json({ error: "Email already exists" });
       }
 
+      console.log(`[SIGNUP] Hashing password...`);
       const passwordHash = await bcrypt.hash(password, 10);
+      
+      console.log(`[SIGNUP] Creating profile in database...`);
       const profile = await storage.createProfile({
         email: email.toLowerCase().trim(),
         fullName: fullName.trim(),
         passwordHash,
       });
 
+      console.log(`[SIGNUP] Success! Profile created with ID: ${profile.id}`);
       res.json({ message: "Account created successfully" });
     } catch (error: any) {
-      console.error("Signup error:", error);
-      console.error("Error stack:", error?.stack);
+      console.error("❌ [SIGNUP] Error:", error);
+      console.error("❌ [SIGNUP] Error message:", error?.message);
+      console.error("❌ [SIGNUP] Error stack:", error?.stack);
+      console.error("❌ [SIGNUP] Error code:", error?.code);
+      
+      // Provide more helpful error messages
+      let errorMessage = "Signup failed";
+      if (error?.message?.includes('relation') && error?.message?.includes('does not exist')) {
+        errorMessage = "Database tables not created. Please run database setup script.";
+      } else if (error?.message?.includes('connection') || error?.code === 'ECONNREFUSED') {
+        errorMessage = "Database connection failed. Please check DATABASE_URL.";
+      } else if (error?.message) {
+        errorMessage = `Signup failed: ${error.message}`;
+      }
+      
       res.status(500).json({ 
-        error: "Signup failed",
+        error: errorMessage,
         details: process.env.NODE_ENV === 'development' ? error?.message : undefined
       });
     }
@@ -141,18 +160,23 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: "Email and password are required" });
       }
       
+      console.log(`[SIGNIN] Attempting signin for: ${email}`);
+      
       const profile = await storage.getProfileByEmail(email.toLowerCase().trim());
       if (!profile || !profile.passwordHash) {
         return res.status(401).json({ error: "No account found with this email address. Please sign up first." });
       }
 
+      console.log(`[SIGNIN] Profile found, verifying password...`);
       const validPassword = await bcrypt.compare(password, profile.passwordHash);
       if (!validPassword) {
         return res.status(401).json({ error: "Incorrect password. Please try again." });
       }
 
+      console.log(`[SIGNIN] Password valid, generating token...`);
       const token = jwt.sign({ userId: profile.id }, getJWTSecret(), { expiresIn: '7d' });
       
+      console.log(`[SIGNIN] Success! Token generated for user: ${profile.id}`);
       res.json({ 
         token,
         user: {
@@ -162,10 +186,23 @@ export function registerRoutes(app: Express) {
         }
       });
     } catch (error: any) {
-      console.error("Signin error:", error);
-      console.error("Error stack:", error?.stack);
+      console.error("❌ [SIGNIN] Error:", error);
+      console.error("❌ [SIGNIN] Error message:", error?.message);
+      console.error("❌ [SIGNIN] Error stack:", error?.stack);
+      console.error("❌ [SIGNIN] Error code:", error?.code);
+      
+      // Provide more helpful error messages
+      let errorMessage = "Signin failed";
+      if (error?.message?.includes('relation') && error?.message?.includes('does not exist')) {
+        errorMessage = "Database tables not created. Please run database setup script.";
+      } else if (error?.message?.includes('connection') || error?.code === 'ECONNREFUSED') {
+        errorMessage = "Database connection failed. Please check DATABASE_URL.";
+      } else if (error?.message) {
+        errorMessage = `Signin failed: ${error.message}`;
+      }
+      
       res.status(500).json({ 
-        error: "Signin failed",
+        error: errorMessage,
         details: process.env.NODE_ENV === 'development' ? error?.message : undefined
       });
     }
