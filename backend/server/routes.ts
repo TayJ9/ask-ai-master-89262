@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema } from "@shared/schema";
+import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema } from "../shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";

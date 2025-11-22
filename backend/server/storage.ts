@@ -16,7 +16,7 @@ import {
   InterviewResponse,
   InsertInterviewTurn,
   InterviewTurn
-} from "@shared/schema";
+} from "../shared/schema";
 
 export interface IStorage {
   // Profiles
