@@ -119,7 +119,8 @@ app.use((req, res, next) => {
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
       log(`Health check: http://localhost:${PORT}/health`);
       
-      // Check database connection on startup
+      // Check database connection on startup (non-blocking)
+      // Don't crash if database check fails - let the app start and handle errors at request time
       storage.checkDbConnection().then(connected => {
         if (connected) {
           log(`✅ Database connection: OK`);
@@ -127,7 +128,10 @@ app.use((req, res, next) => {
           log(`⚠️  Database connection: FAILED - Check DATABASE_URL and ensure tables exist`);
         }
       }).catch(err => {
-        log(`⚠️  Database connection check error: ${err.message}`);
+        // Log error but don't crash - database might be temporarily unavailable
+        log(`⚠️  Database connection check error: ${err.message || err}`);
+        log(`   The server will continue, but database operations may fail.`);
+        log(`   Check DATABASE_URL environment variable in Railway Variables.`);
       });
     });
   } catch (error: any) {
