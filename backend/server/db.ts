@@ -28,6 +28,16 @@ if (isNeonDatabase) {
   // Use standard PostgreSQL driver for Railway and other standard PostgreSQL instances
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
   db = drizzlePg({ client: pool, schema });
+  
+  // Debug: Verify db.query exists
+  if (!db.query) {
+    console.error('❌ ERROR: db.query is undefined after drizzle initialization!');
+    console.error('   Schema keys:', Object.keys(schema));
+    console.error('   Schema has profiles:', !!schema.profiles);
+    console.error('   db type:', typeof db);
+    console.error('   db keys:', Object.keys(db));
+    throw new Error('Drizzle query API not initialized. Check schema export.');
+  }
 }
 
 export { pool, db };
