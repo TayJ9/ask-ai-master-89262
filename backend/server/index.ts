@@ -2,8 +2,14 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
+import { createRequire } from "module";
+import { fileURLToPath } from "url";
+import { dirname } from "path";
 
-// Import CommonJS module for WebSocket server
+// Import CommonJS module for WebSocket server using createRequire
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const require = createRequire(import.meta.url);
 const { createVoiceServer } = require("../voiceServer");
 
 const app = express();

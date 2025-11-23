@@ -51,6 +51,11 @@ export default function VoiceInterviewWebSocket({
   const audioChunksRef = useRef<Float32Array[]>([]);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  const isConnectingRef = useRef(false);
+  const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const retryCountRef = useRef(0);
+  const maxRetries = 3;
+  const isMountedRef = useRef(true);
   const { toast } = useToast();
 
   // Get WebSocket URL - points to Railway backend
@@ -190,15 +195,39 @@ export default function VoiceInterviewWebSocket({
 
   // Initialize WebSocket connection
   useEffect(() => {
+    isMountedRef.current = true;
+    
     const connectWebSocket = () => {
+      // Prevent multiple simultaneous connection attempts
+      if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
+        console.log('WebSocket connection already in progress or connected');
+        return;
+      }
+
+      // Check if we've exceeded max retries
+      if (retryCountRef.current >= maxRetries) {
+        console.error('Max retry attempts reached');
+        setStatusMessage("Connection failed. Please refresh the page.");
+        toast({
+          title: "Connection Failed",
+          description: "Unable to connect to voice server after multiple attempts. Please refresh the page.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      isConnectingRef.current = true;
+      
       try {
         const wsUrl = getWebSocketUrl();
-        console.log('Connecting to WebSocket:', wsUrl);
+        console.log(`Connecting to WebSocket (attempt ${retryCountRef.current + 1}/${maxRetries}):`, wsUrl);
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
         ws.onopen = () => {
           console.log('✓ WebSocket connected');
+          isConnectingRef.current = false;
+          retryCountRef.current = 0; // Reset retry count on successful connection
           setIsConnected(true);
           setStatusMessage("Connected. Starting interview...");
           
@@ -232,35 +261,74 @@ export default function VoiceInterviewWebSocket({
 
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
-          setStatusMessage("Connection error. Please try again.");
-          toast({
-            title: "Connection Error",
-            description: "Failed to connect to voice server.",
-            variant: "destructive",
-          });
+          isConnectingRef.current = false;
+          
+          // Don't show toast on every error - only on first attempt or final failure
+          if (retryCountRef.current === 0) {
+            setStatusMessage("Connection error. Retrying...");
+          }
         };
 
         ws.onclose = (event) => {
           console.log('WebSocket closed:', event.code, event.reason);
+          isConnectingRef.current = false;
           setIsConnected(false);
           setIsInterviewActive(false);
           
-          if (event.code !== 1000) {
+          // Only attempt reconnect if:
+          // 1. Not a normal closure (code 1000)
+          // 2. Component is still mounted
+          // 3. We haven't exceeded max retries
+          if (event.code !== 1000 && isMountedRef.current && retryCountRef.current < maxRetries) {
+            retryCountRef.current += 1;
+            const delay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 10000); // Exponential backoff, max 10s
+            
+            console.log(`WebSocket closed unexpectedly. Retrying in ${delay}ms... (attempt ${retryCountRef.current}/${maxRetries})`);
+            setStatusMessage(`Connection lost. Retrying in ${Math.round(delay / 1000)}s...`);
+            
+            // Clear any existing retry timeout
+            if (retryTimeoutRef.current) {
+              clearTimeout(retryTimeoutRef.current);
+            }
+            
+            retryTimeoutRef.current = setTimeout(() => {
+              if (isMountedRef.current) {
+                connectWebSocket();
+              }
+            }, delay);
+          } else if (event.code !== 1000 && isMountedRef.current) {
+            // Final failure - show error
             setStatusMessage("Connection lost. Please refresh the page.");
             toast({
               title: "Connection Lost",
-              description: "The connection to the voice server was lost.",
+              description: "The connection to the voice server was lost. Please refresh the page.",
               variant: "destructive",
             });
           }
         };
       } catch (error) {
         console.error('Error creating WebSocket:', error);
-        toast({
-          title: "Connection Error",
-          description: "Failed to create WebSocket connection.",
-          variant: "destructive",
-        });
+        isConnectingRef.current = false;
+        
+        if (retryCountRef.current === 0) {
+          toast({
+            title: "Connection Error",
+            description: "Failed to create WebSocket connection.",
+            variant: "destructive",
+          });
+        }
+        
+        // Retry on error
+        if (isMountedRef.current && retryCountRef.current < maxRetries) {
+          retryCountRef.current += 1;
+          const delay = Math.min(1000 * Math.pow(2, retryCountRef.current - 1), 10000);
+          
+          retryTimeoutRef.current = setTimeout(() => {
+            if (isMountedRef.current) {
+              connectWebSocket();
+            }
+          }, delay);
+        }
       }
     };
 
@@ -268,10 +336,23 @@ export default function VoiceInterviewWebSocket({
 
     // Cleanup on unmount
     return () => {
+      isMountedRef.current = false;
+      
+      // Clear retry timeout
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+      
+      // Close WebSocket connection
       if (wsRef.current) {
-        wsRef.current.close();
+        // Remove event handlers to prevent reconnection attempts
+        wsRef.current.onclose = null;
+        wsRef.current.onerror = null;
+        wsRef.current.close(1000, 'Component unmounting');
         wsRef.current = null;
       }
+      
       stopRecording();
       cleanupAudio();
     };
@@ -361,6 +442,15 @@ export default function VoiceInterviewWebSocket({
   // End interview
   const handleEndInterview = useCallback(() => {
     if (confirm("Are you sure you want to end the interview?")) {
+      // Clear any pending retry attempts
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+      
+      // Reset retry count to prevent reconnection
+      retryCountRef.current = maxRetries;
+      
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         wsRef.current.send(JSON.stringify({
           type: 'end_interview'
@@ -371,7 +461,8 @@ export default function VoiceInterviewWebSocket({
       cleanupAudio();
       
       if (wsRef.current) {
-        wsRef.current.close();
+        // Close with code 1000 (normal closure) to prevent retry attempts
+        wsRef.current.close(1000, 'Interview ended by user');
         wsRef.current = null;
       }
       
