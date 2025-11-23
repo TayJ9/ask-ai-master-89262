@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2, X } from "lucide-react";
+import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
@@ -136,6 +138,44 @@ export default function VoiceInterviewWebSocket({
     }
   }, []);
 
+  // Stop recording
+  const stopRecording = useCallback(() => {
+    if (mediaStreamRef.current) {
+      // Update recording state ref
+      const recordingState = (mediaStreamRef.current as any).__recordingState;
+      if (recordingState) {
+        recordingState.isRecording = false;
+      }
+      
+      // Stop all tracks
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      
+      // Disconnect processor if exists
+      const processor = (mediaStreamRef.current as any).__processor;
+      if (processor) {
+        const source = (processor as any).__source;
+        if (source) {
+          source.disconnect();
+        }
+        processor.disconnect();
+      }
+      
+      mediaStreamRef.current = null;
+    }
+    
+    setIsRecording(false);
+    setStatusMessage("Processing...");
+  }, []);
+
+  // Cleanup audio resources
+  const cleanupAudio = useCallback(() => {
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(console.error);
+      audioContextRef.current = null;
+    }
+    stopRecording();
+  }, [stopRecording]);
+
   // Initialize WebSocket connection
   useEffect(() => {
     const connectWebSocket = () => {
@@ -223,7 +263,7 @@ export default function VoiceInterviewWebSocket({
       stopRecording();
       cleanupAudio();
     };
-  }, [candidateContext, handleWebSocketMessage, playAudioChunk, toast]);
+  }, [candidateContext, handleWebSocketMessage, playAudioChunk, toast, stopRecording, cleanupAudio]);
 
   // Start recording microphone
   const startRecording = useCallback(async () => {
@@ -304,45 +344,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Microphone error. Please check permissions.");
       }
     }
-  }, [toast]);
-
-  // Stop recording
-  const stopRecording = useCallback(() => {
-    if (mediaStreamRef.current) {
-      // Update recording state ref
-      const recordingState = (mediaStreamRef.current as any).__recordingState;
-      if (recordingState) {
-        recordingState.isRecording = false;
-      }
-      
-      // Stop all tracks
-      mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      
-      // Disconnect processor if exists
-      const processor = (mediaStreamRef.current as any).__processor;
-      if (processor) {
-        const source = (processor as any).__source;
-        if (source) {
-          source.disconnect();
-        }
-        processor.disconnect();
-      }
-      
-      mediaStreamRef.current = null;
-    }
-    
-    setIsRecording(false);
-    setStatusMessage("Processing...");
-  }, []);
-
-  // Cleanup audio resources
-  const cleanupAudio = useCallback(() => {
-    if (audioContextRef.current) {
-      audioContextRef.current.close().catch(console.error);
-      audioContextRef.current = null;
-    }
-    stopRecording();
-  }, [stopRecording]);
+  }, [toast, stopRecording]);
 
   // End interview
   const handleEndInterview = useCallback(() => {
@@ -381,7 +383,7 @@ export default function VoiceInterviewWebSocket({
   }, [isPlaying, isInterviewActive, isRecording, isProcessing, startRecording]);
 
   return (
-    <div className="min-h-screen p-6 gradient-secondary flex items-center justify-center">
+    <AnimatedBackground className="p-6 flex items-center justify-center">
       <div className="max-w-4xl w-full space-y-6">
         {/* Main Interview Card */}
         <Card className="shadow-xl">
@@ -407,7 +409,7 @@ export default function VoiceInterviewWebSocket({
             <div className="text-center mb-6">
               {isPlaying ? (
                 <div className="flex items-center justify-center gap-2 text-primary">
-                  <Volume2 className="w-5 h-5 animate-pulse" />
+                  <AISpeakingIndicator size="md" />
                   <span className="font-medium">AI is speaking...</span>
                 </div>
               ) : isRecording ? (
@@ -491,7 +493,7 @@ export default function VoiceInterviewWebSocket({
           </CardContent>
         </Card>
       </div>
-    </div>
+    </AnimatedBackground>
   );
 }
 

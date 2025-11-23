@@ -105,7 +105,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 gradient-secondary">
+    <AnimatedBackground className="flex items-center justify-center p-4">
       <Card className="w-full max-w-md shadow-lg animate-scale-in">
         <CardHeader className="text-center space-y-4">
           <div className="mx-auto w-16 h-16 rounded-full gradient-primary flex items-center justify-center shadow-glow">
@@ -218,6 +218,6 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           </form>
         </CardContent>
       </Card>
-    </div>
+    </AnimatedBackground>
   );
 }

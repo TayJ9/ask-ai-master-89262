@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Briefcase, Package, TrendingUp, ArrowRight, Bot, Mic } from "lucide-react";
 import AICoach from "@/components/AICoach";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 const roles = [
   {
@@ -29,22 +30,16 @@ const roles = [
 ];
 
 interface RoleSelectionProps {
-  onSelectRole: (role: string, difficulty: string, mode?: "text" | "voice") => void;
+  onSelectRole: (role: string, mode?: "text" | "voice") => void;
 }
 
 export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   const [showCoach, setShowCoach] = useState(false);
   const [selectedRole, setSelectedRole] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
-  // Track difficulty per role - using an object to store difficulty for each role
-  const [difficulties, setDifficulties] = useState<Record<string, string>>({
-    "software-engineer": "medium",
-    "product-manager": "medium",
-    "marketing": "medium",
-  });
 
   return (
-    <div className="min-h-screen p-6 gradient-secondary">
+    <AnimatedBackground className="p-6">
       <div className="max-w-6xl mx-auto space-y-8 animate-scale-in">
         <div className="text-center space-y-3">
           <h1 className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
@@ -107,42 +102,10 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium">Difficulty Level</label>
-                    <div className="grid grid-cols-3 gap-2">
-                      <Button
-                        type="button"
-                        variant={difficulties[role.id] === "easy" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "easy" }))}
-                        className={`${difficulties[role.id] === "easy" ? "bg-primary text-primary-foreground" : ""}`}
-                      >
-                        Easy
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={difficulties[role.id] === "medium" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "medium" }))}
-                        className={`${difficulties[role.id] === "medium" ? "bg-primary text-primary-foreground" : ""}`}
-                      >
-                        Medium
-                      </Button>
-                      <Button
-                        type="button"
-                        variant={difficulties[role.id] === "hard" ? "default" : "outline"}
-                        size="sm"
-                        onClick={() => setDifficulties(prev => ({ ...prev, [role.id]: "hard" }))}
-                        className={`${difficulties[role.id] === "hard" ? "bg-primary text-primary-foreground" : ""}`}
-                      >
-                        Hard
-                      </Button>
-                    </div>
-                  </div>
                   <Button
                     onClick={() => {
-                      console.log('Button clicked:', role.id, difficulties[role.id], interviewMode);
-                      onSelectRole(role.id, difficulties[role.id], interviewMode);
+                      console.log('Button clicked:', role.id, interviewMode);
+                      onSelectRole(role.id, interviewMode);
                     }}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
@@ -174,6 +137,6 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           </div>
         )}
       </div>
-    </div>
+    </AnimatedBackground>
   );
 }

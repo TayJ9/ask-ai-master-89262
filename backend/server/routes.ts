@@ -10,6 +10,7 @@ import multer from "multer";
 import pdfParse from "pdf-parse";
 import { Readable } from "stream";
 import FormData from "form-data";
+import { v4 as uuidv4 } from "uuid";
 
 // Lazy-load JWT_SECRET to avoid build-time errors
 // CRITICAL: This function NEVER throws errors - Railway may validate during build
@@ -433,8 +434,131 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  // Resume upload endpoint
-  const upload = multer({ storage: multer.memoryStorage() });
+  // Resume upload endpoint with security measures
+  // Configure multer with file size limits and validation
+  const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: {
+      fileSize: 10 * 1024 * 1024, // 10MB max file size
+    },
+    fileFilter: (req, file, cb) => {
+      // Only allow PDF files
+      if (file.mimetype === 'application/pdf' || file.originalname.toLowerCase().endsWith('.pdf')) {
+        cb(null, true);
+      } else {
+        cb(new Error('Only PDF files are allowed'));
+      }
+    }
+  });
+  
+  // Alternative upload endpoint that matches frontend expectations (/api/upload-resume)
+  // This endpoint accepts FormData with 'resume', 'name', 'major', 'year' fields
+  // SECURITY: Requires authentication and validates file types/sizes
+  app.post("/api/upload-resume", authenticateToken, upload.single('resume'), async (req: any, res) => {
+    try {
+      // Validate file was uploaded
+      if (!req.file) {
+        return res.status(400).json({ error: 'No resume file provided' });
+      }
+
+      // Validate file size (additional check)
+      if (req.file.size > 10 * 1024 * 1024) {
+        return res.status(400).json({ error: 'File size exceeds 10MB limit' });
+      }
+
+      // Validate and sanitize form fields
+      const { name, major, year } = req.body;
+      
+      if (!name || !major || !year) {
+        return res.status(400).json({ 
+          error: 'Missing required fields',
+          message: 'Name, major, and year are required' 
+        });
+      }
+
+      // Sanitize inputs (basic validation)
+      const sanitizedName = String(name).trim().substring(0, 200);
+      const sanitizedMajor = String(major).trim().substring(0, 200);
+      const sanitizedYear = String(year).trim().substring(0, 50);
+
+      if (!sanitizedName || !sanitizedMajor || !sanitizedYear) {
+        return res.status(400).json({ 
+          error: 'Invalid input data',
+          message: 'Please provide valid name, major, and year' 
+        });
+      }
+
+      // Parse PDF securely
+      let resumeText = "";
+      try {
+        const pdfBuffer = req.file.buffer;
+        
+        // Additional validation: Check PDF magic bytes
+        const pdfMagicBytes = pdfBuffer.slice(0, 4).toString();
+        if (pdfMagicBytes !== '%PDF') {
+          return res.status(400).json({ 
+            error: 'Invalid PDF file',
+            message: 'File does not appear to be a valid PDF' 
+          });
+        }
+
+        const pdfData = await pdfParse(pdfBuffer);
+        resumeText = pdfData.text;
+        
+        // Limit extracted text length for security
+        const maxTextLength = 50000; // 50k characters max
+        if (resumeText.length > maxTextLength) {
+          resumeText = resumeText.substring(0, maxTextLength);
+        }
+      } catch (error: any) {
+        // Don't leak internal error details to client
+        console.error("PDF parsing error:", error);
+        return res.status(400).json({ 
+          error: 'Failed to parse PDF file',
+          message: 'The PDF file could not be processed. Please ensure it is a valid PDF file.' 
+        });
+      }
+
+      // Generate session ID
+      const sessionId = uuidv4();
+
+      // Clear file buffer from memory immediately after processing
+      req.file.buffer = null as any;
+
+      // Return response matching what frontend expects
+      res.json({
+        sessionId,
+        resumeText: resumeText.trim(),
+        candidateName: sanitizedName
+      });
+    } catch (error: any) {
+      // Log error server-side but don't expose details to client
+      console.error("Resume upload error:", error);
+      
+      // Handle multer errors specifically
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ 
+          error: 'File too large',
+          message: 'File size exceeds 10MB limit' 
+        });
+      }
+      
+      // Handle multer file filter errors
+      if (error && typeof error === 'object' && 'message' in error && 
+          typeof error.message === 'string' && error.message.includes('Only PDF')) {
+        return res.status(400).json({ 
+          error: 'Invalid file type',
+          message: 'Only PDF files are allowed' 
+        });
+      }
+      
+      // Generic error response (don't leak internal details)
+      res.status(500).json({ 
+        error: 'Failed to process resume',
+        message: 'An error occurred while processing your resume. Please try again.' 
+      });
+    }
+  });
   
   app.post("/api/resume/upload", authenticateToken, upload.single('file'), async (req: any, res) => {
     try {

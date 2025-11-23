@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2 } from "lucide-react";
+import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface VoiceInterviewProps {
   sessionId: string;
@@ -535,7 +537,7 @@ export default function VoiceInterview({
   }, [currentAudioUrl, stopRecording]);
 
   return (
-    <div className="min-h-screen p-6 gradient-secondary flex items-center justify-center">
+    <AnimatedBackground className="p-6 flex items-center justify-center">
       <div className="max-w-2xl w-full space-y-6">
         {/* Header */}
         <Card className="shadow-xl">
@@ -561,7 +563,7 @@ export default function VoiceInterview({
             <div className="text-center mb-6">
               {isPlaying ? (
                 <div className="flex items-center justify-center gap-2 text-primary">
-                  <Volume2 className="w-5 h-5 animate-pulse" />
+                  <AISpeakingIndicator size="md" />
                   <span className="font-medium">AI is speaking...</span>
                 </div>
               ) : isRecording ? (
@@ -629,7 +631,7 @@ export default function VoiceInterview({
           </CardContent>
         </Card>
       </div>
-    </div>
+    </AnimatedBackground>
   );
 }
 

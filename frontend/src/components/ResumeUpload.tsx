@@ -4,9 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => void;
@@ -96,6 +98,20 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     }
   };
 
+  // Generate UUID v4 for session IDs
+  const generateSessionId = (): string => {
+    // Use crypto.randomUUID() if available (modern browsers), otherwise fallback
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
+    // Fallback UUID v4 generator
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  };
+
   const handleTextPaste = async () => {
     if (!resumeText.trim()) {
       toast({
@@ -151,10 +167,14 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     }
 
     if (resumeText.trim()) {
+      // Generate sessionId for text-only uploads (when no file was uploaded)
+      const sessionId = generateSessionId();
+      
       const candidateInfo = {
         name: candidateName.trim(),
         major: candidateMajor.trim(),
-        year: candidateYear.trim()
+        year: candidateYear.trim(),
+        sessionId: sessionId
       };
       onResumeUploaded(resumeText, candidateInfo);
     } else {
@@ -167,7 +187,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   };
 
   return (
-    <div className="min-h-screen p-6 gradient-secondary flex items-center justify-center">
+    <AnimatedBackground className="p-6 flex items-center justify-center">
       <Card className="max-w-2xl w-full shadow-xl">
         <CardHeader>
           <div className="flex items-start justify-between mb-2">
@@ -214,14 +234,24 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="year">Academic Year *</Label>
-                <Input
-                  id="year"
-                  placeholder="Junior"
+                <Label htmlFor="year">Academic Level *</Label>
+                <Select
                   value={candidateYear}
-                  onChange={(e) => setCandidateYear(e.target.value)}
+                  onValueChange={setCandidateYear}
                   disabled={isUploading}
-                />
+                >
+                  <SelectTrigger id="year">
+                    <SelectValue placeholder="Select your level" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Freshman">Freshman</SelectItem>
+                    <SelectItem value="Sophomore">Sophomore</SelectItem>
+                    <SelectItem value="Junior">Junior</SelectItem>
+                    <SelectItem value="Senior">Senior</SelectItem>
+                    <SelectItem value="High School">High School</SelectItem>
+                    <SelectItem value="Post Grad">Post Grad</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </div>
           </div>
@@ -332,7 +362,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
           </div>
         </CardContent>
       </Card>
-    </div>
+    </AnimatedBackground>
   );
 }
 

@@ -15,7 +15,6 @@ export default function Index() {
   const [user, setUser] = useState<any>(null);
   const [currentView, setCurrentView] = useState<"roles" | "resume" | "interview" | "voice" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>("medium");
   const [resumeText, setResumeText] = useState<string>("");
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [firstQuestion, setFirstQuestion] = useState<string>("");
@@ -26,8 +25,8 @@ export default function Index() {
   
   // Debug logging
   useEffect(() => {
-    console.log('Current view:', currentView, 'Selected role:', selectedRole, 'Difficulty:', selectedDifficulty);
-  }, [currentView, selectedRole, selectedDifficulty]);
+    console.log('Current view:', currentView, 'Selected role:', selectedRole);
+  }, [currentView, selectedRole]);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -49,10 +48,9 @@ export default function Index() {
     setSelectedRole("");
   };
 
-  const handleSelectRole = (role: string, difficulty: string, mode: "text" | "voice" = "text") => {
-    console.log('handleSelectRole called with:', role, difficulty, mode);
+  const handleSelectRole = (role: string, mode: "text" | "voice" = "text") => {
+    console.log('handleSelectRole called with:', role, mode);
     setSelectedRole(role);
-    setSelectedDifficulty(difficulty);
     setInterviewMode(mode);
     // Show resume upload step before starting interview
     setCurrentView("resume");
@@ -86,7 +84,7 @@ export default function Index() {
     
     // Start interview session (text or voice)
     try {
-      console.log("Starting interview with resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
+      console.log("Starting interview with resume:", { role: selectedRole, mode: interviewMode });
       
       if (interviewMode === "voice") {
         // Voice interview - use WebSocket if we have candidate context and sessionId
@@ -104,7 +102,6 @@ export default function Index() {
           session_id: sessionId,
           role: selectedRole,
           resumeText: resume,
-          difficulty: selectedDifficulty,
         });
         
         console.log("Voice interview started successfully:", response);
@@ -166,7 +163,7 @@ export default function Index() {
     
     // Start interview session without resume
     try {
-      console.log("Starting interview without resume:", { role: selectedRole, difficulty: selectedDifficulty, mode: interviewMode });
+      console.log("Starting interview without resume:", { role: selectedRole, mode: interviewMode });
       
       if (interviewMode === "voice") {
         // For voice interviews without resume, we still need candidate info
@@ -284,7 +281,7 @@ export default function Index() {
       {currentView === "interview" && (
         <InterviewSession
           role={selectedRole}
-          difficulty={selectedDifficulty}
+          difficulty="medium"
           userId={user.id}
           onComplete={handleCompleteInterview}
         />
@@ -312,7 +309,7 @@ export default function Index() {
               sessionId={voiceSessionId}
               userId={user.id}
               role={selectedRole}
-              difficulty={selectedDifficulty}
+              difficulty="medium"
               resumeText={resumeText}
               initialAudioResponse={voiceInterviewData?.audioResponse}
               initialAgentText={voiceInterviewData?.agentResponseText}

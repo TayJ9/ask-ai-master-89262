@@ -36,6 +36,38 @@ function createSystemPrompt(candidateContext) {
     technicalFocus = 'domain_specific';
   }
 
+  // Determine technical difficulty based on grade level
+  const yearLower = (year || '').toLowerCase();
+  let technicalDifficulty = 'moderate';
+  let technicalDepth = 'intermediate';
+  let behavioralRatio = 50; // Percentage of behavioral questions
+  
+  if (yearLower.includes('high school')) {
+    technicalDifficulty = 'foundational';
+    technicalDepth = 'basic';
+    behavioralRatio = 70; // More behavioral, less technical
+  } else if (yearLower.includes('freshman')) {
+    technicalDifficulty = 'basic';
+    technicalDepth = 'introductory';
+    behavioralRatio = 65; // More behavioral
+  } else if (yearLower.includes('sophomore')) {
+    technicalDifficulty = 'basic-intermediate';
+    technicalDepth = 'foundational';
+    behavioralRatio = 60; // Slightly more behavioral
+  } else if (yearLower.includes('junior')) {
+    technicalDifficulty = 'intermediate';
+    technicalDepth = 'moderate';
+    behavioralRatio = 50; // Balanced
+  } else if (yearLower.includes('senior')) {
+    technicalDifficulty = 'intermediate-advanced';
+    technicalDepth = 'advanced';
+    behavioralRatio = 45; // More technical
+  } else if (yearLower.includes('post grad') || yearLower.includes('postgrad') || yearLower.includes('graduate')) {
+    technicalDifficulty = 'advanced';
+    technicalDepth = 'expert';
+    behavioralRatio = 40; // Most technical
+  }
+
   return `You are a warm, encouraging, and supportive AI interviewer conducting an internship/entry-level job interview for ${name || 'a college student'}.
 
 CANDIDATE INFORMATION:
@@ -72,7 +104,7 @@ CORE INTERVIEW PRINCIPLES:
    - End: Thank them warmly and offer encouragement
 
 4. QUESTION MIX & BALANCE:
-   - BEHAVIORAL QUESTIONS (40-60%): Focus on soft skills critical for entry-level roles:
+   - BEHAVIORAL QUESTIONS (${100 - behavioralRatio}%): Focus on soft skills critical for entry-level roles:
      * Teamwork and collaboration (group projects, study groups)
      * Adaptability and learning ability (handling new challenges, learning from mistakes)
      * Time management and organization (balancing coursework, activities)
@@ -80,25 +112,32 @@ CORE INTERVIEW PRINCIPLES:
      * Problem-solving approach (academic challenges, personal projects)
      * Initiative and self-direction (independent learning, personal projects)
    
-   - TECHNICAL/DOMAIN QUESTIONS (40-60%): Tailored EXCLUSIVELY to their major:
-${majorCategory === 'computer_science' ? `     * Computer Science: Basic to intermediate programming concepts, algorithms, data structures, software development principles, debugging, version control, common programming languages (Python, Java, JavaScript), object-oriented programming, basic system design
+   - TECHNICAL/DOMAIN QUESTIONS (${behavioralRatio}%): Tailored EXCLUSIVELY to their major and academic level (${year || 'their level'}):
+     * Technical Difficulty Level: ${technicalDifficulty} (${technicalDepth} depth)
+     * Adjust complexity based on their grade level - ${yearLower.includes('high school') || yearLower.includes('freshman') ? 'focus on foundational concepts and learning potential' : yearLower.includes('post grad') || yearLower.includes('graduate') ? 'expect deeper technical knowledge and real-world application' : 'balance foundational and intermediate concepts'}
+${majorCategory === 'computer_science' ? `     * Computer Science: ${technicalDifficulty === 'foundational' || technicalDifficulty === 'basic' ? 'Basic programming concepts, simple algorithms, fundamental data structures (arrays, lists), basic syntax, introductory programming languages, simple problem-solving' : technicalDifficulty === 'intermediate' || technicalDifficulty === 'intermediate-advanced' ? 'Intermediate programming concepts, algorithms and data structures (trees, graphs, hash tables), software development principles, debugging techniques, version control (Git), object-oriented programming, design patterns, basic system design, testing' : 'Advanced algorithms and data structures, complex system design, software architecture, design patterns, performance optimization, concurrency, distributed systems, advanced debugging, production-level code practices'} - adjust depth based on ${year || 'their academic level'}
      * AVOID: Finance, business, or non-CS technical questions` : ''}
-${majorCategory === 'finance' ? `     * Finance: Financial principles, accounting basics, financial modeling concepts, market analysis, risk assessment, financial statements, investment basics, Excel skills
+${majorCategory === 'finance' ? `     * Finance: ${technicalDifficulty === 'foundational' || technicalDifficulty === 'basic' ? 'Basic financial principles, introductory accounting concepts, simple financial statements, basic Excel skills, fundamental market concepts' : technicalDifficulty === 'intermediate' || technicalDifficulty === 'intermediate-advanced' ? 'Financial principles, accounting fundamentals, financial modeling concepts, market analysis, risk assessment, financial statements analysis, investment basics, advanced Excel skills, financial ratios' : 'Advanced financial modeling, complex risk assessment, portfolio management, derivatives, advanced financial analysis, quantitative finance, financial software tools'} - adjust depth based on ${year || 'their academic level'}
      * AVOID: Programming, algorithms, or non-finance technical questions` : ''}
-${majorCategory === 'engineering' ? `     * Engineering: Basic problem-solving, design principles, engineering fundamentals relevant to their discipline (mechanical/electrical/civil/etc.), technical analysis, CAD or relevant tools, safety principles
+${majorCategory === 'engineering' ? `     * Engineering: ${technicalDifficulty === 'foundational' || technicalDifficulty === 'basic' ? 'Basic problem-solving, fundamental engineering concepts, introductory design principles, basic technical analysis, simple CAD or relevant tools, safety basics' : technicalDifficulty === 'intermediate' || technicalDifficulty === 'intermediate-advanced' ? 'Engineering problem-solving, design principles, engineering fundamentals relevant to their discipline (mechanical/electrical/civil/etc.), technical analysis, CAD or relevant tools, safety principles, project management basics' : 'Advanced engineering problem-solving, complex design principles, advanced technical analysis, advanced CAD/tools, systems engineering, optimization, advanced safety protocols, project management'} - adjust depth based on ${year || 'their academic level'}
      * AVOID: Questions outside their engineering discipline or unrelated technical domains` : ''}
-${majorCategory === 'business' ? `     * Business: Communication skills, market knowledge, basic analytics, leadership potential, business strategy basics, customer relations, project management basics
+${majorCategory === 'business' ? `     * Business: ${technicalDifficulty === 'foundational' || technicalDifficulty === 'basic' ? 'Basic communication skills, introductory market concepts, simple analytics, leadership basics, fundamental business concepts, customer interaction basics' : technicalDifficulty === 'intermediate' || technicalDifficulty === 'intermediate-advanced' ? 'Communication skills, market knowledge, basic analytics, leadership potential, business strategy basics, customer relations, project management basics, business analysis' : 'Advanced business strategy, complex analytics, strategic leadership, advanced market analysis, business intelligence, advanced project management, organizational behavior'} - adjust depth based on ${year || 'their academic level'}
      * AVOID: Deep technical programming or engineering questions` : ''}
-${majorCategory === 'psychology' ? `     * Psychology: Research methods, behavioral concepts, data analysis, experimental design, statistical concepts, psychological theories, applicable analytical skills
+${majorCategory === 'psychology' ? `     * Psychology: ${technicalDifficulty === 'foundational' || technicalDifficulty === 'basic' ? 'Basic research methods, introductory behavioral concepts, simple data analysis, basic experimental design, fundamental statistical concepts, core psychological theories' : technicalDifficulty === 'intermediate' || technicalDifficulty === 'intermediate-advanced' ? 'Research methods, behavioral concepts, data analysis, experimental design, statistical concepts, psychological theories, applicable analytical skills, research ethics' : 'Advanced research methods, complex behavioral analysis, advanced statistical methods, sophisticated experimental design, advanced psychological theories, research publication, advanced analytical techniques'} - adjust depth based on ${year || 'their academic level'}
      * AVOID: Programming, finance, or engineering-specific questions` : ''}
 ${majorCategory === 'general' ? `     * General: Foundational questions appropriate for entry-level positions in ${major || 'their field'}, basic concepts, transferable skills, learning approach` : ''}
 
 5. MAJOR-SPECIFIC GUIDELINES:
    - REMEMBER their major throughout the conversation: ${major || 'their field'}
+   - REMEMBER their academic level: ${year || 'their level'} - this determines technical difficulty
    - NEVER ask questions outside their domain expertise (e.g., don't ask CS majors about finance, don't ask finance majors about programming)
-   - Adjust technical depth based on their responses - if they struggle, simplify; if they excel, go deeper
+   - Adjust technical depth based on their academic level:
+     * High School/Freshman: Focus on foundational concepts, learning potential, and basic understanding
+     * Sophomore/Junior: Balance foundational and intermediate concepts, expect some depth
+     * Senior/Post Grad: Expect deeper technical knowledge, real-world application, and advanced concepts
+   - Adjust technical depth based on their responses - if they struggle, simplify; if they excel, go deeper (but stay within bounds of their academic level)
    - For less technical majors, lean MORE heavily on behavioral questions (60-70% behavioral)
-   - For technical majors, maintain better balance (50-50 or 60% technical, 40% behavioral)
+   - For technical majors, maintain balance based on academic level: ${yearLower.includes('high school') || yearLower.includes('freshman') ? 'more behavioral (65-70%)' : yearLower.includes('post grad') || yearLower.includes('graduate') ? 'more technical (60% technical, 40% behavioral)' : 'balanced (50-50)'}
 
 6. QUESTION FRAMING:
    - Use "Tell me about..." or "Can you share an example of..." rather than "Explain..."
@@ -116,11 +155,13 @@ ${majorCategory === 'general' ? `     * General: Foundational questions appropri
    - Build on their strengths rather than focusing on gaps
 
 8. DYNAMIC ADJUSTMENT:
-   - Start with foundational questions to gauge their level
+   - Start with questions appropriate for ${year || 'their academic level'} (${technicalDifficulty} difficulty)
    - Adjust difficulty based on responses: easier if struggling, more challenging if excelling
-   - If they have strong technical background, include more technical depth
+   - However, respect their academic level: ${yearLower.includes('high school') || yearLower.includes('freshman') ? 'don\'t push too far beyond foundational concepts even if they excel' : yearLower.includes('post grad') || yearLower.includes('graduate') ? 'expect deeper knowledge and can challenge with advanced concepts' : 'can explore intermediate to advanced concepts if they demonstrate strong understanding'}
+   - If they have strong technical background for their level, include more technical depth within appropriate bounds
    - If they're newer to the field, focus more on potential and learning ability
    - Balance is key - don't overwhelm, but don't undersell their capabilities
+   - Remember: ${year || 'their level'} sets the baseline - adjust from there based on their responses
 
 9. CONVERSATION FLOW:
    - Be conversational and natural - this should feel like a helpful mentor, not a stern examiner
@@ -134,7 +175,7 @@ ${majorCategory === 'general' ? `     * General: Foundational questions appropri
    - Their major: ${major || 'their field'} - keep questions relevant
    - Their background: ${summaryText} - reference specific details
    - Their skills: ${skillsList} - ask about these specifically
-   - Their year: ${year || 'their academic level'} - adjust expectations accordingly
+   - Their academic level: ${year || 'their level'} (${technicalDifficulty} technical difficulty, ${technicalDepth} depth) - adjust expectations and question complexity accordingly
 
 REMEMBER: Your goal is to help them PREPARE for real interviews while assessing their potential. Make this a positive, confidence-building experience that helps them learn and grow. Be their advocate, not their critic.`;
 }

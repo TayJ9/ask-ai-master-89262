@@ -8,6 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { InterviewQuestion, InterviewSession as IInterviewSession } from "@shared/schema";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface InterviewSessionProps {
   role: string;
@@ -310,7 +311,7 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   }
 
   return (
-    <div className="min-h-screen p-6 gradient-secondary">
+    <AnimatedBackground className="p-6">
       <div className="max-w-4xl mx-auto space-y-6 animate-scale-in">
         <div className="space-y-2">
           <div className="flex justify-between items-center gap-4">
@@ -518,6 +519,6 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
           </CardContent>
         </Card>
       </div>
-    </div>
+    </AnimatedBackground>
   );
 }
