@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Mic, Eye, EyeOff } from "lucide-react";
 import { z } from "zod";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");

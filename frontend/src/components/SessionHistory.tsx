@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, TrendingUp, Calendar, Award, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import type { InterviewSession } from "@shared/schema";
+import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface SessionHistoryProps {
   userId: string;
