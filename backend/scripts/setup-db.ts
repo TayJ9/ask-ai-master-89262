@@ -30,6 +30,35 @@ async function setupDatabase() {
       }
     };
 
+    // Check if tables already exist to avoid unnecessary work
+    const checkTableExists = async (tableName: string): Promise<boolean> => {
+      try {
+        // Escape table name to prevent SQL injection (though it's from our code, not user input)
+        const escapedTableName = tableName.replace(/"/g, '""');
+        const result = await executeQuery(`
+          SELECT EXISTS (
+            SELECT FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name = '${escapedTableName}'
+          );
+        `);
+        return result.rows?.[0]?.exists || false;
+      } catch (error) {
+        // If query fails, assume table doesn't exist and proceed
+        console.log(`⚠️  Could not check if table exists: ${(error as Error).message}`);
+        return false;
+      }
+    };
+
+    // Check if profiles table exists (if it does, all tables likely exist)
+    const tablesExist = await checkTableExists('profiles');
+    if (tablesExist) {
+      console.log('✅ Database tables already exist. Skipping creation.');
+      console.log('✅ Database setup complete!');
+      process.exit(0);
+      return;
+    }
+
     // Create profiles table
     await executeQuery(`
         CREATE TABLE IF NOT EXISTS profiles (

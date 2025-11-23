@@ -51,11 +51,10 @@ export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "../../frontend/dist/public");
 
   // Gracefully handle missing frontend build in production
-  // This allows the backend API to work even if frontend isn't deployed
+  // This is expected when frontend is deployed separately (e.g., on Vercel)
   if (!fs.existsSync(distPath)) {
-    console.warn(`⚠️  Frontend build directory not found: ${distPath}`);
-    console.warn("   Backend API will work, but frontend routes will return 404");
-    console.warn("   To serve frontend: build it and ensure dist/public exists");
+    log("ℹ️  Frontend build directory not found (expected when frontend is deployed separately)");
+    log("   Backend API endpoints are available at /api/*");
     
     // Return API info for root route instead of failing
     app.get("/", (_req, res) => {
