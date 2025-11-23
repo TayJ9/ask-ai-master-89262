@@ -191,6 +191,8 @@ function createOpenAIConnection(apiKey, systemPrompt) {
       }
     });
     
+    let sessionConfigured = false;
+    
     ws.on('open', () => {
       console.log('✓ Connected to OpenAI Realtime API');
       
@@ -215,6 +217,7 @@ function createOpenAIConnection(apiKey, systemPrompt) {
       
       ws.send(JSON.stringify(configMessage));
       console.log('✓ Session configuration sent to OpenAI');
+      // Resolve immediately - we'll handle session.updated in the main handler
       resolve(ws);
     });
     
@@ -288,9 +291,35 @@ function handleFrontendConnection(frontendWs, httpServer) {
           openAIWs = await createOpenAIConnection(apiKey, systemPrompt);
           isInterviewActive = true;
           
+          let sessionReady = false;
+          
           openAIWs.on('message', (openAIData) => {
             try {
               const openAIMessage = JSON.parse(openAIData.toString());
+              
+              // Handle session.updated event
+              if (openAIMessage.type === 'session.updated') {
+                console.log('✓ OpenAI session updated and ready');
+                sessionReady = true;
+                // Trigger AI to start speaking now that session is ready
+                setTimeout(() => {
+                  if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
+                    console.log('🎤 Triggering AI to start speaking...');
+                    try {
+                      openAIWs.send(JSON.stringify({
+                        type: 'response.create',
+                        response: {
+                          modalities: ['text', 'audio']
+                        }
+                      }));
+                      console.log('✓ Response creation request sent to OpenAI');
+                    } catch (error) {
+                      console.error('❌ Error sending response.create:', error);
+                    }
+                  }
+                }, 500);
+                return;
+              }
               
               switch (openAIMessage.type) {
                 case 'response.audio.delta':
@@ -373,6 +402,7 @@ function handleFrontendConnection(frontendWs, httpServer) {
             }
           });
           
+          // Send interview_started immediately - AI will start speaking after session.updated
           frontendWs.send(JSON.stringify({
             type: 'interview_started',
             message: 'Interview session started successfully'
@@ -380,10 +410,12 @@ function handleFrontendConnection(frontendWs, httpServer) {
           
         } catch (error) {
           console.error('❌ Failed to connect to OpenAI:', error);
-          frontendWs.send(JSON.stringify({
-            type: 'error',
-            message: `Failed to start interview: ${error.message}`
-          }));
+          if (frontendWs.readyState === WebSocket.OPEN) {
+            frontendWs.send(JSON.stringify({
+              type: 'error',
+              message: `Failed to start interview: ${error.message}`
+            }));
+          }
         }
       } else if (message.type === 'end_interview') {
         console.log('🛑 Ending interview session');

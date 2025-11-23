@@ -57,6 +57,7 @@ export default function VoiceInterviewWebSocket({
   const maxRetries = 3;
   const isMountedRef = useRef(true);
   const candidateContextRef = useRef(candidateContext);
+  const interviewStartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
   
   // Update candidateContext ref when it changes
@@ -147,13 +148,35 @@ export default function VoiceInterviewWebSocket({
           };
           console.log('📤 Sending start_interview message:', JSON.stringify(startMessage, null, 2));
           wsRef.current.send(JSON.stringify(startMessage));
+          
+          // Set a timeout to detect if backend doesn't respond
+          if (interviewStartTimeoutRef.current) {
+            clearTimeout(interviewStartTimeoutRef.current);
+          }
+          interviewStartTimeoutRef.current = setTimeout(() => {
+            if (!isInterviewActive && wsRef.current?.readyState === WebSocket.OPEN) {
+              console.error('⏱️ Timeout: No response from backend after sending start_interview');
+              setStatusMessage("Timeout: Server not responding. Please try again.");
+              toast({
+                title: "Connection Timeout",
+                description: "The server didn't respond. This might be a backend issue. Please refresh and try again.",
+                variant: "destructive",
+              });
+            }
+          }, 15000); // 15 second timeout
         } else {
           console.error('❌ WebSocket not open, cannot send start_interview');
         }
         break;
       case 'interview_started':
+        console.log('✅ Interview started successfully:', message.message);
+        // Clear the timeout since we got a response
+        if (interviewStartTimeoutRef.current) {
+          clearTimeout(interviewStartTimeoutRef.current);
+          interviewStartTimeoutRef.current = null;
+        }
         setIsInterviewActive(true);
-        setStatusMessage("Interview started. Speak when ready.");
+        setStatusMessage("Interview started. AI is speaking...");
         break;
       case 'session_started':
         setIsInterviewActive(true);
@@ -422,6 +445,12 @@ export default function VoiceInterviewWebSocket({
       if (retryTimeoutRef.current) {
         clearTimeout(retryTimeoutRef.current);
         retryTimeoutRef.current = null;
+      }
+      
+      // Clear interview start timeout
+      if (interviewStartTimeoutRef.current) {
+        clearTimeout(interviewStartTimeoutRef.current);
+        interviewStartTimeoutRef.current = null;
       }
       
       // Close WebSocket connection
