@@ -51,8 +51,12 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
     localStorage.setItem(`interview_progress_${role}_${userId}`, JSON.stringify(sessionData));
   }, [sessionId, currentQuestionIndex, transcript, feedback, role, difficulty, userId]);
 
-  const { data: questions = [], isLoading: questionsLoading } = useQuery<InterviewQuestion[]>({
-    queryKey: [`/api/questions/${role}?difficulty=${difficulty}`],
+  const { data: questions = [], isLoading: questionsLoading, error: questionsError } = useQuery<InterviewQuestion[]>({
+    queryKey: [`/api/questions/${role}`, { difficulty }],
+    queryFn: async () => {
+      const response = await apiRequest(`/api/questions/${role}?difficulty=${difficulty}`, 'GET');
+      return response;
+    },
     enabled: !!role,
   });
 
@@ -91,13 +95,26 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
 
   useEffect(() => {
     if (!questionsLoading && questions.length > 0 && !sessionId && !createSessionMutation.isPending) {
+      console.log('Creating interview session...', { userId, role });
       createSessionMutation.mutate({
         userId,
         role,
         status: "in_progress",
       });
     }
-  }, [questionsLoading, questions.length, sessionId, createSessionMutation.isPending, userId, role]);
+  }, [questionsLoading, questions.length, sessionId, createSessionMutation, userId, role]);
+
+  // Log errors for debugging
+  useEffect(() => {
+    if (questionsError) {
+      console.error('Questions loading error:', questionsError);
+      toast({
+        title: "Failed to load questions",
+        description: questionsError instanceof Error ? questionsError.message : "Please try again.",
+        variant: "destructive",
+      });
+    }
+  }, [questionsError, toast]);
 
   const playQuestion = useCallback(async (questionText: string) => {
     // Don't show loading immediately - start audio generation in background
@@ -297,16 +314,42 @@ export default function InterviewSession({ role, difficulty, userId, onComplete 
   const currentQuestion = useMemo(() => questions[currentQuestionIndex], [questions, currentQuestionIndex]);
   const progress = useMemo(() => ((currentQuestionIndex + 1) / questions.length) * 100, [currentQuestionIndex, questions.length]);
 
-  if (questionsLoading || !questions.length || createSessionMutation.isPending || (questions.length > 0 && !sessionId)) {
+  if (questionsLoading || createSessionMutation.isPending) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
+      <AnimatedBackground className="flex items-center justify-center">
         <div className="text-center space-y-4">
           <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" data-testid="loader-session" />
           <p className="text-lg text-muted-foreground">
             {questionsLoading ? "Loading questions..." : "Preparing your interview session..."}
           </p>
         </div>
-      </div>
+      </AnimatedBackground>
+    );
+  }
+
+  if (questionsError || !questions.length) {
+    return (
+      <AnimatedBackground className="flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <AlertCircle className="w-8 h-8 text-destructive mx-auto" />
+          <p className="text-lg text-muted-foreground">
+            {questionsError ? "Failed to load questions. Please try again." : "No questions available for this role."}
+          </p>
+          <Button onClick={() => window.location.reload()}>Retry</Button>
+        </div>
+      </AnimatedBackground>
+    );
+  }
+
+  if (!sessionId) {
+    return (
+      <AnimatedBackground className="flex items-center justify-center">
+        <div className="text-center space-y-4">
+          <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" data-testid="loader-session" />
+          <p className="text-lg text-muted-foreground">Preparing your interview session...</p>
+          <p className="text-sm text-muted-foreground">This may take a moment...</p>
+        </div>
+      </AnimatedBackground>
     );
   }
 
