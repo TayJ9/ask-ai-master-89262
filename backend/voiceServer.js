@@ -507,10 +507,41 @@ function createVoiceServer(httpServer) {
   const wss = new WebSocket.Server({
     server: httpServer,
     path: '/voice',
-    perMessageDeflate: false
+    perMessageDeflate: false,
+    // Verify origin for WebSocket connections (security)
+    verifyClient: (info) => {
+      const origin = info.origin;
+      
+      // Allow if no origin (same-origin or direct connection)
+      if (!origin) {
+        return true;
+      }
+      
+      // Allow Vercel domains
+      if (origin.includes('.vercel.app')) {
+        return true;
+      }
+      
+      // Allow localhost for development
+      if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+        return true;
+      }
+      
+      // Allow explicitly configured frontend URL
+      const frontendUrl = process.env.FRONTEND_URL;
+      if (frontendUrl && origin === frontendUrl) {
+        return true;
+      }
+      
+      // Log blocked origins for debugging
+      console.log(`⚠️  WebSocket: Blocked origin: ${origin}`);
+      return false;
+    }
   });
   
   wss.on('connection', (ws, req) => {
+    const origin = req.headers.origin;
+    console.log(`🔌 WebSocket connection from origin: ${origin || 'same-origin'}`);
     handleFrontendConnection(ws, httpServer);
   });
   

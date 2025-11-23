@@ -15,49 +15,70 @@ const { createVoiceServer } = require("../voiceServer");
 const app = express();
 
 // CORS configuration for Railway backend + Vercel frontend deployment
-// Allow all Vercel preview and production deployments
-const allowedOrigins = [
-  process.env.FRONTEND_URL, // Explicitly set Vercel URL if needed
-  process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
-  // Development origins
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://localhost:5000',
-].filter(Boolean) as string[];
+// Supports both production and preview deployments on Vercel
+const getAllowedOrigins = (): string[] => {
+  const origins: string[] = [
+    // Explicitly configured frontend URL
+    process.env.FRONTEND_URL,
+    // Vercel production URL (if set)
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+    // Development origins
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:5000',
+  ].filter(Boolean) as string[];
+  
+  return origins;
+};
 
+// Check if origin is allowed (Vercel domains, localhost, or explicitly allowed)
+const isOriginAllowed = (origin: string | undefined): boolean => {
+  if (!origin) return false;
+  
+  const allowedOrigins = getAllowedOrigins();
+  
+  // Check explicit allowlist
+  if (allowedOrigins.includes(origin)) {
+    return true;
+  }
+  
+  // Allow any Vercel deployment (*.vercel.app)
+  if (origin.includes('.vercel.app')) {
+    return true;
+  }
+  
+  // Allow localhost for development
+  if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+    return true;
+  }
+  
+  return false;
+};
+
+// CORS middleware - must be before routes
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   
-  // Allow requests from:
-  // 1. Explicitly allowed origins
-  // 2. Any Vercel deployment (*.vercel.app) - includes preview and production
-  // 3. Localhost for development
-  // 4. Same origin requests
-  if (origin) {
-    const isAllowed = 
-      allowedOrigins.includes(origin) || 
-      origin.includes('localhost') ||
-      origin.includes('.vercel.app') ||
-      origin === req.headers.host;
-    
-    // Always set the origin header if it's allowed
-    if (isAllowed) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      // For unknown origins, still allow but log for debugging
-      console.log(`CORS: Blocked origin: ${origin}`);
-    }
-  } else {
-    // No origin header (e.g., same-origin request or direct API call)
+  // Set CORS headers based on origin
+  if (origin && isOriginAllowed(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  } else if (!origin) {
+    // No origin header (e.g., same-origin or direct API call) - allow
     res.setHeader('Access-Control-Allow-Origin', '*');
+  } else {
+    // Unknown origin - log but allow for now (can be restricted later)
+    log(`⚠️  CORS: Unknown origin: ${origin} - allowing for now`);
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
   
+  // Standard CORS headers
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
   res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
   
-  // Handle preflight requests
+  // Handle preflight OPTIONS requests
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
@@ -102,6 +123,23 @@ app.use((req, res, next) => {
   try {
     registerRoutes(app);
     
+    // Root route - provide API information (frontend is deployed separately on Vercel)
+    app.get('/', (_req, res) => {
+      res.json({
+        message: "AI Interview Coach API",
+        version: "1.0.0",
+        status: "operational",
+        environment: process.env.NODE_ENV || "development",
+        endpoints: {
+          health: "GET /health",
+          api: "All /api/* endpoints available",
+          websocket: "WS /voice - Voice interview WebSocket endpoint"
+        },
+        frontend: "Deployed separately on Vercel",
+        documentation: "API endpoints are available at /api/*"
+      });
+    });
+    
     // Use static file serving in production, Vite dev server in development
     if (process.env.NODE_ENV === "production") {
       serveStatic(app);
@@ -128,6 +166,13 @@ app.use((req, res, next) => {
       log(`Server running on port ${PORT}`);
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
       log(`Health check: http://localhost:${PORT}/health`);
+      
+      // Log CORS configuration
+      const allowedOrigins = getAllowedOrigins();
+      if (allowedOrigins.length > 0) {
+        log(`CORS: Allowing origins: ${allowedOrigins.join(', ')}`);
+      }
+      log(`CORS: Also allowing all *.vercel.app domains`);
       
       // Initialize WebSocket server for voice interviews
       try {

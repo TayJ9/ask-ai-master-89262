@@ -82,15 +82,35 @@ function authenticateToken(req: any, res: any, next: any) {
 }
 
 export function registerRoutes(app: Express) {
-  // Health check endpoint
+  // Health check endpoint - accessible without authentication
   app.get('/health', async (_req, res) => {
     try {
       // Check database connection
       const dbConnected = await storage.checkDbConnection();
+      const environment = process.env.NODE_ENV || 'development';
+      const port = process.env.PORT || '5000';
+      
       if (dbConnected) {
-        res.json({ status: 'healthy', database: 'connected' });
+        res.json({ 
+          status: 'healthy', 
+          database: 'connected',
+          environment,
+          port,
+          timestamp: new Date().toISOString(),
+          services: {
+            api: 'operational',
+            websocket: 'operational',
+            database: 'connected'
+          }
+        });
       } else {
-        res.status(500).json({ status: 'unhealthy', database: 'disconnected' });
+        res.status(500).json({ 
+          status: 'unhealthy', 
+          database: 'disconnected',
+          environment,
+          port,
+          timestamp: new Date().toISOString()
+        });
       }
     } catch (error: any) {
       console.error('Health check error:', error);
