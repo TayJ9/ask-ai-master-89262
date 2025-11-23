@@ -1,59 +1,67 @@
 #!/bin/bash
-# Script to push commits to GitHub
-# Requires GITHUB_TOKEN in Replit Secrets
+# Direct GitHub push script - works from any environment
+# No Replit dependency required
 
 set -e
 
 echo "🚀 Pushing to GitHub..."
 
-# Check if GITHUB_TOKEN is set
-if [ -z "$GITHUB_TOKEN" ]; then
-    echo "❌ GITHUB_TOKEN not found!"
+# Check if we have a token
+if [ -n "$GITHUB_TOKEN" ]; then
+    echo "✅ Using GITHUB_TOKEN from environment"
+    git remote set-url origin https://TayJ9:${GITHUB_TOKEN}@github.com/TayJ9/ask-ai-master-89262.git
+elif [ -f ~/.git-credentials ]; then
+    echo "✅ Using stored git credentials"
+else
+    echo "⚠️  No authentication found"
     echo ""
-    echo "To enable automatic pushing:"
-    echo "1. Create GitHub Personal Access Token:"
-    echo "   https://github.com/settings/tokens/new"
-    echo "   - Name: 'Replit Auto Push'"
-    echo "   - Scopes: ✅ repo (all)"
+    echo "To enable automatic pushing, choose one:"
     echo ""
-    echo "2. Add to Replit Secrets (🔒 icon):"
-    echo "   Key: GITHUB_TOKEN"
-    echo "   Value: [your token]"
+    echo "OPTION 1: GitHub Personal Access Token (Recommended)"
+    echo "  1. Create token: https://github.com/settings/tokens/new"
+    echo "     - Name: 'Auto Push'"
+    echo "     - Scopes: ✅ repo (all)"
+    echo "  2. Run: export GITHUB_TOKEN=your_token"
+    echo "  3. Run this script again"
     echo ""
-    echo "3. Run this script again"
+    echo "OPTION 2: SSH Key"
+    echo "  1. Generate: ssh-keygen -t ed25519 -C 'your_email@example.com'"
+    echo "  2. Add to GitHub: Settings → SSH and GPG keys"
+    echo "  3. Run: git remote set-url origin git@github.com:TayJ9/ask-ai-master-89262.git"
+    echo ""
+    echo "OPTION 3: Store credentials"
+    echo "  Run: git push origin main"
+    echo "  Enter username: TayJ9"
+    echo "  Enter password: [your GitHub token]"
+    echo "  Credentials will be saved for future pushes"
     exit 1
 fi
 
-echo "✅ GITHUB_TOKEN found"
-
-# Configure git remote with token
-echo "🔧 Configuring git remote..."
-git remote set-url origin https://TayJ9:${GITHUB_TOKEN}@github.com/TayJ9/ask-ai-master-89262.git
-
-# Show commits to be pushed
+# Show commits to push
 echo ""
 echo "📦 Commits to push:"
-git log --oneline origin/main..HEAD || echo "No commits to push"
+git log --oneline origin/main..HEAD 2>/dev/null || echo "Already up to date"
 
-# Push to GitHub
+# Push
 echo ""
 echo "⬆️  Pushing to GitHub..."
 if git push origin main; then
     echo ""
     echo "✅ Successfully pushed to GitHub!"
+    echo ""
     echo "🚂 Railway will auto-deploy backend"
     echo "🌐 Vercel will auto-deploy frontend"
     echo ""
-    echo "Next steps:"
-    echo "1. Verify Railway deployment in Railway dashboard"
-    echo "2. Verify Vercel deployment in Vercel dashboard"
-    echo "3. Set NEXT_PUBLIC_API_URL in Vercel to your Railway backend URL"
+    echo "Check deployments:"
+    echo "  - Railway: https://railway.app"
+    echo "  - Vercel: https://vercel.com"
 else
     echo ""
-    echo "❌ Push failed. Check:"
-    echo "- Token has 'repo' scope"
-    echo "- Repository exists and you have access"
-    echo "- Network connection"
+    echo "❌ Push failed"
+    echo ""
+    echo "Troubleshooting:"
+    echo "  1. Check your internet connection"
+    echo "  2. Verify token has 'repo' scope"
+    echo "  3. Try: git push origin main (will prompt for credentials)"
     exit 1
 fi
-
