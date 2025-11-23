@@ -177,6 +177,13 @@ app.use((req, res, next) => {
       }
       log(`CORS: Also allowing all *.vercel.app domains`);
       
+      // Log environment variable status
+      log(`Environment Variables Status:`);
+      log(`  OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
+      log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '⚠️  Missing (recommended for auth)'}`);
+      log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
+      log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
+      
       // Initialize WebSocket server for voice interviews
       try {
         createVoiceServer(server);
