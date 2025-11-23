@@ -3,6 +3,9 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 
+// Import CommonJS module for WebSocket server
+const { createVoiceServer } = require("../voiceServer");
+
 const app = express();
 
 // CORS configuration for Railway backend + Vercel frontend deployment
@@ -115,10 +118,19 @@ app.use((req, res, next) => {
     }
 
     const PORT = process.env.PORT || 5000;
-    app.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", () => {
       log(`Server running on port ${PORT}`);
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
       log(`Health check: http://localhost:${PORT}/health`);
+      
+      // Initialize WebSocket server for voice interviews
+      try {
+        createVoiceServer(server);
+        log(`✅ WebSocket server initialized on path /voice`);
+      } catch (wsError: any) {
+        log(`⚠️  WebSocket server initialization failed: ${wsError.message || wsError}`);
+        log(`   Voice interviews may not work. Check voiceServer.js configuration.`);
+      }
       
       // Check database connection on startup (non-blocking)
       // Don't crash if database check fails - let the app start and handle errors at request time
