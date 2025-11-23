@@ -36,7 +36,6 @@ interface RoleSelectionProps {
 export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   const [showCoach, setShowCoach] = useState(false);
   const [selectedRole, setSelectedRole] = useState<string>("");
-  const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
 
   return (
     <AnimatedBackground className="p-6">
@@ -46,39 +45,8 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
             Choose Your Role
           </h1>
           <p className="text-xl text-muted-foreground max-w-2xl mx-auto">
-            Select the role you want to practice for and start improving your interview skills
+            Select the role you want to practice for and start improving your interview skills with voice interviews
           </p>
-          
-          {/* Interview Mode Selector */}
-          <div className="flex justify-center gap-4 mt-6">
-            <Card className="w-fit">
-              <CardContent className="p-4">
-                <div className="flex items-center gap-4">
-                  <span className="text-sm font-medium">Interview Mode:</span>
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={interviewMode === "text" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setInterviewMode("text")}
-                    >
-                      Text Chat
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={interviewMode === "voice" ? "default" : "outline"}
-                      size="sm"
-                      onClick={() => setInterviewMode("voice")}
-                      className="gap-2"
-                    >
-                      <Mic className="w-4 h-4" />
-                      Voice
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6">
@@ -104,13 +72,14 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
                 <CardContent className="space-y-3">
                   <Button
                     onClick={() => {
-                      console.log('Button clicked:', role.id, interviewMode);
-                      onSelectRole(role.id, interviewMode);
+                      console.log('Button clicked:', role.id, 'voice');
+                      onSelectRole(role.id, "voice");
                     }}
                     className="w-full gradient-primary text-white shadow-md hover:shadow-glow"
                     data-testid={`button-select-${role.id}`}
                   >
-                    Start Practice
+                    <Mic className="w-4 h-4 mr-2" />
+                    Start Voice Interview
                     <ArrowRight className="w-4 h-4 ml-2" />
                   </Button>
                   <Button

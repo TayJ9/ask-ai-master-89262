@@ -56,7 +56,13 @@ export default function VoiceInterviewWebSocket({
   const retryCountRef = useRef(0);
   const maxRetries = 3;
   const isMountedRef = useRef(true);
+  const candidateContextRef = useRef(candidateContext);
   const { toast } = useToast();
+  
+  // Update candidateContext ref when it changes
+  useEffect(() => {
+    candidateContextRef.current = candidateContext;
+  }, [candidateContext]);
 
   // Get WebSocket URL - points to Railway backend
   const getWebSocketUrl = () => {
@@ -93,26 +99,60 @@ export default function VoiceInterviewWebSocket({
     console.log('Received message:', message.type);
 
     switch (message.type) {
+      case 'connected':
+        console.log('✓ Server connection confirmed:', message.message);
+        setStatusMessage("Connected. Starting interview...");
+        // Send start_interview message after receiving connected confirmation
+        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+          wsRef.current.send(JSON.stringify({
+            type: 'start_interview',
+            candidateContext: candidateContextRef.current
+          }));
+        }
+        break;
+      case 'interview_started':
+        setIsInterviewActive(true);
+        setStatusMessage("Interview started. Speak when ready.");
+        break;
       case 'session_started':
         setIsInterviewActive(true);
         setStatusMessage("Interview started. Speak when ready.");
         break;
       case 'transcript':
+      case 'ai_transcription':
         setTranscripts(prev => [...prev, {
-          type: message.speaker === 'assistant' ? 'ai' : 'student',
+          type: 'ai',
+          text: message.text,
+          isFinal: message.is_final || false,
+          timestamp: Date.now()
+        }]);
+        break;
+      case 'student_transcription':
+        setTranscripts(prev => [...prev, {
+          type: 'student',
           text: message.text,
           isFinal: message.is_final || false,
           timestamp: Date.now()
         }]);
         break;
       case 'session_ended':
+      case 'interview_ended':
         setIsInterviewActive(false);
         setStatusMessage("Interview completed.");
+        break;
+      case 'error':
+        console.error('Server error:', message.message);
+        setStatusMessage(`Error: ${message.message || 'Unknown error'}`);
+        toast({
+          title: "Interview Error",
+          description: message.message || "An error occurred during the interview.",
+          variant: "destructive",
+        });
         break;
       default:
         console.log('Unknown message type:', message.type);
     }
-  }, []);
+  }, [toast]);
 
   // Play audio chunk (PCM16 format) - defined before useEffect
   const playAudioChunk = useCallback(async (arrayBuffer: ArrayBuffer) => {
@@ -229,13 +269,8 @@ export default function VoiceInterviewWebSocket({
           isConnectingRef.current = false;
           retryCountRef.current = 0; // Reset retry count on successful connection
           setIsConnected(true);
-          setStatusMessage("Connected. Starting interview...");
-          
-          // Send start_interview message
-          ws.send(JSON.stringify({
-            type: 'start_interview',
-            candidateContext: candidateContext
-          }));
+          setStatusMessage("Connecting to server...");
+          // Wait for 'connected' message from server before sending start_interview
         };
 
         ws.onmessage = async (event) => {
@@ -356,7 +391,9 @@ export default function VoiceInterviewWebSocket({
       stopRecording();
       cleanupAudio();
     };
-  }, [candidateContext, handleWebSocketMessage, playAudioChunk, toast, stopRecording, cleanupAudio]);
+    // Only run once on mount - use refs for values that might change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Start recording microphone
   const startRecording = useCallback(async () => {

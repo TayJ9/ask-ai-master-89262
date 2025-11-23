@@ -18,7 +18,7 @@ export default function Index() {
   const [resumeText, setResumeText] = useState<string>("");
   const [voiceSessionId, setVoiceSessionId] = useState<string | null>(null);
   const [firstQuestion, setFirstQuestion] = useState<string>("");
-  const [interviewMode, setInterviewMode] = useState<"text" | "voice">("text");
+  const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
   const [candidateContext, setCandidateContext] = useState<{name: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string} | null>(null);
   const { toast } = useToast();
@@ -48,10 +48,10 @@ export default function Index() {
     setSelectedRole("");
   };
 
-  const handleSelectRole = (role: string, mode: "text" | "voice" = "text") => {
+  const handleSelectRole = (role: string, mode: "text" | "voice" = "voice") => {
     console.log('handleSelectRole called with:', role, mode);
     setSelectedRole(role);
-    setInterviewMode(mode);
+    setInterviewMode("voice"); // Always use voice mode
     // Show resume upload step before starting interview
     setCurrentView("resume");
     console.log('View changed to resume upload');
@@ -82,46 +82,41 @@ export default function Index() {
       return;
     }
     
-    // Start interview session (text or voice)
+    // Start voice interview session
     try {
-      console.log("Starting interview with resume:", { role: selectedRole, mode: interviewMode });
+      console.log("Starting voice interview with resume:", { role: selectedRole });
       
-      if (interviewMode === "voice") {
-        // Voice interview - use WebSocket if we have candidate context and sessionId
-        if (candidateInfo && candidateInfo.sessionId) {
-          // Use WebSocket-based voice interview
-          setVoiceSessionId(candidateInfo.sessionId);
-          setCurrentView("voice");
-          return;
-        }
-        
-        // Start voice interview
-        // Generate session ID (use user.id if available, otherwise generate unique ID)
-        const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
-        const response = await apiRequest("/api/voice-interview/start", "POST", {
-          session_id: sessionId,
-          role: selectedRole,
-          resumeText: resume,
-        });
-        
-        console.log("Voice interview started successfully:", response);
-        
-        if (!response.sessionId) {
-          throw new Error("Invalid response from server. Missing session ID.");
-        }
-        
-        // Store voice interview data so VoiceInterview component doesn't need to start again
-        setVoiceInterviewData({
-          sessionId: response.sessionId,
-          audioResponse: response.audioResponse,
-          agentResponseText: response.agentResponseText
-        });
-        setVoiceSessionId(response.sessionId);
+      // Voice interview - use WebSocket if we have candidate context and sessionId
+      if (candidateInfo && candidateInfo.sessionId) {
+        // Use WebSocket-based voice interview
+        setVoiceSessionId(candidateInfo.sessionId);
         setCurrentView("voice");
-      } else {
-        // Text interview - use InterviewSession component
-        setCurrentView("interview");
+        return;
       }
+      
+      // Start voice interview
+      // Generate session ID (use user.id if available, otherwise generate unique ID)
+      const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
+      const response = await apiRequest("/api/voice-interview/start", "POST", {
+        session_id: sessionId,
+        role: selectedRole,
+        resumeText: resume,
+      });
+      
+      console.log("Voice interview started successfully:", response);
+      
+      if (!response.sessionId) {
+        throw new Error("Invalid response from server. Missing session ID.");
+      }
+      
+      // Store voice interview data so VoiceInterview component doesn't need to start again
+      setVoiceInterviewData({
+        sessionId: response.sessionId,
+        audioResponse: response.audioResponse,
+        agentResponseText: response.agentResponseText
+      });
+      setVoiceSessionId(response.sessionId);
+      setCurrentView("voice");
     } catch (error: any) {
       console.error("Error starting interview:", error);
       const errorMessage = error.message || error.error || "Failed to start interview.";
@@ -161,22 +156,17 @@ export default function Index() {
       return;
     }
     
-    // Start interview session without resume
+    // Start voice interview session without resume
     try {
-      console.log("Starting interview without resume:", { role: selectedRole, mode: interviewMode });
+      console.log("Starting voice interview without resume:", { role: selectedRole });
       
-      if (interviewMode === "voice") {
-        // For voice interviews without resume, we still need candidate info
-        toast({
-          title: "Information Required",
-          description: "Please provide your name, major, and year for voice interviews.",
-          variant: "destructive",
-        });
-        return;
-      } else {
-        // Text interview - use InterviewSession component
-        setCurrentView("interview");
-      }
+      // For voice interviews without resume, we still need candidate info
+      toast({
+        title: "Information Required",
+        description: "Please provide your name, major, and year for voice interviews.",
+        variant: "destructive",
+      });
+      return;
     } catch (error: any) {
       console.error("Error starting interview:", error);
       const errorMessage = error.message || error.error || "Failed to start interview.";
