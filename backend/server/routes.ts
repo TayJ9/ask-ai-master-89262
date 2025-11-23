@@ -82,6 +82,11 @@ function authenticateToken(req: any, res: any, next: any) {
 }
 
 export function registerRoutes(app: Express) {
+  // Favicon handler - prevent 404 errors
+  app.get('/favicon.ico', (_req, res) => {
+    res.status(204).end();
+  });
+  
   // Health check endpoint - accessible without authentication
   app.get('/health', async (_req, res) => {
     try {

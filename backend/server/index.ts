@@ -1,4 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
+import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
@@ -55,36 +56,38 @@ const isOriginAllowed = (origin: string | undefined): boolean => {
   return false;
 };
 
-// CORS middleware - must be before routes
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  
-  // Set CORS headers based on origin
-  if (origin && isOriginAllowed(origin)) {
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  } else if (!origin) {
-    // No origin header (e.g., same-origin or direct API call) - allow
-    res.setHeader('Access-Control-Allow-Origin', '*');
-  } else {
-    // Unknown origin - log but allow for now (can be restricted later)
-    log(`⚠️  CORS: Unknown origin: ${origin} - allowing for now`);
-    res.setHeader('Access-Control-Allow-Origin', origin);
-    res.setHeader('Access-Control-Allow-Credentials', 'true');
-  }
-  
-  // Standard CORS headers
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
-  res.setHeader('Access-Control-Max-Age', '86400'); // 24 hours
-  
-  // Handle preflight OPTIONS requests
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-  
-  next();
-});
+// CORS configuration using cors package for better reliability
+const corsOptions = {
+  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    // Log all requests for debugging
+    if (origin) {
+      log(`🌐 Request from origin: ${origin}`);
+    }
+    
+    // Allow requests with no origin (mobile apps, Postman, etc.)
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+    
+    // Check if origin is allowed
+    if (isOriginAllowed(origin)) {
+      log(`✅ CORS: Allowed origin: ${origin}`);
+      callback(null, true);
+    } else {
+      log(`⚠️  CORS: Unknown origin: ${origin} - allowing for now`);
+      // Allow for now but log for monitoring
+      callback(null, true);
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 86400 // 24 hours
+};
+
+// Apply CORS middleware - must be before routes
+app.use(cors(corsOptions));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));

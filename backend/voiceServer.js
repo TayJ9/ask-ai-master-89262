@@ -288,6 +288,20 @@ function handleFrontendConnection(frontendWs, httpServer) {
         console.log('🎤 Starting interview for:', candidateContext.name || 'Unknown');
         console.log('📋 Candidate context:', JSON.stringify(candidateContext, null, 2));
         
+        // CRITICAL: Send immediate acknowledgment BEFORE any async operations
+        console.log('📤 Sending immediate acknowledgment to frontend...');
+        if (frontendWs.readyState === WebSocket.OPEN) {
+          frontendWs.send(JSON.stringify({
+            type: 'interview_starting',
+            message: 'Interview is starting...',
+            timestamp: new Date().toISOString()
+          }));
+          console.log('✅ Immediate acknowledgment sent');
+        } else {
+          console.error('❌ Frontend WebSocket not open, cannot send acknowledgment');
+          return;
+        }
+        
         const apiKey = process.env.OPENAI_API_KEY;
         if (!apiKey) {
           console.error('❌ OPENAI_API_KEY not set!');

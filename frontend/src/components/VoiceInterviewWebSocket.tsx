@@ -168,6 +168,15 @@ export default function VoiceInterviewWebSocket({
           console.error('❌ WebSocket not open, cannot send start_interview');
         }
         break;
+      case 'interview_starting':
+        console.log('⏳ Interview starting:', message.message);
+        // Clear the timeout since we got a response
+        if (interviewStartTimeoutRef.current) {
+          clearTimeout(interviewStartTimeoutRef.current);
+          interviewStartTimeoutRef.current = null;
+        }
+        setStatusMessage("Starting interview... Please wait.");
+        break;
       case 'interview_started':
         console.log('✅ Interview started successfully:', message.message);
         // Clear the timeout since we got a response
