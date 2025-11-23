@@ -184,6 +184,29 @@ function createOpenAIConnection(apiKey, systemPrompt) {
   return new Promise((resolve, reject) => {
     console.log('🔌 Connecting to OpenAI Realtime API...');
     
+    // Validate API key format
+    if (!apiKey || typeof apiKey !== 'string') {
+      const error = new Error('OPENAI_API_KEY is not set or invalid');
+      console.error('❌', error.message);
+      reject(error);
+      return;
+    }
+    
+    // Check API key format (should start with sk-)
+    if (!apiKey.startsWith('sk-')) {
+      const error = new Error('OPENAI_API_KEY format is invalid. API keys should start with "sk-"');
+      console.error('❌', error.message);
+      console.error('❌ API key starts with:', apiKey.substring(0, 10) + '...');
+      reject(error);
+      return;
+    }
+    
+    // Log masked API key for debugging (first 7 chars + last 4 chars)
+    const maskedKey = apiKey.length > 11 
+      ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}`
+      : '***';
+    console.log('🔑 Using API key:', maskedKey);
+    
     // Add connection timeout
     const connectionTimeout = setTimeout(() => {
       console.error('⏱️ OpenAI connection timeout after 10 seconds');
@@ -485,12 +508,60 @@ function handleFrontendConnection(frontendWs, httpServer) {
                 case 'error':
                   console.error('❌ ========================================');
                   console.error('❌ OPENAI ERROR RECEIVED');
-                  console.error('❌ Error details:', JSON.stringify(openAIMessage, null, 2));
+                  console.error('❌ Error type:', openAIMessage.error?.type);
+                  console.error('❌ Error code:', openAIMessage.error?.code);
+                  console.error('❌ Error message:', openAIMessage.error?.message);
+                  
+                  // Provide specific guidance for common errors
+                  if (openAIMessage.error?.code === 'invalid_api_key') {
+                    console.error('❌ ========================================');
+                    console.error('❌ INVALID API KEY ERROR');
+                    console.error('❌ This usually means:');
+                    console.error('   1. The API key is incorrect or has a typo');
+                    console.error('   2. The API key was revoked or expired');
+                    console.error('   3. The API key does not have access to Realtime API');
+                    console.error('   4. You may be using an organization API key that needs permissions');
+                    console.error('❌ Solution:');
+                    console.error('   1. Go to https://platform.openai.com/account/api-keys');
+                    console.error('   2. Verify your API key is correct');
+                    console.error('   3. Create a new key if needed');
+                    console.error('   4. Ensure the key has access to Realtime API');
+                    console.error('   5. Update OPENAI_API_KEY in Railway Variables');
+                    console.error('❌ ========================================');
+                  } else if (openAIMessage.error?.code === 'insufficient_quota') {
+                    console.error('❌ ========================================');
+                    console.error('❌ INSUFFICIENT QUOTA ERROR');
+                    console.error('❌ Your OpenAI account has run out of credits');
+                    console.error('❌ Solution: Add credits at https://platform.openai.com/account/billing');
+                    console.error('❌ ========================================');
+                  } else if (openAIMessage.error?.code === 'rate_limit_exceeded') {
+                    console.error('❌ ========================================');
+                    console.error('❌ RATE LIMIT EXCEEDED');
+                    console.error('❌ You are making too many requests too quickly');
+                    console.error('❌ Solution: Wait a moment and try again');
+                    console.error('❌ ========================================');
+                  }
+                  
+                  console.error('❌ Full error:', JSON.stringify(openAIMessage, null, 2));
                   console.error('❌ ========================================');
+                  
                   if (frontendWs.readyState === WebSocket.OPEN) {
+                    let userMessage = openAIMessage.error?.message || 'OpenAI API error';
+                    
+                    // Provide user-friendly error messages
+                    if (openAIMessage.error?.code === 'invalid_api_key') {
+                      userMessage = 'Invalid OpenAI API key. Please check your API key configuration.';
+                    } else if (openAIMessage.error?.code === 'insufficient_quota') {
+                      userMessage = 'OpenAI account has insufficient credits. Please add credits to your account.';
+                    } else if (openAIMessage.error?.code === 'rate_limit_exceeded') {
+                      userMessage = 'Rate limit exceeded. Please wait a moment and try again.';
+                    }
+                    
                     const errorMessage = {
                       type: 'error',
-                      message: openAIMessage.error?.message || 'OpenAI API error'
+                      message: userMessage,
+                      code: openAIMessage.error?.code,
+                      details: openAIMessage.error?.type
                     };
                     frontendWs.send(JSON.stringify(errorMessage));
                     console.log('📤 Sent error message to frontend');
