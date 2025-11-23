@@ -184,6 +184,12 @@ function createOpenAIConnection(apiKey, systemPrompt) {
   return new Promise((resolve, reject) => {
     console.log('🔌 Connecting to OpenAI Realtime API...');
     
+    // Add connection timeout
+    const connectionTimeout = setTimeout(() => {
+      console.error('⏱️ OpenAI connection timeout after 10 seconds');
+      reject(new Error('OpenAI connection timeout - server did not respond'));
+    }, 10000);
+    
     const ws = new WebSocket(`${OPENAI_REALTIME_API_URL}?model=${OPENAI_MODEL}`, {
       headers: {
         'Authorization': `Bearer ${apiKey}`,
@@ -191,10 +197,9 @@ function createOpenAIConnection(apiKey, systemPrompt) {
       }
     });
     
-    let sessionConfigured = false;
-    
     ws.on('open', () => {
       console.log('✓ Connected to OpenAI Realtime API');
+      clearTimeout(connectionTimeout);
       
       const configMessage = {
         type: 'session.update',
@@ -223,11 +228,13 @@ function createOpenAIConnection(apiKey, systemPrompt) {
     
     ws.on('error', (error) => {
       console.error('❌ OpenAI WebSocket error:', error);
+      clearTimeout(connectionTimeout);
       reject(error);
     });
     
     ws.on('close', (code, reason) => {
       console.log(`✓ OpenAI WebSocket closed: ${code} - ${reason.toString()}`);
+      clearTimeout(connectionTimeout);
     });
   });
 }
@@ -279,16 +286,28 @@ function handleFrontendConnection(frontendWs, httpServer) {
       if (message.type === 'start_interview') {
         candidateContext = message.candidateContext || {};
         console.log('🎤 Starting interview for:', candidateContext.name || 'Unknown');
+        console.log('📋 Candidate context:', JSON.stringify(candidateContext, null, 2));
         
         const apiKey = process.env.OPENAI_API_KEY;
         if (!apiKey) {
-          throw new Error('OPENAI_API_KEY environment variable is not set');
+          console.error('❌ OPENAI_API_KEY not set!');
+          if (frontendWs.readyState === WebSocket.OPEN) {
+            frontendWs.send(JSON.stringify({
+              type: 'error',
+              message: 'OPENAI_API_KEY environment variable is not set on server'
+            }));
+          }
+          return;
         }
         
+        console.log('🔑 OpenAI API key found, creating connection...');
         const systemPrompt = createSystemPrompt(candidateContext);
+        console.log('📝 System prompt created, length:', systemPrompt.length);
         
         try {
+          console.log('🔌 Attempting to connect to OpenAI...');
           openAIWs = await createOpenAIConnection(apiKey, systemPrompt);
+          console.log('✅ OpenAI connection established');
           isInterviewActive = true;
           
           let sessionReady = false;
@@ -403,18 +422,30 @@ function handleFrontendConnection(frontendWs, httpServer) {
           });
           
           // Send interview_started immediately - AI will start speaking after session.updated
-          frontendWs.send(JSON.stringify({
-            type: 'interview_started',
-            message: 'Interview session started successfully'
-          }));
+          console.log('📤 Sending interview_started message to frontend...');
+          if (frontendWs.readyState === WebSocket.OPEN) {
+            frontendWs.send(JSON.stringify({
+              type: 'interview_started',
+              message: 'Interview session started successfully'
+            }));
+            console.log('✅ interview_started message sent');
+          } else {
+            console.error('❌ Frontend WebSocket not open, cannot send interview_started');
+          }
           
         } catch (error) {
           console.error('❌ Failed to connect to OpenAI:', error);
+          console.error('Error details:', error.message);
+          console.error('Error stack:', error.stack);
           if (frontendWs.readyState === WebSocket.OPEN) {
-            frontendWs.send(JSON.stringify({
+            const errorMessage = {
               type: 'error',
-              message: `Failed to start interview: ${error.message}`
-            }));
+              message: `Failed to start interview: ${error.message || 'Unknown error'}`
+            };
+            console.log('📤 Sending error message to frontend:', errorMessage);
+            frontendWs.send(JSON.stringify(errorMessage));
+          } else {
+            console.error('❌ Frontend WebSocket not open, cannot send error message');
           }
         }
       } else if (message.type === 'end_interview') {
