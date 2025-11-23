@@ -53,8 +53,20 @@ export default function VoiceInterviewWebSocket({
   const isPlayingRef = useRef(false);
   const { toast } = useToast();
 
-  // Get WebSocket URL (works with Replit deployment)
+  // Get WebSocket URL - points to Railway backend
   const getWebSocketUrl = () => {
+    // Use Railway backend URL from environment variable
+    const backendUrl = import.meta.env.VITE_API_URL || import.meta.env.NEXT_PUBLIC_API_URL;
+    
+    if (backendUrl) {
+      // Convert HTTP/HTTPS URL to WebSocket URL
+      const wsUrl = backendUrl
+        .replace(/^http:/, 'ws:')
+        .replace(/^https:/, 'wss:');
+      return `${wsUrl}/voice`;
+    }
+    
+    // Fallback: use same host (for development when frontend/backend are together)
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     return `${protocol}//${host}/voice`;

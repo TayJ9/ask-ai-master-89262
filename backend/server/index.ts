@@ -5,11 +5,12 @@ import { storage } from "./storage";
 
 const app = express();
 
-// CORS configuration for production
+// CORS configuration for Railway backend + Vercel frontend deployment
 // Allow all Vercel preview and production deployments
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL, // Explicitly set Vercel URL if needed
   process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
+  // Development origins
   'http://localhost:3000',
   'http://localhost:5173',
   'http://localhost:5000',

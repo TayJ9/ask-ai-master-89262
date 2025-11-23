@@ -1,14 +1,23 @@
 /**
  * Centralized API configuration and utilities
- * Supports both VITE_API_URL (Vite convention) and NEXT_PUBLIC_API_URL (Vercel/Next.js convention)
- * Falls back to relative URLs for development
+ * 
+ * Deployment Architecture:
+ * - Frontend: Vercel (React/Vite)
+ * - Backend: Railway (Node.js/Express)
+ * 
+ * Environment Variables:
+ * - NEXT_PUBLIC_API_URL: Railway backend URL (for Vercel deployments)
+ * - VITE_API_URL: Alternative name (for Vite convention)
+ * 
+ * Falls back to relative URLs for development (when frontend/backend are together)
  */
 
 // Get API base URL from environment variable or use relative URLs for development
 export function getApiBaseUrl(): string {
   // Support both VITE_API_URL (Vite convention) and NEXT_PUBLIC_API_URL (Vercel/Next.js convention)
   // Vite exposes env vars prefixed with VITE_ via import.meta.env
-  // For Vercel deployments, NEXT_PUBLIC_API_URL is available at build time via vite.config.ts
+  // For Vercel deployments, NEXT_PUBLIC_API_URL should be set to Railway backend URL
+  // Example: NEXT_PUBLIC_API_URL=https://your-backend.up.railway.app
   const apiUrl = import.meta.env.VITE_API_URL || 
                  import.meta.env.NEXT_PUBLIC_API_URL;
   
@@ -18,7 +27,7 @@ export function getApiBaseUrl(): string {
   }
   
   // Fallback to relative URLs (same origin) for development
-  // This works when frontend and backend are on the same domain
+  // This works when frontend and backend are on the same domain (e.g., localhost)
   return '';
 }
 
