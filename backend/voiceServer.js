@@ -240,65 +240,125 @@ function createOpenAIConnection(apiKey, systemPrompt) {
 }
 
 function handleFrontendConnection(frontendWs, httpServer) {
-  console.log('✓ New frontend WebSocket connection established');
+  console.log('🎯 ========================================');
+  console.log('🎯 NEW FRONTEND WEBSOCKET CONNECTION');
+  console.log('🎯 ========================================');
+  console.log('🎯 WebSocket readyState:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN' : 'CONNECTING');
+  console.log('🎯 Timestamp:', new Date().toISOString());
   
   let openAIWs = null;
   let candidateContext = null;
   let pingInterval = null;
   let isInterviewActive = false;
   
+  // Set up ping/pong for connection health
   pingInterval = setInterval(() => {
     if (frontendWs.readyState === WebSocket.OPEN) {
       frontendWs.ping();
+      console.log('📡 Sent ping to frontend');
+    } else {
+      console.log('⚠️  Cannot ping - WebSocket not open, state:', frontendWs.readyState);
     }
   }, PING_INTERVAL);
   
   frontendWs.on('pong', () => {
-    console.log('📡 Received pong from frontend');
+    console.log('📡 ✅ Received pong from frontend - connection healthy');
   });
   
+  // Log connection open event
+  frontendWs.on('open', () => {
+    console.log('🎯 ✅ Frontend WebSocket OPEN event fired');
+  });
+  
+  // CRITICAL: Set up message handler IMMEDIATELY after connection
+  console.log('🎯 Setting up message handler for frontend WebSocket...');
+  
   frontendWs.on('message', async (data) => {
+    console.log('📥 RAW MESSAGE RECEIVED - Data type:', typeof data, 'Is Buffer:', data instanceof Buffer, 'Length:', data.length || data.toString().length);
+    
     try {
+      // Handle binary audio data
       if (data instanceof Buffer) {
+        console.log('🎵 Received binary audio data, length:', data.length);
         if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive) {
           const audioMessage = {
             type: 'input_audio_buffer.append',
             audio: data.toString('base64')
           };
           openAIWs.send(JSON.stringify(audioMessage));
+          console.log('✅ Forwarded audio data to OpenAI');
+        } else {
+          console.log('⚠️  Received audio but OpenAI not ready - openAIWs:', !!openAIWs, 'readyState:', openAIWs?.readyState, 'isInterviewActive:', isInterviewActive);
         }
         return;
       }
       
+      // Parse JSON message
+      const rawData = data.toString();
+      console.log('📥 RAW JSON STRING:', rawData.substring(0, 500)); // Log first 500 chars
+      
       let message;
       try {
-        message = JSON.parse(data.toString());
+        message = JSON.parse(rawData);
+        console.log('✅ Successfully parsed JSON message');
       } catch (parseError) {
-        frontendWs.send(JSON.stringify({
-          type: 'error',
-          message: 'Invalid message format'
-        }));
+        console.error('❌ JSON Parse Error:', parseError.message);
+        console.error('❌ Failed to parse data:', rawData.substring(0, 200));
+        if (frontendWs.readyState === WebSocket.OPEN) {
+          frontendWs.send(JSON.stringify({
+            type: 'error',
+            message: 'Invalid message format: ' + parseError.message
+          }));
+          console.log('📤 Sent error response to frontend');
+        }
         return;
       }
       
-      console.log('📨 Received message from frontend:', message.type);
+      // Log full message details
+      console.log('📥 ========================================');
+      console.log('📥 RECEIVED MESSAGE FROM FRONTEND');
+      console.log('📥 Message Type:', message.type);
+      console.log('📥 Full Message:', JSON.stringify(message, null, 2));
+      console.log('📥 Timestamp:', new Date().toISOString());
+      console.log('📥 WebSocket State:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT OPEN');
+      console.log('📥 ========================================');
       
       if (message.type === 'start_interview') {
+        console.log('🚀 ========================================');
+        console.log('🚀 PROCESSING start_interview MESSAGE');
+        console.log('🚀 ========================================');
+        
         candidateContext = message.candidateContext || {};
         console.log('🎤 Starting interview for:', candidateContext.name || 'Unknown');
         console.log('📋 Candidate context:', JSON.stringify(candidateContext, null, 2));
         
         // CRITICAL: Send immediate acknowledgment BEFORE any async operations
-        console.log('📤 Sending immediate acknowledgment to frontend...');
+        console.log('📤 ========================================');
+        console.log('📤 SENDING IMMEDIATE ACKNOWLEDGMENT');
+        console.log('📤 WebSocket State:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN ✅' : 'NOT OPEN ❌');
+        console.log('📤 ========================================');
+        
         if (frontendWs.readyState === WebSocket.OPEN) {
-          frontendWs.send(JSON.stringify({
+          const acknowledgment = {
             type: 'interview_starting',
             message: 'Interview is starting...',
             timestamp: new Date().toISOString()
-          }));
-          console.log('✅ Immediate acknowledgment sent');
+          };
+          
+          try {
+            frontendWs.send(JSON.stringify(acknowledgment));
+            console.log('✅ IMMEDIATE ACKNOWLEDGMENT SENT SUCCESSFULLY');
+            console.log('✅ Sent data:', JSON.stringify(acknowledgment, null, 2));
+          } catch (sendError) {
+            console.error('❌ ERROR SENDING ACKNOWLEDGMENT:', sendError);
+            console.error('❌ Error details:', sendError.message);
+            console.error('❌ Error stack:', sendError.stack);
+            return;
+          }
         } else {
-          console.error('❌ Frontend WebSocket not open, cannot send acknowledgment');
+          console.error('❌ CRITICAL: Frontend WebSocket not open!');
+          console.error('❌ WebSocket readyState:', frontendWs.readyState);
+          console.error('❌ WebSocket states: CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3');
           return;
         }
         
@@ -359,56 +419,78 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     const audioBuffer = Buffer.from(openAIMessage.delta, 'base64');
                     frontendWs.send(audioBuffer);
+                    // Log periodically, not every delta (too verbose)
+                    if (Math.random() < 0.01) { // Log ~1% of audio deltas
+                      console.log('🎵 Forwarded audio delta to frontend');
+                    }
                   }
                   break;
                   
                 case 'response.audio_transcript.delta':
+                  console.log('📝 OpenAI transcript delta:', openAIMessage.delta);
                   if (frontendWs.readyState === WebSocket.OPEN) {
-                    frontendWs.send(JSON.stringify({
+                    const transcriptMessage = {
                       type: 'ai_transcription',
                       text: openAIMessage.delta,
                       is_final: false
-                    }));
+                    };
+                    frontendWs.send(JSON.stringify(transcriptMessage));
+                    console.log('📤 Sent ai_transcription delta to frontend');
                   }
                   break;
                   
                 case 'response.audio_transcript.done':
+                  console.log('✅ OpenAI transcript done:', openAIMessage.text);
                   if (frontendWs.readyState === WebSocket.OPEN) {
-                    frontendWs.send(JSON.stringify({
+                    const transcriptMessage = {
                       type: 'ai_transcription',
                       text: openAIMessage.text,
                       is_final: true
-                    }));
+                    };
+                    frontendWs.send(JSON.stringify(transcriptMessage));
+                    console.log('📤 Sent final ai_transcription to frontend');
                   }
                   break;
                   
                 case 'input_audio_buffer.speech_started':
+                  console.log('🎤 Student speech started detected');
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_speech_started'
                     }));
+                    console.log('📤 Sent student_speech_started to frontend');
                   }
                   break;
                   
                 case 'conversation.item.input_audio_transcript.completed':
+                  console.log('📝 Student transcript completed:', openAIMessage.transcript);
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_transcription',
                       text: openAIMessage.transcript,
                       is_final: true
                     }));
+                    console.log('📤 Sent student_transcription to frontend');
                   }
                   break;
                   
                 case 'error':
-                  console.error('❌ OpenAI error:', openAIMessage);
+                  console.error('❌ ========================================');
+                  console.error('❌ OPENAI ERROR RECEIVED');
+                  console.error('❌ Error details:', JSON.stringify(openAIMessage, null, 2));
+                  console.error('❌ ========================================');
                   if (frontendWs.readyState === WebSocket.OPEN) {
-                    frontendWs.send(JSON.stringify({
+                    const errorMessage = {
                       type: 'error',
                       message: openAIMessage.error?.message || 'OpenAI API error'
-                    }));
+                    };
+                    frontendWs.send(JSON.stringify(errorMessage));
+                    console.log('📤 Sent error message to frontend');
                   }
                   break;
+                  
+                default:
+                  console.log('ℹ️  Unhandled OpenAI message type:', openAIMessage.type);
               }
             } catch (error) {
               console.error('❌ Error processing OpenAI message:', error);
@@ -436,15 +518,29 @@ function handleFrontendConnection(frontendWs, httpServer) {
           });
           
           // Send interview_started immediately - AI will start speaking after session.updated
-          console.log('📤 Sending interview_started message to frontend...');
+          console.log('📤 ========================================');
+          console.log('📤 SENDING interview_started MESSAGE');
+          console.log('📤 WebSocket State:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN ✅' : 'NOT OPEN ❌');
+          console.log('📤 ========================================');
+          
           if (frontendWs.readyState === WebSocket.OPEN) {
-            frontendWs.send(JSON.stringify({
+            const interviewStartedMessage = {
               type: 'interview_started',
-              message: 'Interview session started successfully'
-            }));
-            console.log('✅ interview_started message sent');
+              message: 'Interview session started successfully',
+              timestamp: new Date().toISOString()
+            };
+            
+            try {
+              frontendWs.send(JSON.stringify(interviewStartedMessage));
+              console.log('✅ interview_started message sent successfully');
+              console.log('✅ Message content:', JSON.stringify(interviewStartedMessage, null, 2));
+            } catch (sendError) {
+              console.error('❌ ERROR SENDING interview_started:', sendError);
+              console.error('❌ Error details:', sendError.message);
+            }
           } else {
-            console.error('❌ Frontend WebSocket not open, cannot send interview_started');
+            console.error('❌ CRITICAL: Frontend WebSocket not open, cannot send interview_started');
+            console.error('❌ WebSocket readyState:', frontendWs.readyState);
           }
           
         } catch (error) {
@@ -463,22 +559,40 @@ function handleFrontendConnection(frontendWs, httpServer) {
           }
         }
       } else if (message.type === 'end_interview') {
-        console.log('🛑 Ending interview session');
+        console.log('🛑 ========================================');
+        console.log('🛑 PROCESSING end_interview MESSAGE');
+        console.log('🛑 ========================================');
         isInterviewActive = false;
         if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
           openAIWs.close();
         }
-        frontendWs.send(JSON.stringify({
-          type: 'interview_ended',
-          message: 'Interview session ended'
-        }));
+        if (frontendWs.readyState === WebSocket.OPEN) {
+          frontendWs.send(JSON.stringify({
+            type: 'interview_ended',
+            message: 'Interview session ended'
+          }));
+          console.log('✅ Sent interview_ended message');
+        }
       } else if (message.type === 'audio_chunk' && message.audio) {
+        console.log('🎵 Processing audio_chunk message');
         if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive) {
           const audioMessage = {
             type: 'input_audio_buffer.append',
             audio: message.audio
           };
           openAIWs.send(JSON.stringify(audioMessage));
+          console.log('✅ Forwarded audio_chunk to OpenAI');
+        } else {
+          console.log('⚠️  Cannot forward audio - OpenAI not ready');
+        }
+      } else {
+        console.log('⚠️  UNKNOWN MESSAGE TYPE:', message.type);
+        console.log('⚠️  Full message:', JSON.stringify(message, null, 2));
+        if (frontendWs.readyState === WebSocket.OPEN) {
+          frontendWs.send(JSON.stringify({
+            type: 'error',
+            message: `Unknown message type: ${message.type}`
+          }));
         }
       }
     } catch (error) {
@@ -492,8 +606,12 @@ function handleFrontendConnection(frontendWs, httpServer) {
     }
   });
   
-  frontendWs.on('close', () => {
-    console.log('✓ Frontend WebSocket disconnected');
+  frontendWs.on('close', (code, reason) => {
+    console.log('🔌 ========================================');
+    console.log('🔌 FRONTEND WEBSOCKET CLOSED');
+    console.log('🔌 Close code:', code);
+    console.log('🔌 Close reason:', reason?.toString() || 'No reason provided');
+    console.log('🔌 ========================================');
     if (pingInterval) clearInterval(pingInterval);
     if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
       openAIWs.close();
@@ -502,17 +620,37 @@ function handleFrontendConnection(frontendWs, httpServer) {
   });
   
   frontendWs.on('error', (error) => {
-    console.error('❌ Frontend WebSocket error:', error);
+    console.error('❌ ========================================');
+    console.error('❌ FRONTEND WEBSOCKET ERROR');
+    console.error('❌ Error:', error);
+    console.error('❌ Error message:', error.message);
+    console.error('❌ Error stack:', error.stack);
+    console.error('❌ ========================================');
     if (pingInterval) clearInterval(pingInterval);
     if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
       openAIWs.close();
     }
   });
   
-  frontendWs.send(JSON.stringify({
-    type: 'connected',
-    message: 'Connected to voice interview server. Send "start_interview" to begin.'
-  }));
+  // Send initial connected message
+  console.log('📤 ========================================');
+  console.log('📤 SENDING INITIAL "connected" MESSAGE');
+  console.log('📤 WebSocket State:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN ✅' : 'NOT OPEN ⚠️');
+  console.log('📤 ========================================');
+  
+  try {
+    const connectedMessage = {
+      type: 'connected',
+      message: 'Connected to voice interview server. Send "start_interview" to begin.',
+      timestamp: new Date().toISOString()
+    };
+    frontendWs.send(JSON.stringify(connectedMessage));
+    console.log('✅ Initial "connected" message sent successfully');
+    console.log('✅ Message content:', JSON.stringify(connectedMessage, null, 2));
+  } catch (sendError) {
+    console.error('❌ ERROR SENDING INITIAL CONNECTED MESSAGE:', sendError);
+    console.error('❌ Error details:', sendError.message);
+  }
 }
 
 function createVoiceServer(httpServer) {
