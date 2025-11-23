@@ -274,16 +274,36 @@ function handleFrontendConnection(frontendWs, httpServer) {
   console.log('🎯 Setting up message handler for frontend WebSocket...');
   
   frontendWs.on('message', async (data) => {
-    console.log('📥 RAW MESSAGE RECEIVED - Data type:', typeof data, 'Is Buffer:', data instanceof Buffer, 'Length:', data.length || data.toString().length);
+    console.log('📥 RAW MESSAGE RECEIVED - Data type:', typeof data, 'Is Buffer:', data instanceof Buffer, 'Length:', data.length || (data.toString ? data.toString().length : 'unknown'));
     
     try {
-      // Handle binary audio data
-      if (data instanceof Buffer) {
-        console.log('🎵 Received binary audio data, length:', data.length);
+      // CRITICAL: WebSocket messages in Node.js ws library come as Buffers
+      // even when they're JSON strings! We need to check the content, not just the type.
+      const rawData = data instanceof Buffer ? data.toString('utf8') : data.toString();
+      
+      // Check if it's JSON by trying to parse it
+      let isJSON = false;
+      let message = null;
+      
+      try {
+        // Try to parse as JSON first
+        message = JSON.parse(rawData);
+        isJSON = true;
+        console.log('✅ Message is JSON format');
+      } catch (parseError) {
+        // Not JSON - treat as binary audio data
+        isJSON = false;
+        console.log('🎵 Message is binary audio data (not JSON)');
+      }
+      
+      // Handle binary audio data (not JSON)
+      if (!isJSON) {
+        console.log('🎵 Processing binary audio data, length:', data instanceof Buffer ? data.length : rawData.length);
         if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive) {
+          const audioBase64 = data instanceof Buffer ? data.toString('base64') : Buffer.from(rawData).toString('base64');
           const audioMessage = {
             type: 'input_audio_buffer.append',
-            audio: data.toString('base64')
+            audio: audioBase64
           };
           openAIWs.send(JSON.stringify(audioMessage));
           console.log('✅ Forwarded audio data to OpenAI');
@@ -293,26 +313,14 @@ function handleFrontendConnection(frontendWs, httpServer) {
         return;
       }
       
-      // Parse JSON message
-      const rawData = data.toString();
-      console.log('📥 RAW JSON STRING:', rawData.substring(0, 500)); // Log first 500 chars
-      
-      let message;
-      try {
-        message = JSON.parse(rawData);
-        console.log('✅ Successfully parsed JSON message');
-      } catch (parseError) {
-        console.error('❌ JSON Parse Error:', parseError.message);
-        console.error('❌ Failed to parse data:', rawData.substring(0, 200));
-        if (frontendWs.readyState === WebSocket.OPEN) {
-          frontendWs.send(JSON.stringify({
-            type: 'error',
-            message: 'Invalid message format: ' + parseError.message
-          }));
-          console.log('📤 Sent error response to frontend');
-        }
+      // message is already parsed above if it's JSON
+      // If we reach here, message should already be set
+      if (!message) {
+        console.error('❌ CRITICAL: Message is null after JSON parse attempt');
         return;
       }
+      
+      console.log('✅ Successfully parsed JSON message');
       
       // Log full message details
       console.log('📥 ========================================');
