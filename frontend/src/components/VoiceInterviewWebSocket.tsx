@@ -61,8 +61,15 @@ export default function VoiceInterviewWebSocket({
   
   // Update candidateContext ref when it changes
   useEffect(() => {
+    console.log('📝 candidateContext updated:', candidateContext);
     candidateContextRef.current = candidateContext;
   }, [candidateContext]);
+  
+  // Log initial candidateContext on mount
+  useEffect(() => {
+    console.log('🎯 VoiceInterviewWebSocket mounted with candidateContext:', candidateContext);
+    console.log('🎯 sessionId:', sessionId);
+  }, []);
 
   // Get WebSocket URL - points to Railway backend
   const getWebSocketUrl = () => {
@@ -101,13 +108,47 @@ export default function VoiceInterviewWebSocket({
     switch (message.type) {
       case 'connected':
         console.log('✓ Server connection confirmed:', message.message);
+        console.log('📤 Preparing to send start_interview with candidateContext:', candidateContextRef.current);
+        
+        // Validate candidateContext before sending
+        if (!candidateContextRef.current) {
+          console.error('❌ candidateContext is null or undefined');
+          setStatusMessage("Error: Missing candidate information.");
+          toast({
+            title: "Error",
+            description: "Candidate information is missing. Please try again.",
+            variant: "destructive",
+          });
+          break;
+        }
+        
+        const context = candidateContextRef.current;
+        if (!context.name || !context.major || !context.year) {
+          console.error('❌ candidateContext missing required fields:', {
+            hasName: !!context.name,
+            hasMajor: !!context.major,
+            hasYear: !!context.year
+          });
+          setStatusMessage("Error: Incomplete candidate information.");
+          toast({
+            title: "Error",
+            description: "Please provide name, major, and year.",
+            variant: "destructive",
+          });
+          break;
+        }
+        
         setStatusMessage("Connected. Starting interview...");
         // Send start_interview message after receiving connected confirmation
         if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          wsRef.current.send(JSON.stringify({
+          const startMessage = {
             type: 'start_interview',
             candidateContext: candidateContextRef.current
-          }));
+          };
+          console.log('📤 Sending start_interview message:', JSON.stringify(startMessage, null, 2));
+          wsRef.current.send(JSON.stringify(startMessage));
+        } else {
+          console.error('❌ WebSocket not open, cannot send start_interview');
         }
         break;
       case 'interview_started':
@@ -282,15 +323,19 @@ export default function VoiceInterviewWebSocket({
                 ? await event.data.arrayBuffer() 
                 : event.data;
               
+              console.log('🔊 Received audio chunk, size:', arrayBuffer.byteLength);
               // Play audio chunk
               await playAudioChunk(arrayBuffer);
             } else {
               // JSON message
-              const message = JSON.parse(event.data);
+              const rawData = event.data.toString();
+              console.log('📨 Received WebSocket message (raw):', rawData.substring(0, 200));
+              const message = JSON.parse(rawData);
               handleWebSocketMessage(message);
             }
           } catch (error) {
-            console.error('Error handling WebSocket message:', error);
+            console.error('❌ Error handling WebSocket message:', error);
+            console.error('Raw data:', event.data);
           }
         };
 
