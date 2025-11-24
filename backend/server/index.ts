@@ -165,7 +165,7 @@ app.use((req, res, next) => {
     }
 
     const PORT = process.env.PORT || 5000;
-    const server = app.listen(PORT, "0.0.0.0", () => {
+    const server = app.listen(PORT, "0.0.0.0", async () => {
       log(`Server running on port ${PORT}`);
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
       log(`Health check: http://localhost:${PORT}/health`);
@@ -183,6 +183,20 @@ app.use((req, res, next) => {
       log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '⚠️  Missing (recommended for auth)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
+      
+      // Validate ElevenLabs configuration
+      try {
+        // Use dynamic import for ES module
+        const { validateElevenLabsConfig } = await import("../scripts/validateElevenLabs.js");
+        const elevenLabsValidation = validateElevenLabsConfig();
+        if (!elevenLabsValidation.valid) {
+          log(`⚠️  ElevenLabs validation failed - voice interviews may not work`);
+          log(`   Fix the issues above and redeploy`);
+        }
+      } catch (validationError: any) {
+        log(`⚠️  ElevenLabs validation script error: ${validationError.message || validationError}`);
+        log(`   Continuing startup, but ElevenLabs may not be properly configured`);
+      }
       
       // Initialize WebSocket server for voice interviews
       try {
