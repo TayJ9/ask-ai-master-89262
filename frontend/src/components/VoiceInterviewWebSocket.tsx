@@ -492,6 +492,7 @@ export default function VoiceInterviewWebSocket({
         // Clear audio queue to prevent backlog
         const queueSizeBeforeClear = audioQueueRef.current.length;
         audioQueueRef.current = [];
+        pendingAudioBufferRef.current = null; // Clear pending buffer on interruption
         if (queueSizeBeforeClear > 0) {
           console.log('🔊 Cleared audio queue:', queueSizeBeforeClear, 'chunks');
         }
