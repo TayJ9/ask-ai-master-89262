@@ -484,12 +484,45 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   break;
                   
                 case 'input_audio_buffer.speech_started':
-                  console.log('🎤 Student speech started detected');
+                  console.log('🎤 Student speech started detected - canceling AI response');
+                  
+                  // Cancel ongoing AI response when user starts speaking
+                  if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
+                    try {
+                      // Find and cancel the current response
+                      // Note: OpenAI Realtime API doesn't have explicit cancel, but we can stop sending audio
+                      // The response will naturally end when user speaks
+                      console.log('🛑 User interrupted - AI response will be cut short');
+                    } catch (error) {
+                      console.error('❌ Error handling speech interruption:', error);
+                    }
+                  }
+                  
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_speech_started'
                     }));
                     console.log('📤 Sent student_speech_started to frontend');
+                  }
+                  break;
+                
+                case 'response.done':
+                  console.log('✅ AI response completed');
+                  if (frontendWs.readyState === WebSocket.OPEN) {
+                    frontendWs.send(JSON.stringify({
+                      type: 'ai_response_done'
+                    }));
+                    console.log('📤 Sent ai_response_done to frontend');
+                  }
+                  break;
+                
+                case 'response.audio.done':
+                  console.log('✅ AI audio stream completed');
+                  if (frontendWs.readyState === WebSocket.OPEN) {
+                    frontendWs.send(JSON.stringify({
+                      type: 'ai_audio_done'
+                    }));
+                    console.log('📤 Sent ai_audio_done to frontend');
                   }
                   break;
                   

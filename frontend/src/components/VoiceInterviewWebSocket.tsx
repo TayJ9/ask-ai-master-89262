@@ -314,6 +314,22 @@ export default function VoiceInterviewWebSocket({
         
         console.log('✅ AI audio stopped, ready for user input');
         break;
+      case 'ai_response_done':
+        console.log('✅ AI response completed');
+        // Transition to listening state when AI finishes
+        if (conversationState === 'ai_speaking') {
+          setConversationState('listening');
+          setStatusMessage("Listening... Please speak your answer.");
+        }
+        break;
+      case 'ai_audio_done':
+        console.log('✅ AI audio stream completed');
+        // Ensure we transition to listening state
+        if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0) {
+          setConversationState('listening');
+          setStatusMessage("Listening... Please speak your answer.");
+        }
+        break;
       case 'student_transcription':
         // Update conversation state when receiving student transcription
         if (conversationState !== 'user_speaking') {
@@ -441,11 +457,9 @@ export default function VoiceInterviewWebSocket({
     }
 
     try {
-      // Initialize AudioContext if needed - use browser's native sample rate
+      // Initialize AudioContext with correct sample rate (24000 Hz to match OpenAI)
       if (!audioContextRef.current) {
-        // Don't force 24000 Hz - let browser use its native rate
-        // The browser will resample automatically if needed
-        audioContextRef.current = new AudioContext();
+        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
         }
@@ -460,18 +474,24 @@ export default function VoiceInterviewWebSocket({
         await audioContext.resume();
       }
 
-      // Accumulate multiple small chunks into a larger buffer to reduce crackling
-      // Process chunks until we have enough data or queue is empty
-      const minChunkSize = 4800; // ~0.1 seconds at 24kHz (minimum to avoid crackling)
+      // Process chunks with minimal accumulation to reduce latency
+      // Only accumulate if chunk is very small (< 2400 samples = ~0.05 seconds)
+      const minChunkSize = 2400; // Reduced from 4800 to minimize latency
       let accumulatedData: Int16Array | null = null;
       let chunksProcessed = 0;
-      const maxChunksToAccumulate = 5; // Don't accumulate too many at once
+      const maxChunksToAccumulate = 2; // Reduced from 5 to minimize latency
 
       while (audioQueueRef.current.length > 0 && chunksProcessed < maxChunksToAccumulate) {
         const arrayBuffer = audioQueueRef.current.shift();
         if (!arrayBuffer) break;
 
         const pcm16Data = new Int16Array(arrayBuffer);
+        
+        // If chunk is already large enough, process it immediately
+        if (pcm16Data.length >= minChunkSize && !accumulatedData) {
+          accumulatedData = pcm16Data;
+          break;
+        }
         
         if (!accumulatedData) {
           accumulatedData = pcm16Data;
