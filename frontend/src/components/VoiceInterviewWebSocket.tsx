@@ -414,15 +414,15 @@ export default function VoiceInterviewWebSocket({
           }];
         });
         break;
-      case 'student_speech_started':
+      case 'student_speech_started': {
         // Keep this log as it's important for debugging interruptions
         console.log('🎤 User started speaking - stopping AI audio');
-        const now = Date.now();
-        lastStudentSpeechStartedTimeRef.current = now;
+        const speechStartTime = Date.now();
+        lastStudentSpeechStartedTimeRef.current = speechStartTime;
         
         // Calculate time since AI response done
         if (lastAiResponseDoneTimeRef.current) {
-          const timeSinceAiDone = now - lastAiResponseDoneTimeRef.current;
+          const timeSinceAiDone = speechStartTime - lastAiResponseDoneTimeRef.current;
           console.log(`⏱️ Turn-taking timing: ${timeSinceAiDone}ms from AI response done to user speech start`);
         }
         
@@ -502,13 +502,14 @@ export default function VoiceInterviewWebSocket({
           stopRecording();
         }
         break;
-      case 'student_speech_ended':
-        const now = Date.now();
-        lastStudentSpeechEndedTimeRef.current = now;
+      }
+      case 'student_speech_ended': {
+        const speechEndTime = Date.now();
+        lastStudentSpeechEndedTimeRef.current = speechEndTime;
         
         // Calculate speech duration
         if (lastStudentSpeechStartedTimeRef.current) {
-          const speechDuration = now - lastStudentSpeechStartedTimeRef.current;
+          const speechDuration = speechEndTime - lastStudentSpeechStartedTimeRef.current;
           console.log(`⏱️ User speech duration: ${speechDuration}ms`);
         }
         
@@ -517,6 +518,7 @@ export default function VoiceInterviewWebSocket({
           setStatusMessage("Processing your response...");
         }
         break;
+      }
       case 'ai_response_done':
         // Keep this log as it's important
         console.log('✅ AI response completed');
@@ -527,12 +529,12 @@ export default function VoiceInterviewWebSocket({
         }
         
         // Track timing
-        const now = Date.now();
-        lastAiResponseDoneTimeRef.current = now;
+        const aiResponseDoneTime = Date.now();
+        lastAiResponseDoneTimeRef.current = aiResponseDoneTime;
         
         // Calculate time from user speech end to AI response done
         if (lastStudentSpeechEndedTimeRef.current) {
-          const responseTime = now - lastStudentSpeechEndedTimeRef.current;
+          const responseTime = aiResponseDoneTime - lastStudentSpeechEndedTimeRef.current;
           console.log(`⏱️ Turn-taking timing: ${responseTime}ms from user speech end to AI response done`);
         }
         
