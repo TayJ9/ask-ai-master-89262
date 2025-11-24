@@ -924,8 +924,11 @@ export default function VoiceInterviewWebSocket({
     }
     
     // Check for clipping or unusual values
-    if (maxAmplitude > 32000) {
-      console.warn(`⚠️ High amplitude detected: ${maxAmplitude} (may indicate clipping)`);
+    // PCM16 max value is 32767, so values > 30000 are risky
+    if (maxAmplitude > 30000) {
+      const clippingRisk = ((maxAmplitude / 32767) * 100).toFixed(1);
+      console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE WARNING: ${maxAmplitude} (${clippingRisk}% of max PCM16 value)`);
+      console.warn(`[AUDIO-DIAG] This may cause clipping. Normalization will be applied automatically.`);
     }
     
     return { valid: true };
@@ -1223,6 +1226,33 @@ export default function VoiceInterviewWebSocket({
       const maxSample = Math.max(...Array.from(pcm16Data));
       const avgSample = Array.from(pcm16Data).reduce((a, b) => a + Math.abs(b), 0) / pcm16Data.length;
       
+      // ===== CLIPPING PREVENTION: Normalize high-amplitude audio =====
+      // If max amplitude is too high (>30000), normalize to prevent clipping
+      const MAX_SAFE_AMPLITUDE = 30000; // Leave headroom below 32767
+      let normalizedPcm16Data = pcm16Data;
+      let normalizationApplied = false;
+      let normalizationFactor = 1.0;
+      
+      if (Math.abs(maxSample) > MAX_SAFE_AMPLITUDE || Math.abs(minSample) > MAX_SAFE_AMPLITUDE) {
+        // Calculate normalization factor to bring max amplitude to safe level
+        const peakAmplitude = Math.max(Math.abs(maxSample), Math.abs(minSample));
+        normalizationFactor = MAX_SAFE_AMPLITUDE / peakAmplitude;
+        
+        console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE DETECTED: ${peakAmplitude} (max safe: ${MAX_SAFE_AMPLITUDE})`);
+        console.warn(`[AUDIO-DIAG] Applying normalization factor: ${normalizationFactor.toFixed(4)} to prevent clipping`);
+        
+        // Create normalized copy
+        normalizedPcm16Data = new Int16Array(pcm16Data.length);
+        for (let i = 0; i < pcm16Data.length; i++) {
+          normalizedPcm16Data[i] = Math.round(pcm16Data[i] * normalizationFactor);
+        }
+        normalizationApplied = true;
+        
+        const normalizedMax = Math.max(...Array.from(normalizedPcm16Data));
+        const normalizedMin = Math.min(...Array.from(normalizedPcm16Data));
+        console.log(`[AUDIO-DIAG] After normalization: max=${normalizedMax}, min=${normalizedMin}`);
+      }
+      
       console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
         chunkId,
         sampleCount: pcm16Data.length,
@@ -1230,14 +1260,18 @@ export default function VoiceInterviewWebSocket({
         maxSample,
         avgAmplitude: avgSample.toFixed(2),
         range: maxSample - minSample,
-        durationMs: (pcm16Data.length / 16000) * 1000
+        durationMs: (pcm16Data.length / 16000) * 1000,
+        normalizationApplied,
+        normalizationFactor: normalizationApplied ? normalizationFactor.toFixed(4) : 1.0,
+        peakAmplitude: Math.max(Math.abs(maxSample), Math.abs(minSample))
       });
 
       // ===== AUDIO DATA PATH DIAGNOSTICS =====
       // Stage 3: PCM16 to Float32 Conversion
+      // Use normalized data if normalization was applied
       let float32Data: Float32Array<ArrayBuffer>;
       try {
-        float32Data = convertPCM16ToFloat32(pcm16Data);
+        float32Data = convertPCM16ToFloat32(normalizedPcm16Data);
         
         // Verify conversion correctness
         const float32Min = Math.min(...Array.from(float32Data));
@@ -1368,8 +1402,9 @@ export default function VoiceInterviewWebSocket({
         
         // Use a gain node to prevent clipping and ensure smooth playback
         // CRITICAL: Gain should be <= 1.0 to avoid introducing distortion
+        // Reduced further to 0.75 to provide more headroom for high-amplitude audio
         gainNode = audioContext.createGain();
-        gainNode.gain.value = 0.85; // Reduced from 0.95 to prevent clipping
+        gainNode.gain.value = 0.75; // Reduced from 0.85 to prevent clipping with high-amplitude audio
         
         console.log(`[AUDIO-DIAG] Stage 5 - Playback Setup:`, {
           chunkId,
