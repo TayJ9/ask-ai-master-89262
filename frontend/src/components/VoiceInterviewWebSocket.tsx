@@ -159,7 +159,7 @@ export default function VoiceInterviewWebSocket({
       setConversationState(newState);
     }
   }, [logStateTransition]);
-  
+
   // Handle WebSocket messages (defined before useEffect to avoid hoisting issues)
   const handleWebSocketMessage = useCallback((message: any) => {
     // Reduced logging - only log important message types
@@ -497,6 +497,7 @@ export default function VoiceInterviewWebSocket({
         const queueSizeBeforeClear = audioQueueRef.current.length;
         audioQueueRef.current = [];
         pendingAudioBufferRef.current = null; // Clear pending buffer on interruption
+        audioBufferAccumulatorRef.current = 0; // Reset buffer accumulator on interruption
         if (queueSizeBeforeClear > 0) {
           console.log('🔊 Cleared audio queue:', queueSizeBeforeClear, 'chunks');
         }
@@ -657,13 +658,10 @@ export default function VoiceInterviewWebSocket({
   }, [toast]);
 
   // Check if chunk is silence/keepalive packet
+  // Note: Size check is now done earlier in bufferAndValidateChunk for performance
   const isSilencePacket = useCallback((arrayBuffer: ArrayBuffer): boolean => {
-    const MIN_AUDIO_CHUNK_SIZE = 100; // Chunks smaller than this are likely keepalive/silence
-    
-    // Skip very small chunks (likely keepalive packets)
-    if (arrayBuffer.byteLength < MIN_AUDIO_CHUNK_SIZE) {
-      return true;
-    }
+    // This function now only checks audio content, not size (size check happens earlier)
+    // Chunks < 200 bytes are already filtered out before this function is called
     
     // Check if audio content is silence (all zeros or very low amplitude)
     try {
@@ -705,21 +703,11 @@ export default function VoiceInterviewWebSocket({
     const timeSinceLastChunk = lastChunkTimeRef.current ? now - lastChunkTimeRef.current : null;
     lastChunkTimeRef.current = now;
     
-    // Log chunk received
-    console.log(`🔊 Audio chunk received: ${arrayBuffer.byteLength} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
+    // Filter out silence/keepalive packets early (before logging)
+    // Check size first (fastest check) before doing expensive PCM16 analysis
+    const isVerySmallChunk = arrayBuffer.byteLength < 200;
     
-    // Filter out silence/keepalive packets
-    if (isSilencePacket(arrayBuffer)) {
-      console.log(`🔇 Skipping silence/keepalive packet: ${arrayBuffer.byteLength} bytes`);
-      return []; // Return empty array - don't process silence packets
-    }
-    
-    // Check if byte length is multiple of 2 (required for Int16Array)
-    if (arrayBuffer.byteLength % 2 !== 0) {
-      console.warn(`⚠️ Invalid chunk size: ${arrayBuffer.byteLength} bytes (not multiple of 2). Buffering for completion.`);
-    }
-    
-    // Combine with pending buffer if exists
+    // Combine with pending buffer if exists (before size checks to catch accumulated small chunks)
     let combinedBuffer: Uint8Array;
     if (pendingAudioBufferRef.current) {
       const pending = pendingAudioBufferRef.current;
@@ -727,47 +715,180 @@ export default function VoiceInterviewWebSocket({
       combinedBuffer = new Uint8Array(pending.length + newData.length);
       combinedBuffer.set(pending);
       combinedBuffer.set(newData, pending.length);
-      console.log(`📦 Combined with pending buffer: ${pending.length} + ${newData.length} = ${combinedBuffer.length} bytes`);
       pendingAudioBufferRef.current = null; // Clear pending buffer
+      
+      // Check if combined buffer is still suspiciously small (accumulated small chunks)
+      // This catches cases where multiple small chunks combine to pass the initial check
+      if (combinedBuffer.length < 200) {
+        // Combined buffer is still too small - likely accumulated keepalive packets
+        // Clear it and skip this chunk entirely
+        if (Math.random() < 0.01) {
+          console.log(`🔇 Skipping accumulated small packets: ${combinedBuffer.length} bytes (from ${pending.length} + ${newData.length})`);
+        }
+        return []; // Don't process accumulated small chunks
+      }
     } else {
       combinedBuffer = new Uint8Array(arrayBuffer);
+      
+      // Check incoming chunk size (only if no pending buffer)
+      if (isVerySmallChunk) {
+        // Very small chunks are almost certainly keepalive/silence packets
+        // Only log occasionally to reduce noise
+        if (Math.random() < 0.01) {
+          console.log(`🔇 Skipping very small packet: ${arrayBuffer.byteLength} bytes`);
+        }
+        return []; // Return empty array - don't process silence packets
+      }
+    }
+    
+    // Additional silence detection for larger chunks (check combined buffer if it exists)
+    // Create a proper ArrayBuffer slice for silence detection
+    const bufferForSilenceCheck = combinedBuffer.buffer.slice(combinedBuffer.byteOffset, combinedBuffer.byteOffset + combinedBuffer.length) as ArrayBuffer;
+    if (isSilencePacket(bufferForSilenceCheck)) {
+      // Only log occasionally to reduce noise
+      if (Math.random() < 0.05) {
+        console.log(`🔇 Skipping silence packet: ${combinedBuffer.length} bytes`);
+      }
+      return []; // Return empty array - don't process silence packets
+    }
+    
+    // Log chunk received (only for valid chunks) - reduce frequency to avoid spam
+    if (Math.random() < 0.2) {
+      console.log(`🔊 Audio chunk received: size=${combinedBuffer.length} bytes, interval=${timeSinceLastChunk || 0}ms, queue=${audioQueueRef.current.length}`);
+    }
+    
+    // Check if byte length is multiple of 2 (required for Int16Array)
+    if (combinedBuffer.length % 2 !== 0) {
+      console.warn(`⚠️ Invalid chunk size: ${combinedBuffer.length} bytes (not multiple of 2). Buffering for completion.`);
     }
     
     // Check if combined buffer is still incomplete (not multiple of 2)
     if (combinedBuffer.length % 2 !== 0) {
       // Save incomplete chunk for next iteration
       pendingAudioBufferRef.current = combinedBuffer;
-      console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
+      // Only log occasionally to reduce noise
+      if (Math.random() < 0.1) {
+        console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
+      }
       return []; // Return empty array - no complete frames yet
     }
     
     // Validate minimum chunk size (unless it's a very small final chunk)
-    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length > 0) {
-      console.warn(`⚠️ Very small chunk: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes minimum). Processing anyway.`);
+    // Only warn if chunk is suspiciously small but passed silence check (shouldn't happen often)
+    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length >= 200) {
+      // Only log occasionally to reduce noise
+      if (Math.random() < 0.1) {
+        console.warn(`⚠️ Very small chunk: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes minimum). Processing anyway.`);
+      }
     }
     
     // If we have complete frames, return them
     const completeFrames: ArrayBuffer[] = [];
     
-    // Ensure we have complete PCM frames (multiple of 2 bytes)
-    if (combinedBuffer.length >= PCM_FRAME_SIZE && combinedBuffer.length % 2 === 0) {
-      // Create ArrayBuffer from Uint8Array
-      // WebSocket messages always provide ArrayBuffer, not SharedArrayBuffer
-      const bufferSlice = combinedBuffer.buffer.slice(combinedBuffer.byteOffset, combinedBuffer.byteOffset + combinedBuffer.length);
-      // Type assertion: WebSocket messages always provide ArrayBuffer
-      const completeBuffer = bufferSlice as ArrayBuffer;
-      completeFrames.push(completeBuffer);
-      console.log(`✅ Complete PCM frame ready: ${completeBuffer.byteLength} bytes`);
-    } else if (combinedBuffer.length > 0) {
+      // Ensure we have complete PCM frames (multiple of 2 bytes)
+      if (combinedBuffer.length >= PCM_FRAME_SIZE && combinedBuffer.length % 2 === 0) {
+        // Create ArrayBuffer from Uint8Array
+        // WebSocket messages always provide ArrayBuffer, not SharedArrayBuffer
+        const bufferSlice = combinedBuffer.buffer.slice(combinedBuffer.byteOffset, combinedBuffer.byteOffset + combinedBuffer.length);
+        // Type assertion: WebSocket messages always provide ArrayBuffer
+        const completeBuffer = bufferSlice as ArrayBuffer;
+        completeFrames.push(completeBuffer);
+        // Only log occasionally to reduce noise
+        if (Math.random() < 0.1) {
+          console.log(`✅ Complete PCM frame ready: ${completeBuffer.byteLength} bytes`);
+        }
+      } else if (combinedBuffer.length > 0) {
       // Still incomplete, buffer it
       pendingAudioBufferRef.current = combinedBuffer;
-      console.log(`📦 Still incomplete, buffering: ${combinedBuffer.length} bytes`);
+      // Only log occasionally to reduce noise
+      if (Math.random() < 0.1) {
+        console.log(`📦 Still incomplete, buffering: ${combinedBuffer.length} bytes`);
+      }
       return [];
     }
     
     return completeFrames;
   }, [isSilencePacket]);
   
+  // Analyze PCM16 data for static/noise patterns
+  const analyzeForStatic = useCallback((pcm16Array: Int16Array): {
+    hasStatic: boolean;
+    reason?: string;
+    noiseLevel: number;
+    sampleRange: { min: number; max: number };
+    zeroCrossings: number;
+  } => {
+    if (pcm16Array.length === 0) {
+      return { hasStatic: false, noiseLevel: 0, sampleRange: { min: 0, max: 0 }, zeroCrossings: 0 };
+    }
+    
+    let sumSquares = 0;
+    let maxAmplitude = 0;
+    let minAmplitude = 32767;
+    let zeroCrossings = 0;
+    let highFreqNoise = 0; // Count rapid sign changes (indicates high-frequency noise)
+    let previousSign = 0;
+    let signChangeCount = 0;
+    
+    for (let i = 0; i < pcm16Array.length; i++) {
+      const sample = pcm16Array[i];
+      const absSample = Math.abs(sample);
+      
+      sumSquares += sample * sample;
+      maxAmplitude = Math.max(maxAmplitude, absSample);
+      minAmplitude = Math.min(minAmplitude, absSample);
+      
+      // Detect zero crossings (sign changes)
+      const currentSign = sample >= 0 ? 1 : -1;
+      if (i > 0 && currentSign !== previousSign) {
+        zeroCrossings++;
+        signChangeCount++;
+      }
+      previousSign = currentSign;
+      
+      // Detect high-frequency noise (rapid sign changes in small windows)
+      if (i > 0 && i % 100 === 0) {
+        if (signChangeCount > 50) { // More than 50% sign changes in 100 samples
+          highFreqNoise++;
+        }
+        signChangeCount = 0;
+      }
+    }
+    
+    const rms = Math.sqrt(sumSquares / pcm16Array.length);
+    const peakToPeak = maxAmplitude - minAmplitude;
+    const zeroCrossingRate = zeroCrossings / pcm16Array.length;
+    
+    // Static detection heuristics:
+    // 1. High zero-crossing rate with low RMS (white noise pattern)
+    // 2. Very high peak-to-peak range relative to RMS (clipping/distortion)
+    // 3. High-frequency noise patterns
+    const hasStatic = (
+      (zeroCrossingRate > 0.3 && rms < 1000) || // High zero-crossings with low energy = noise
+      (peakToPeak > 30000 && rms < 5000) || // Large dynamic range with low RMS = distortion
+      (highFreqNoise > pcm16Array.length / 200) // Excessive high-frequency content
+    );
+    
+    let reason: string | undefined;
+    if (hasStatic) {
+      if (zeroCrossingRate > 0.3 && rms < 1000) {
+        reason = `High zero-crossing rate (${zeroCrossingRate.toFixed(3)}) with low RMS (${rms.toFixed(0)}) - white noise pattern`;
+      } else if (peakToPeak > 30000 && rms < 5000) {
+        reason = `Large peak-to-peak range (${peakToPeak}) with low RMS (${rms.toFixed(0)}) - clipping/distortion`;
+      } else if (highFreqNoise > pcm16Array.length / 200) {
+        reason = `Excessive high-frequency noise detected`;
+      }
+    }
+    
+    return {
+      hasStatic,
+      reason,
+      noiseLevel: rms,
+      sampleRange: { min: minAmplitude, max: maxAmplitude },
+      zeroCrossings
+    };
+  }, []);
+
   // Validate audio content quality
   const validateAudioContent = useCallback((pcm16Array: Int16Array): { valid: boolean; reason?: string } => {
     if (pcm16Array.length === 0) {
@@ -809,8 +930,9 @@ export default function VoiceInterviewWebSocket({
     
     return { valid: true };
   }, []);
-  
+
   // Convert PCM16 to Float32 with proper handling and normalization
+  // CRITICAL: This conversion must be exact to avoid introducing artifacts
   const convertPCM16ToFloat32 = useCallback((pcm16Array: Int16Array): Float32Array<ArrayBuffer> => {
     // Create Float32Array with explicit ArrayBuffer to satisfy TypeScript 5.9+ type checking
     // In Web Audio API context, buffers are always ArrayBuffer (not SharedArrayBuffer)
@@ -819,16 +941,25 @@ export default function VoiceInterviewWebSocket({
     
     // Normalize to ensure values stay within [-1.0, 1.0] range
     // Use 32768.0 (not 32767) to properly handle -32768 edge case
+    // CRITICAL: Division by 32768.0 ensures exact mapping:
+    // -32768 -> -1.0, 0 -> 0.0, 32767 -> ~0.999969
     const maxValue = 32768.0;
     let hasInvalidValues = false;
+    let clippingCount = 0;
     
     for (let i = 0; i < pcm16Array.length; i++) {
       // PCM16 is signed 16-bit: range is -32768 to 32767
-      // Convert to float32 range [-1.0, 1.0] and clamp to prevent clipping
+      // Convert to float32 range [-1.0, 1.0]
       let normalized = pcm16Array[i] / maxValue;
       
-      // Clamp to [-1.0, 1.0] to prevent any clipping
-      normalized = Math.max(-1.0, Math.min(1.0, normalized));
+      // Check for clipping (values outside [-1.0, 1.0])
+      // Note: Due to division by 32768, 32767 maps to ~0.999969, which is fine
+      // Only -32768 maps exactly to -1.0, which is correct
+      if (normalized < -1.0 || normalized > 1.0) {
+        clippingCount++;
+        // Clamp to [-1.0, 1.0] to prevent any clipping
+        normalized = Math.max(-1.0, Math.min(1.0, normalized));
+      }
       
       // Check for NaN or Infinity (shouldn't happen but validate)
       if (!isFinite(normalized)) {
@@ -840,10 +971,41 @@ export default function VoiceInterviewWebSocket({
     }
     
     if (hasInvalidValues) {
-      console.warn('⚠️ Invalid values (NaN/Infinity) detected in PCM16 conversion, replaced with silence');
+      console.warn('[AUDIO-DIAG] ⚠️ Invalid values (NaN/Infinity) detected in PCM16 conversion, replaced with silence');
+    }
+    
+    if (clippingCount > 0) {
+      console.warn(`[AUDIO-DIAG] ⚠️ Clipping detected in conversion: ${clippingCount} samples out of ${pcm16Array.length} (${(clippingCount/pcm16Array.length*100).toFixed(2)}%)`);
     }
     
     return float32Array;
+  }, []);
+  
+  // Export raw PCM16 data for external analysis (for debugging static issues)
+  const exportPCM16ForAnalysis = useCallback((pcm16Array: Int16Array, chunkId: string) => {
+    // Only export occasionally to avoid performance issues
+    if (Math.random() < 0.01) {
+      try {
+        // Create a copy of the buffer to ensure it's an ArrayBuffer (not SharedArrayBuffer)
+        const bufferCopy = pcm16Array.buffer.slice(
+          pcm16Array.byteOffset,
+          pcm16Array.byteOffset + pcm16Array.byteLength
+        ) as ArrayBuffer;
+        const blob = new Blob([bufferCopy], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `pcm16_${chunkId}_${Date.now()}.raw`;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        console.log(`[AUDIO-DIAG] Exported PCM16 data for analysis: ${chunkId}`);
+      } catch (error) {
+        console.error(`[AUDIO-DIAG] Failed to export PCM16 data:`, error);
+      }
+    }
   }, []);
 
   // Process audio queue with improved buffering and timing
@@ -894,28 +1056,43 @@ export default function VoiceInterviewWebSocket({
 
     try {
       // Initialize AudioContext with correct sample rate (16000 Hz to match ElevenLabs)
+      // CRITICAL: Must match source sample rate exactly to avoid resampling artifacts
       if (!audioContextRef.current) {
         try {
+          // Try to create AudioContext with exact 16kHz sample rate
           audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-          // Reduced logging - only log sample rate mismatch or on first creation
           const actualSampleRate = audioContextRef.current.sampleRate;
-          if (Math.abs(actualSampleRate - 16000) > 100) {
-            console.warn('⚠️ AudioContext sample rate mismatch:', actualSampleRate, 'expected 16000');
+          
+          console.log(`[AUDIO-DIAG] AudioContext Initialization:`, {
+            requestedSampleRate: 16000,
+            actualSampleRate,
+            sampleRateMatch: actualSampleRate === 16000,
+            willResample: actualSampleRate !== 16000,
+            state: audioContextRef.current.state
+          });
+          
+          if (Math.abs(actualSampleRate - 16000) > 0.1) {
+            console.error(`[AUDIO-DIAG] ⚠️ CRITICAL: AudioContext sample rate mismatch!`, {
+              requested: 16000,
+              actual: actualSampleRate,
+              difference: Math.abs(actualSampleRate - 16000),
+              impact: 'Resampling will introduce artifacts and static'
+            });
+            console.warn(`[AUDIO-DIAG] Browser may not support 16kHz AudioContext. Static may be caused by resampling.`);
           }
           
           if (audioContextRef.current.state === 'suspended') {
             await audioContextRef.current.resume();
+            console.log(`[AUDIO-DIAG] AudioContext resumed from suspended state`);
           }
           
           // Add initial buffer delay (100ms) - optimized for responsiveness
           const currentTime = audioContextRef.current.currentTime;
           nextPlayTimeRef.current = currentTime + 0.1;
-          // Reduced logging - only log on first initialization
-          if (Math.random() < 0.1) {
-            console.log('⏱️ Initial buffer delay set to 100ms');
-          }
+          console.log(`[AUDIO-DIAG] Initial buffer delay set to 100ms`);
         } catch (error) {
           console.error('❌ Failed to create AudioContext:', error);
+          console.error(`[AUDIO-DIAG] AudioContext creation failed:`, error);
           isProcessingQueueRef.current = false;
           throw error;
         }
@@ -976,10 +1153,22 @@ export default function VoiceInterviewWebSocket({
         return;
       }
 
+      // ===== AUDIO DATA PATH DIAGNOSTICS =====
+      // Stage 2: Buffer Processing
+      const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
+      
       // Create Int16Array with error handling
       let pcm16Data: Int16Array;
       try {
         pcm16Data = new Int16Array(arrayBuffer);
+        
+        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation:`, {
+          chunkId,
+          bufferSize: arrayBuffer.byteLength,
+          sampleCount: pcm16Data.length,
+          expectedSamples: arrayBuffer.byteLength / 2,
+          matches: pcm16Data.length === arrayBuffer.byteLength / 2
+        });
       } catch (error) {
         console.error('❌ RangeError creating Int16Array:', error);
         console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
@@ -994,17 +1183,29 @@ export default function VoiceInterviewWebSocket({
       
       // Validate sample count
       if (pcm16Data.length === 0) {
-        // Reduced logging
-        if (Math.random() < 0.1) {
-          console.warn('⚠️ PCM16 data is empty, skipping');
-        }
+        console.warn(`[AUDIO-DIAG] Empty PCM16 data:`, { chunkId });
         isProcessingQueueRef.current = false;
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
         }
         return;
       }
-      
+
+      // ===== STATIC DETECTION: Analyze PCM16 data for noise patterns =====
+      const staticAnalysis = analyzeForStatic(pcm16Data);
+      if (staticAnalysis.hasStatic) {
+        console.warn(`[AUDIO-DIAG] ⚠️ STATIC DETECTED in PCM16 data:`, {
+          chunkId,
+          reason: staticAnalysis.reason,
+          noiseLevel: staticAnalysis.noiseLevel,
+          sampleRange: staticAnalysis.sampleRange,
+          zeroCrossings: staticAnalysis.zeroCrossings
+        });
+        
+        // Export raw PCM16 data for external analysis if static is detected
+        exportPCM16ForAnalysis(pcm16Data, chunkId);
+      }
+
       // Validate audio content quality
       const validation = validateAudioContent(pcm16Data);
       if (!validation.valid) {
@@ -1017,17 +1218,47 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // Log PCM16 sample range for debugging (occasionally)
-      if (Math.random() < 0.05) {
-        const minSample = Math.min(...Array.from(pcm16Data));
-        const maxSample = Math.max(...Array.from(pcm16Data));
-        console.log(`📊 PCM16 sample range: ${minSample} to ${maxSample} (${pcm16Data.length} samples)`);
-      }
+      // Log PCM16 sample range for debugging
+      const minSample = Math.min(...Array.from(pcm16Data));
+      const maxSample = Math.max(...Array.from(pcm16Data));
+      const avgSample = Array.from(pcm16Data).reduce((a, b) => a + Math.abs(b), 0) / pcm16Data.length;
+      
+      console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
+        chunkId,
+        sampleCount: pcm16Data.length,
+        minSample,
+        maxSample,
+        avgAmplitude: avgSample.toFixed(2),
+        range: maxSample - minSample,
+        durationMs: (pcm16Data.length / 16000) * 1000
+      });
 
-      // Convert PCM16 to Float32 with error handling
+      // ===== AUDIO DATA PATH DIAGNOSTICS =====
+      // Stage 3: PCM16 to Float32 Conversion
       let float32Data: Float32Array<ArrayBuffer>;
       try {
         float32Data = convertPCM16ToFloat32(pcm16Data);
+        
+        // Verify conversion correctness
+        const float32Min = Math.min(...Array.from(float32Data));
+        const float32Max = Math.max(...Array.from(float32Data));
+        const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
+        const outOfRange = Array.from(float32Data).filter(v => v < -1.0 || v > 1.0).length;
+        
+        console.log(`[AUDIO-DIAG] Stage 3 - Float32 Conversion:`, {
+          chunkId,
+          sampleCount: float32Data.length,
+          matchesPCM16: float32Data.length === pcm16Data.length,
+          minValue: float32Min.toFixed(6),
+          maxValue: float32Max.toFixed(6),
+          avgAmplitude: float32Avg.toFixed(6),
+          outOfRangeSamples: outOfRange,
+          hasClipping: outOfRange > 0
+        });
+        
+        if (outOfRange > 0) {
+          console.warn(`[AUDIO-DIAG] ⚠️ CLIPPING DETECTED: ${outOfRange} samples out of [-1.0, 1.0] range`);
+        }
       } catch (error) {
         console.error('❌ Error converting PCM16 to Float32:', error);
         console.error(`   Chunk size: ${arrayBuffer.byteLength} bytes`);
@@ -1042,10 +1273,7 @@ export default function VoiceInterviewWebSocket({
       
       // Validate buffer size before creating
       if (float32Data.length === 0) {
-        // Reduced logging
-        if (Math.random() < 0.1) {
-          console.warn('⚠️ Empty float32 data, skipping buffer creation');
-        }
+        console.warn(`[AUDIO-DIAG] Empty float32 data:`, { chunkId });
         isProcessingQueueRef.current = false;
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
@@ -1053,9 +1281,11 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // Create audio buffer with source sample rate (16kHz from ElevenLabs)
-      // The browser's AudioContext will handle resampling automatically
+      // ===== AUDIO DATA PATH DIAGNOSTICS =====
+      // Stage 4: AudioBuffer Creation
       const sourceSampleRate = 16000;
+      const audioContextSampleRate = audioContext.sampleRate;
+      const needsResampling = audioContextSampleRate !== sourceSampleRate;
       
       // Validate buffer size is reasonable (max 10 seconds)
       // At 16kHz, 10 seconds = 160,000 samples
@@ -1070,8 +1300,30 @@ export default function VoiceInterviewWebSocket({
       try {
         audioBuffer = audioContext.createBuffer(1, finalFloat32Data.length, sourceSampleRate);
         audioBuffer.copyToChannel(finalFloat32Data, 0);
+        
+        console.log(`[AUDIO-DIAG] Stage 4 - AudioBuffer Creation:`, {
+          chunkId,
+          bufferSampleRate: audioBuffer.sampleRate,
+          audioContextSampleRate,
+          needsResampling,
+          bufferLength: audioBuffer.length,
+          bufferDuration: audioBuffer.duration.toFixed(3) + 's',
+          numberOfChannels: audioBuffer.numberOfChannels,
+          matchesFloat32: audioBuffer.length === finalFloat32Data.length
+        });
+        
+        if (needsResampling) {
+          console.warn(`[AUDIO-DIAG] ⚠️ SAMPLE RATE MISMATCH: AudioContext (${audioContextSampleRate}Hz) will resample from ${sourceSampleRate}Hz`);
+          console.warn(`[AUDIO-DIAG] This may introduce artifacts. Consider matching AudioContext sample rate to source.`);
+        }
       } catch (error) {
         console.error('❌ Failed to create audio buffer:', error);
+        console.error(`[AUDIO-DIAG] Buffer creation failed:`, {
+          chunkId,
+          float32Length: finalFloat32Data.length,
+          sourceSampleRate,
+          audioContextSampleRate
+        });
         isProcessingQueueRef.current = false;
         // Try next chunk
         if (audioQueueRef.current.length > 0) {
@@ -1105,7 +1357,8 @@ export default function VoiceInterviewWebSocket({
         setIsPlaying(false);
       }
       
-      // Create and configure source with error handling
+      // ===== AUDIO DATA PATH DIAGNOSTICS =====
+      // Stage 5: Playback Setup
       let source: AudioBufferSourceNode;
       let gainNode: GainNode;
       
@@ -1114,12 +1367,27 @@ export default function VoiceInterviewWebSocket({
         source.buffer = audioBuffer;
         
         // Use a gain node to prevent clipping and ensure smooth playback
+        // CRITICAL: Gain should be <= 1.0 to avoid introducing distortion
         gainNode = audioContext.createGain();
         gainNode.gain.value = 0.85; // Reduced from 0.95 to prevent clipping
+        
+        console.log(`[AUDIO-DIAG] Stage 5 - Playback Setup:`, {
+          chunkId,
+          gainValue: gainNode.gain.value,
+          bufferSampleRate: audioBuffer.sampleRate,
+          audioContextSampleRate: audioContext.sampleRate,
+          bufferDuration: audioBuffer.duration.toFixed(3) + 's',
+          playbackRate: source.playbackRate.value
+        });
+        
         source.connect(gainNode);
         gainNode.connect(audioContext.destination);
       } catch (error) {
         console.error('❌ Failed to create audio source or gain node:', error);
+        console.error(`[AUDIO-DIAG] Playback setup failed:`, {
+          chunkId,
+          error
+        });
         isProcessingQueueRef.current = false;
         // Try next chunk
         if (audioQueueRef.current.length > 0) {
@@ -1134,10 +1402,11 @@ export default function VoiceInterviewWebSocket({
       // Schedule playback with precise timing
       const currentTime = audioContext.currentTime;
       
-      // Handle timing drift: if nextPlayTime is significantly behind (>20ms), reset it aggressively
+      // Handle timing drift: if nextPlayTime is significantly behind (>50ms), reset it aggressively
+      // Increased threshold from 20ms to 50ms to reduce false positives from normal timing variations
       const timeDrift = currentTime - nextPlayTimeRef.current;
-      if (timeDrift > 0.02) {
-        // If drift is significant (>20ms), reset scheduling and drop old chunks
+      if (timeDrift > 0.05) {
+        // If drift is significant (>50ms), reset scheduling and drop old chunks
         const driftMs = timeDrift * 1000;
         if (driftMs > 100) {
           // Severe drift (>100ms) - drop old chunks to catch up
@@ -1147,7 +1416,10 @@ export default function VoiceInterviewWebSocket({
             console.warn('⏱️ Severe timing drift:', driftMs.toFixed(0), 'ms. Dropped', chunksToDrop, 'old chunks.');
           }
         } else {
-          console.warn('⏱️ Timing drift detected:', driftMs.toFixed(0), 'ms. Resetting schedule.');
+          // Only log timing drift warnings occasionally to reduce noise
+          if (Math.random() < 0.2) {
+            console.warn('⏱️ Timing drift detected:', driftMs.toFixed(0), 'ms. Resetting schedule.');
+          }
         }
         nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
       }
@@ -1159,8 +1431,23 @@ export default function VoiceInterviewWebSocket({
       
       try {
         source.start(safeStartTime);
+        
+        console.log(`[AUDIO-DIAG] Stage 6 - Playback Started:`, {
+          chunkId,
+          scheduledTime: safeStartTime.toFixed(3),
+          currentTime: currentTime.toFixed(3),
+          delay: (safeStartTime - currentTime).toFixed(3) + 's',
+          duration: duration.toFixed(3) + 's',
+          nextPlayTime: nextPlayTimeRef.current.toFixed(3)
+        });
       } catch (error) {
         console.error('❌ Failed to start audio source:', error);
+        console.error(`[AUDIO-DIAG] Playback start failed:`, {
+          chunkId,
+          error,
+          scheduledTime: safeStartTime,
+          currentTime
+        });
         // Cleanup on failure
         try {
           source.disconnect();
@@ -1287,41 +1574,39 @@ export default function VoiceInterviewWebSocket({
         audioChunkSizesRef.current.shift();
       }
       
-      // Calculate receive rate if we have enough data
-      if (audioChunkReceiveTimesRef.current.length >= 10) {
-        const timeSpan = now - audioChunkReceiveTimesRef.current[0];
-        const chunkRate = (audioChunkReceiveTimesRef.current.length / timeSpan) * 1000; // chunks per second
-        const avgChunkSize = audioChunkSizesRef.current.reduce((a, b) => a + b, 0) / audioChunkSizesRef.current.length;
-        
-        // Log metrics occasionally (16kHz PCM audio)
-        if (Math.random() < 0.1) {
-          console.log(`📊 Audio metrics (16kHz PCM): ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
-          // At 16kHz PCM16: 32000 bytes = 1 second, log if chunk size is unusual
-          if (avgChunkSize > 64000) {
-            console.warn(`⚠️ Large audio chunks detected: ${avgChunkSize.toFixed(0)} bytes avg (>2s at 16kHz)`);
-          }
-        }
-      }
-      
-      // Aggressive queue management - drop old chunks when limit exceeded
-      if (audioQueueRef.current.length >= MAX_QUEUE_SIZE) {
-        // Keep only the most recent chunks (50% of max)
-        const chunksToKeep = Math.floor(MAX_QUEUE_SIZE / 2);
-        const dropped = audioQueueRef.current.length - chunksToKeep;
-        audioQueueRef.current = audioQueueRef.current.slice(-chunksToKeep);
-        console.warn('⚠️ Audio queue limit reached. Dropped', dropped, 'old chunks, kept', chunksToKeep);
-      } else if (audioQueueRef.current.length >= WARN_QUEUE_SIZE) {
-        // Warn but don't drop yet
-        console.warn('⚠️ Audio queue is large:', audioQueueRef.current.length, 'chunks');
-      }
-      
-      // Log when queue exceeds thresholds
-      if (audioQueueRef.current.length === 25) {
-        console.warn('⚠️ Audio queue reached 25 chunks');
-      }
-      
       // Add complete frame to queue
       audioQueueRef.current.push(frame);
+    }
+    
+    // Calculate receive rate if we have enough data (after adding all frames)
+    if (audioChunkReceiveTimesRef.current.length >= 10) {
+      const now = Date.now();
+      const timeSpan = now - audioChunkReceiveTimesRef.current[0];
+      const chunkRate = (audioChunkReceiveTimesRef.current.length / timeSpan) * 1000; // chunks per second
+      const avgChunkSize = audioChunkSizesRef.current.reduce((a, b) => a + b, 0) / audioChunkSizesRef.current.length;
+      
+      // Log metrics occasionally (16kHz PCM audio)
+      if (Math.random() < 0.1) {
+        console.log(`📊 Audio metrics (16kHz PCM): ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
+        // At 16kHz PCM16: 32000 bytes = 1 second, log if chunk size is unusual
+        if (avgChunkSize > 64000) {
+          console.warn(`⚠️ Large audio chunks detected: ${avgChunkSize.toFixed(0)} bytes avg (>2s at 16kHz)`);
+        }
+      }
+    }
+    
+    // Aggressive queue management - drop old chunks when limit exceeded (check once after adding all frames)
+    if (audioQueueRef.current.length >= MAX_QUEUE_SIZE) {
+      // Keep only the most recent chunks (50% of max)
+      const chunksToKeep = Math.floor(MAX_QUEUE_SIZE / 2);
+      const dropped = audioQueueRef.current.length - chunksToKeep;
+      audioQueueRef.current = audioQueueRef.current.slice(-chunksToKeep);
+      console.warn('⚠️ Audio queue limit reached. Dropped', dropped, 'old chunks, kept', chunksToKeep);
+    } else if (audioQueueRef.current.length >= WARN_QUEUE_SIZE) {
+      // Warn but don't drop yet (only log occasionally to reduce noise)
+      if (Math.random() < 0.3) {
+        console.warn('⚠️ Audio queue is large:', audioQueueRef.current.length, 'chunks');
+      }
     }
     
     // Try to process queue immediately (no setTimeout delay)
@@ -1337,13 +1622,24 @@ export default function VoiceInterviewWebSocket({
         recordingState.isRecording = false;
       }
       
+      // Stop AudioWorkletNode if used
+      const workletNode = (mediaStreamRef.current as any).__workletNode;
+      if (workletNode) {
+        try {
+          workletNode.port.postMessage('stop');
+          workletNode.disconnect();
+        } catch (e) {
+          // Ignore errors
+        }
+      }
+      
       // Stop all tracks
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       
-      // Disconnect processor if exists
+      // Disconnect processor if exists (ScriptProcessorNode fallback)
       const processor = (mediaStreamRef.current as any).__processor;
-      if (processor) {
-        const source = (processor as any).__source;
+      if (processor && !workletNode) {
+        const source = (mediaStreamRef.current as any).__source;
         if (source) {
           source.disconnect();
         }
@@ -1483,25 +1779,57 @@ export default function VoiceInterviewWebSocket({
               
               // Track chunk receive timing
               const now = Date.now();
-              if (lastChunkReceiveTimeRef.current) {
-                const timeSinceLastChunk = now - lastChunkReceiveTimeRef.current;
-                // Log chunk timing (16kHz PCM)
-                console.log(`🔊 Audio chunk received: size=${arrayBuffer.byteLength} bytes, interval=${timeSinceLastChunk}ms, queue=${audioQueueRef.current.length}`);
-              }
               lastChunkReceiveTimeRef.current = now;
               
-              // Log unusually large or small chunks (16kHz thresholds)
+              // ===== AUDIO DATA PATH DIAGNOSTICS =====
+              // Stage 1: WebSocket Reception
+              const chunkId = `chunk_${now}_${Math.random().toString(36).substr(2, 9)}`;
+              console.log(`[AUDIO-DIAG] Stage 1 - WebSocket Reception:`, {
+                chunkId,
+                size: arrayBuffer.byteLength,
+                isMultipleOf2: arrayBuffer.byteLength % 2 === 0,
+                expectedSamples: arrayBuffer.byteLength / 2,
+                expectedDurationMs: (arrayBuffer.byteLength / 2 / 16000) * 1000,
+                timeSinceLastChunk: lastChunkReceiveTimeRef.current ? now - lastChunkReceiveTimeRef.current : null
+              });
+              
+              // Quick integrity check: sample first few bytes to detect obvious corruption
+              if (arrayBuffer.byteLength >= 4) {
+                const view = new DataView(arrayBuffer);
+                const firstSample = view.getInt16(0, true); // little-endian
+                const secondSample = view.getInt16(2, true);
+                const sampleRange = Math.abs(firstSample) + Math.abs(secondSample);
+                
+                // Check for suspicious patterns (all zeros, all max, alternating pattern)
+                const isSuspicious = (
+                  (firstSample === 0 && secondSample === 0) ||
+                  (Math.abs(firstSample) === 32767 && Math.abs(secondSample) === 32767) ||
+                  (firstSample === secondSample && Math.abs(firstSample) > 10000)
+                );
+                
+                if (isSuspicious && Math.random() < 0.1) {
+                  console.warn(`[AUDIO-DIAG] Suspicious pattern detected in first samples:`, {
+                    chunkId,
+                    firstSample,
+                    secondSample,
+                    sampleRange
+                  });
+                }
+              }
+              
+              // Log unusually large chunks (16kHz thresholds)
               // At 16kHz PCM16: 64000 bytes = 2 seconds
               if (arrayBuffer.byteLength > 64000) {
                 console.warn(`⚠️ Unusually large audio chunk: ${arrayBuffer.byteLength} bytes (>2 seconds at 16kHz)`);
-              } else if (arrayBuffer.byteLength < 100) {
-                console.warn(`⚠️ Unusually small audio chunk: ${arrayBuffer.byteLength} bytes`);
               }
               
               // Validate chunk before queuing (will be buffered if incomplete)
               if (arrayBuffer.byteLength % 2 !== 0) {
                 console.warn(`⚠️ Invalid chunk size before queuing: ${arrayBuffer.byteLength} bytes (not multiple of 2). Will be buffered.`);
               }
+              
+              // Store chunk ID for tracking through pipeline
+              (arrayBuffer as any).__chunkId = chunkId;
               
               // Queue audio chunk for sequential playback (buffering happens inside)
               queueAudioChunk(arrayBuffer);
@@ -1634,7 +1962,7 @@ export default function VoiceInterviewWebSocket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Start recording microphone
+  // Start recording microphone using AudioWorkletNode (replaces deprecated ScriptProcessorNode)
   const startRecording = useCallback(async () => {
     try {
       // Request microphone access
@@ -1649,48 +1977,87 @@ export default function VoiceInterviewWebSocket({
 
       mediaStreamRef.current = stream;
 
-      // Create AudioContext for processing
+      // Create AudioContext for processing raw audio
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 16000 });
       }
 
       const audioContext = audioContextRef.current;
       const source = audioContext.createMediaStreamSource(stream);
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-
+      
       const recordingStateRef = { isRecording: true };
+      let processor: ScriptProcessorNode | AudioWorkletNode | null = null;
+      let workletNode: AudioWorkletNode | null = null;
       
-      processor.onaudioprocess = (e) => {
-        if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-          return;
-        }
+      // Try to use AudioWorkletNode (modern approach, no deprecation warning)
+      try {
+        // Load the audio worklet processor from public folder
+        await audioContext.audioWorklet.addModule('/audio-processor.worklet.js');
+        
+        // Create AudioWorkletNode
+        workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+        
+        // Handle messages from the worklet
+        workletNode.port.onmessage = (e) => {
+          if (e.data.type === 'audioData') {
+            if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+              return;
+            }
 
-        const inputData = e.inputBuffer.getChannelData(0);
+            const inputData = e.data.data;
+            
+            // Convert to PCM16
+            const pcm16 = convertToPCM16(inputData);
+            
+            // Send as base64 encoded audio chunk
+            const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+            
+            wsRef.current.send(JSON.stringify({
+              type: 'audio_chunk',
+              audio: base64
+            }));
+          }
+        };
         
-        // Convert to PCM16
-        const pcm16 = convertToPCM16(inputData);
+        processor = workletNode;
+        source.connect(workletNode);
+        workletNode.connect(audioContext.destination);
         
-        // Send as base64 encoded audio chunk
-        const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+      } catch (workletError) {
+        // Fallback to ScriptProcessorNode if AudioWorklet is not supported
+        console.warn('AudioWorklet not available, falling back to ScriptProcessorNode:', workletError);
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
         
-        wsRef.current.send(JSON.stringify({
-          type: 'audio_chunk',
-          audio: base64
-        }));
-      };
-      
-      // Store recording state ref for cleanup
-      (mediaStreamRef.current as any).__recordingState = recordingStateRef;
+        (processor as ScriptProcessorNode).onaudioprocess = (e) => {
+          if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            return;
+          }
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
+          const inputData = e.inputBuffer.getChannelData(0);
+          
+          // Convert to PCM16
+          const pcm16 = convertToPCM16(inputData);
+          
+          // Send as base64 encoded audio chunk
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+          
+          wsRef.current.send(JSON.stringify({
+            type: 'audio_chunk',
+            audio: base64
+          }));
+        };
+        
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+      }
 
       setIsRecording(true);
       setStatusMessage("Recording... Speak now.");
       
-      // Store processor reference for cleanup
-      (processor as any).__source = source;
+      // Store references for cleanup
       (mediaStreamRef.current as any).__processor = processor;
+      (mediaStreamRef.current as any).__workletNode = workletNode;
+      (mediaStreamRef.current as any).__source = source;
       (mediaStreamRef.current as any).__recordingState = recordingStateRef;
 
     } catch (error: any) {
@@ -1713,7 +2080,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Microphone error. Please check permissions.");
       }
     }
-  }, [toast, stopRecording]);
+  }, [toast, stopRecording, convertToPCM16]);
 
   // End interview
   const handleEndInterview = useCallback(() => {
