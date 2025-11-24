@@ -359,8 +359,11 @@ export default function VoiceInterviewWebSocket({
   }, [toast]);
 
   // Convert PCM16 to Float32 with proper handling
-  const convertPCM16ToFloat32 = useCallback((pcm16Array: Int16Array): Float32Array => {
-    const float32Array = new Float32Array(pcm16Array.length);
+  const convertPCM16ToFloat32 = useCallback((pcm16Array: Int16Array): Float32Array<ArrayBuffer> => {
+    // Create Float32Array with explicit ArrayBuffer to satisfy TypeScript 5.9+ type checking
+    // In Web Audio API context, buffers are always ArrayBuffer (not SharedArrayBuffer)
+    const buffer = new ArrayBuffer(pcm16Array.length * 4); // 4 bytes per float32
+    const float32Array = new Float32Array(buffer);
     for (let i = 0; i < pcm16Array.length; i++) {
       // PCM16 is signed 16-bit: range is -32768 to 32767
       // Convert to float32 range [-1.0, 1.0]
