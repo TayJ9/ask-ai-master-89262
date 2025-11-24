@@ -229,7 +229,7 @@ function createOpenAIConnection(apiKey, systemPrompt) {
         session: {
           modalities: ['text', 'audio'],
           instructions: systemPrompt,
-          voice: 'alloy',
+          voice: 'coral',
           input_audio_format: 'pcm16',
           output_audio_format: 'pcm16',
           turn_detection: {

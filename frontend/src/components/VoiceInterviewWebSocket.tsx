@@ -51,6 +51,7 @@ export default function VoiceInterviewWebSocket({
   const audioChunksRef = useRef<Float32Array[]>([]);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  const nextPlayTimeRef = useRef(0);
   const isConnectingRef = useRef(false);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const retryCountRef = useRef(0);
@@ -341,35 +342,59 @@ export default function VoiceInterviewWebSocket({
     }
   }, [toast]);
 
-  // Process audio queue sequentially
+  // Process audio queue sequentially with gapless playback
   const processAudioQueue = useCallback(async () => {
-    // If already playing or queue is empty, do nothing
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) {
+    // If already processing or queue is empty, return
+    if (isPlayingRef.current && audioQueueRef.current.length === 0) {
+      setIsPlaying(false);
+      isPlayingRef.current = false;
+      return;
+    }
+
+    // If already playing, don't start another processing cycle
+    // The onended callback will trigger the next chunk
+    if (isPlayingRef.current) {
       return;
     }
 
     // Get the next chunk from queue
     const arrayBuffer = audioQueueRef.current.shift();
     if (!arrayBuffer) {
+      setIsPlaying(false);
+      isPlayingRef.current = false;
       return;
     }
 
     try {
+      // Initialize AudioContext if needed
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+        // Resume context if suspended (required for autoplay policies)
+        if (audioContextRef.current.state === 'suspended') {
+          await audioContextRef.current.resume();
+        }
+        // Start immediately, no artificial delay
+        nextPlayTimeRef.current = audioContextRef.current.currentTime;
       }
 
       const audioContext = audioContextRef.current;
       
-      // Convert PCM16 to Float32
+      // Resume context if suspended
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // Convert PCM16 to Float32 with proper normalization
       const pcm16Data = new Int16Array(arrayBuffer);
       const float32Data = new Float32Array(pcm16Data.length);
       
+      // Proper PCM16 to Float32 conversion (range: -1.0 to 1.0)
       for (let i = 0; i < pcm16Data.length; i++) {
-        float32Data[i] = pcm16Data[i] / (pcm16Data[i] >= 0 ? 32767 : 32768);
+        // Normalize to [-1, 1] range
+        float32Data[i] = Math.max(-1, Math.min(1, pcm16Data[i] / 32768));
       }
       
-      // Create audio buffer from Float32 data
+      // Create audio buffer with correct sample rate
       const audioBuffer = audioContext.createBuffer(1, float32Data.length, 24000);
       audioBuffer.copyToChannel(float32Data, 0);
       
@@ -377,23 +402,47 @@ export default function VoiceInterviewWebSocket({
       source.buffer = audioBuffer;
       source.connect(audioContext.destination);
 
+      // Calculate duration of this chunk
+      const duration = audioBuffer.duration;
+      
+      // Schedule to play at the next available time (gapless)
+      // If this is the first chunk or we're ahead of schedule, start immediately
+      const currentTime = audioContext.currentTime;
+      const startTime = Math.max(currentTime, nextPlayTimeRef.current);
+      
+      // Ensure we don't schedule too far in the past (shouldn't happen, but safety check)
+      const safeStartTime = Math.max(currentTime, startTime);
+      source.start(safeStartTime);
+      
+      // Update next play time for seamless playback (exactly when this chunk ends)
+      // This ensures zero gap between chunks
+      nextPlayTimeRef.current = safeStartTime + duration;
+      
       setIsPlaying(true);
       isPlayingRef.current = true;
 
+      // Set up callback for when this chunk ends
       source.onended = () => {
-        setIsPlaying(false);
-        isPlayingRef.current = false;
-        // Process next chunk in queue
-        processAudioQueue();
+        // Process next chunk immediately (gapless)
+        if (audioQueueRef.current.length > 0) {
+          isPlayingRef.current = false; // Reset flag to allow next chunk
+          // Process immediately for seamless playback
+          processAudioQueue();
+        } else {
+          setIsPlaying(false);
+          isPlayingRef.current = false;
+          // Reset timing for next session
+          nextPlayTimeRef.current = 0;
+        }
       };
-
-      source.start(0);
     } catch (error) {
       console.error('Error playing audio chunk:', error);
       setIsPlaying(false);
       isPlayingRef.current = false;
       // Try next chunk even if this one failed
-      processAudioQueue();
+      if (audioQueueRef.current.length > 0) {
+        processAudioQueue();
+      }
     }
   }, []);
 
@@ -440,6 +489,7 @@ export default function VoiceInterviewWebSocket({
     audioQueueRef.current = [];
     isPlayingRef.current = false;
     setIsPlaying(false);
+    nextPlayTimeRef.current = 0;
     
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(console.error);
