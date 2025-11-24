@@ -59,21 +59,43 @@
 - **Current**: Sending `audio_input` with base64 PCM16 at 16kHz
 - **Status**: ✅ Matches ElevenLabs expected format
 - **Note**: Monitor for any format rejection errors
+- **Verification**: Base64 encoding uses `btoa(String.fromCharCode(...Uint8Array))` which is correct
 
 ### 3. Conversation Initialization
 - **Current**: Sending `conversation_init` with agent_id, voice_id, llm, context
 - **Status**: ✅ Format looks correct
 - **Note**: Verify context variables are being used by agent
+- **Context Variables**: resume, major, grade_level, target_role
 
 ### 4. Small Audio Chunks
 - **Current**: Buffering chunks < 320 bytes (20ms minimum)
 - **Status**: ✅ Working, but may cause delays
 - **Note**: Monitor for audio quality issues with very small chunks
+- **Fix**: Chunks are buffered until complete PCM frames (multiple of 2 bytes)
 
 ### 5. ScriptProcessorNode Deprecation
 - **Current**: Using deprecated ScriptProcessorNode for recording
 - **Status**: ⚠️ Works but shows deprecation warning
 - **Note**: Non-critical, can migrate to AudioWorklet later
+
+### 6. Audio Sample Rate Consistency
+- **Recording**: ✅ 16kHz (getUserMedia + AudioContext)
+- **Playback**: ✅ 16kHz (AudioContext)
+- **Backend Forwarding**: ✅ 16kHz PCM16
+- **ElevenLabs Output**: ✅ 16kHz PCM16
+- **Status**: ✅ All consistent
+
+### 7. Error Handling
+- **Connection Errors**: ✅ Handled with try-catch and error events
+- **Audio Processing Errors**: ✅ RangeError prevention (Int16Array validation)
+- **Incomplete Chunks**: ✅ Buffering until complete
+- **WebSocket Errors**: ✅ Error messages forwarded to frontend
+- **Status**: ✅ Comprehensive error handling
+
+### 8. Base64 Encoding
+- **Frontend → Backend**: ✅ `btoa(String.fromCharCode(...Uint8Array))`
+- **Backend → ElevenLabs**: ✅ Direct base64 string forwarding
+- **Status**: ✅ Encoding is correct
 
 ## Testing Checklist
 
