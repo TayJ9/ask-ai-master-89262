@@ -448,11 +448,50 @@ function handleFrontendConnection(frontendWs, httpServer) {
               switch (openAIMessage.type) {
                 case 'response.audio.delta':
                   if (frontendWs.readyState === WebSocket.OPEN) {
-                    const audioBuffer = Buffer.from(openAIMessage.delta, 'base64');
-                    frontendWs.send(audioBuffer);
-                    // Log periodically, not every delta (too verbose)
-                    if (Math.random() < 0.01) { // Log ~1% of audio deltas
-                      console.log('🎵 Forwarded audio delta to frontend');
+                    try {
+                      // Validate base64 data exists
+                      if (!openAIMessage.delta || typeof openAIMessage.delta !== 'string') {
+                        console.warn('⚠️ Invalid audio delta data received from OpenAI');
+                        break;
+                      }
+                      
+                      // Decode base64 to buffer immediately
+                      const audioBuffer = Buffer.from(openAIMessage.delta, 'base64');
+                      
+                      // Validate buffer size
+                      if (audioBuffer.length === 0) {
+                        console.warn('⚠️ Empty audio buffer received, skipping');
+                        break;
+                      }
+                      
+                      // Log chunk size periodically to detect anomalies
+                      if (Math.random() < 0.01) { // Log ~1% of audio deltas
+                        console.log('🎵 Forwarded audio delta to frontend, size:', audioBuffer.length, 'bytes');
+                      }
+                      
+                      // Detect unusually large or small chunks
+                      // PCM16 is 2 bytes per sample, so 48000 bytes = 24000 samples = 1 second at 24kHz
+                      // 96000 bytes would be 2 seconds
+                      if (audioBuffer.length > 48000) { // > 1 second at 24kHz
+                        console.warn('⚠️ Unusually large audio chunk:', audioBuffer.length, 'bytes');
+                      }
+                      if (audioBuffer.length < 100) {
+                        console.warn('⚠️ Unusually small audio chunk:', audioBuffer.length, 'bytes');
+                      }
+                      
+                      // Forward immediately without buffering
+                      // Check if WebSocket is ready to send (not in backpressure)
+                      if (frontendWs.bufferedAmount === 0 || frontendWs.bufferedAmount < 1024 * 1024) {
+                        // Less than 1MB buffered, safe to send
+                        frontendWs.send(audioBuffer);
+                      } else {
+                        // Backpressure detected, log warning but still send
+                        console.warn('⚠️ WebSocket backpressure detected, buffered:', frontendWs.bufferedAmount, 'bytes');
+                        frontendWs.send(audioBuffer);
+                      }
+                    } catch (error) {
+                      console.error('❌ Error forwarding audio delta:', error);
+                      // Continue processing other messages
                     }
                   }
                   break;

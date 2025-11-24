@@ -52,6 +52,7 @@ export default function VoiceInterviewWebSocket({
   const audioChunksRef = useRef<Float32Array[]>([]);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
+  const isProcessingQueueRef = useRef(false);
   const nextPlayTimeRef = useRef(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const audioBufferQueueRef = useRef<Float32Array[]>([]);
@@ -198,11 +199,15 @@ export default function VoiceInterviewWebSocket({
           clearTimeout(stateTimeoutRef.current);
         }
         stateTimeoutRef.current = setTimeout(() => {
-          if (conversationState === 'ai_speaking') {
-            console.warn('⚠️ State timeout: AI speaking state exceeded 30s, forcing transition to listening');
-            setConversationState('listening');
-            setStatusMessage("Listening... Please speak your answer.");
-          }
+          // Use functional update to get current state value, not stale closure value
+          setConversationState(currentState => {
+            if (currentState === 'ai_speaking') {
+              console.warn('⚠️ State timeout: AI speaking state exceeded 30s, forcing transition to listening');
+              setStatusMessage("Listening... Please speak your answer.");
+              return 'listening';
+            }
+            return currentState;
+          });
         }, 30000);
         
         // Initialize AudioContext early to handle autoplay policies
@@ -234,10 +239,21 @@ export default function VoiceInterviewWebSocket({
           const isFinal = message.is_final || false;
           const newText = message.text || '';
           
-          // If this is a final transcription with empty text, mark the last non-final entry as final
-          if (isFinal && !newText && prev.length > 0) {
-            const lastEntry = prev[prev.length - 1];
-            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
+          // Defensive check: ensure we have text or this is a final marker
+          if (!newText && !isFinal) {
+            console.warn('⚠️ Received empty non-final transcription, skipping');
+            return prev;
+          }
+          
+          // Find the last AI transcription entry (final or non-final)
+          const lastAiIndex = prev.length - 1;
+          const lastEntry = lastAiIndex >= 0 ? prev[lastAiIndex] : null;
+          const isLastEntryAi = lastEntry && lastEntry.type === 'ai';
+          
+          // Case 1: Final transcription with empty text - mark last non-final as final
+          if (isFinal && !newText) {
+            if (isLastEntryAi && !lastEntry.isFinal) {
+              // Mark the accumulated non-final text as final
               return [
                 ...prev.slice(0, -1),
                 {
@@ -247,13 +263,13 @@ export default function VoiceInterviewWebSocket({
                 }
               ];
             }
+            // If no non-final entry exists, don't add empty final entry
+            return prev;
           }
           
-          // If this is a non-final transcription, try to update the last non-final entry
-          if (!isFinal && prev.length > 0) {
-            const lastEntry = prev[prev.length - 1];
-            // If the last entry is also non-final and from AI, accumulate the text
-            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
+          // Case 2: Non-final transcription - accumulate with last non-final entry
+          if (!isFinal && newText) {
+            if (isLastEntryAi && !lastEntry.isFinal) {
               // Accumulate text (server sends incremental words)
               const updatedText = lastEntry.text + newText;
               return [
@@ -265,13 +281,20 @@ export default function VoiceInterviewWebSocket({
                 }
               ];
             }
+            // No existing non-final entry, create new one
+            return [...prev, {
+              type: 'ai',
+              text: newText,
+              isFinal: false,
+              timestamp: Date.now()
+            }];
           }
           
-          // If this is a final transcription with text, mark the last non-final entry as final and update text
-          if (isFinal && newText && prev.length > 0) {
-            const lastEntry = prev[prev.length - 1];
-            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
-              // Update the last entry with final text
+          // Case 3: Final transcription with text
+          if (isFinal && newText) {
+            if (isLastEntryAi && !lastEntry.isFinal) {
+              // Update the last non-final entry with final text
+              // Combine accumulated text with final text (final text may be complete or incremental)
               const updatedText = lastEntry.text + newText;
               return [
                 ...prev.slice(0, -1),
@@ -283,9 +306,17 @@ export default function VoiceInterviewWebSocket({
                 }
               ];
             }
+            // No existing non-final entry, create new final entry
+            return [...prev, {
+              type: 'ai',
+              text: newText,
+              isFinal: true,
+              timestamp: Date.now()
+            }];
           }
           
-          // Otherwise, add as new entry
+          // Fallback: should not reach here, but add entry if we do
+          console.warn('⚠️ Unexpected transcription case, adding entry anyway');
           return [...prev, {
             type: 'ai',
             text: newText,
@@ -299,16 +330,21 @@ export default function VoiceInterviewWebSocket({
         setConversationState('user_speaking');
         setStatusMessage("You're speaking...");
         
-        // Immediately stop all playing audio
+        // Immediately stop all playing audio with proper cleanup
         activeSourcesRef.current.forEach(source => {
           try {
             source.stop();
+          } catch (e) {
+            // Ignore errors - source may already be stopped
+          }
+          try {
             source.disconnect();
           } catch (e) {
-            // Ignore errors during cleanup
+            // Ignore disconnect errors
           }
         });
         activeSourcesRef.current = [];
+        isProcessingQueueRef.current = false;
         
         // Clear audio queue to prevent backlog
         const queueSizeBeforeClear = audioQueueRef.current.length;
@@ -449,23 +485,33 @@ export default function VoiceInterviewWebSocket({
     }
   }, [toast]);
 
-  // Convert PCM16 to Float32 with proper handling
+  // Convert PCM16 to Float32 with proper handling and normalization
   const convertPCM16ToFloat32 = useCallback((pcm16Array: Int16Array): Float32Array<ArrayBuffer> => {
     // Create Float32Array with explicit ArrayBuffer to satisfy TypeScript 5.9+ type checking
     // In Web Audio API context, buffers are always ArrayBuffer (not SharedArrayBuffer)
     const buffer = new ArrayBuffer(pcm16Array.length * 4); // 4 bytes per float32
     const float32Array = new Float32Array(buffer);
+    
+    // Normalize to ensure values stay within [-1.0, 1.0] range
+    const maxValue = 32768.0;
     for (let i = 0; i < pcm16Array.length; i++) {
       // PCM16 is signed 16-bit: range is -32768 to 32767
-      // Convert to float32 range [-1.0, 1.0]
-      // Use 32768 to handle the full range including -32768
-      float32Array[i] = pcm16Array[i] / 32768.0;
+      // Convert to float32 range [-1.0, 1.0] and clamp to prevent clipping
+      let normalized = pcm16Array[i] / maxValue;
+      // Clamp to [-1.0, 1.0] to prevent any clipping
+      normalized = Math.max(-1.0, Math.min(1.0, normalized));
+      float32Array[i] = normalized;
     }
     return float32Array;
   }, []);
 
   // Process audio queue with improved buffering and timing
   const processAudioQueue = useCallback(async () => {
+    // Prevent concurrent processing with lock
+    if (isProcessingQueueRef.current) {
+      return;
+    }
+    
     // Don't process if user is speaking - they should have priority
     if (conversationState === 'user_speaking') {
       console.log('🔊 Skipping audio processing - user is speaking');
@@ -480,6 +526,9 @@ export default function VoiceInterviewWebSocket({
       return;
     }
     
+    // Set processing lock
+    isProcessingQueueRef.current = true;
+    
     // Log queue health
     const queueSize = audioQueueRef.current.length;
     if (queueSize > 30) {
@@ -489,85 +538,170 @@ export default function VoiceInterviewWebSocket({
     try {
       // Initialize AudioContext with correct sample rate (24000 Hz to match OpenAI)
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
-        if (audioContextRef.current.state === 'suspended') {
-          await audioContextRef.current.resume();
+        try {
+          audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+          console.log('🎵 AudioContext created, sample rate:', audioContextRef.current.sampleRate);
+          
+          // Verify sample rate matches expected value
+          if (Math.abs(audioContextRef.current.sampleRate - 24000) > 100) {
+            console.warn('⚠️ AudioContext sample rate mismatch:', audioContextRef.current.sampleRate, 'expected 24000');
+          }
+          
+          if (audioContextRef.current.state === 'suspended') {
+            await audioContextRef.current.resume();
+          }
+          
+          // Add initial buffer delay (200ms) for better buffering
+          const currentTime = audioContextRef.current.currentTime;
+          nextPlayTimeRef.current = currentTime + 0.2;
+          console.log('⏱️ Initial buffer delay set to 200ms');
+        } catch (error) {
+          console.error('❌ Failed to create AudioContext:', error);
+          isProcessingQueueRef.current = false;
+          throw error;
         }
-        // Add initial buffer delay (100ms) for smooth start
-        const currentTime = audioContextRef.current.currentTime;
-        nextPlayTimeRef.current = currentTime + 0.1;
-        console.log('🎵 AudioContext created, sample rate:', audioContextRef.current.sampleRate);
-        console.log('⏱️ Initial buffer delay set to 100ms');
       }
 
       const audioContext = audioContextRef.current;
       
       // Resume context if suspended
       if (audioContext.state === 'suspended') {
-        await audioContext.resume();
-      }
-
-      // Process chunks with minimal accumulation to reduce latency
-      // Only accumulate if chunk is very small (< 2400 samples = ~0.05 seconds)
-      const minChunkSize = 2400; // Reduced from 4800 to minimize latency
-      let accumulatedData: Int16Array | null = null;
-      let chunksProcessed = 0;
-      const maxChunksToAccumulate = 2; // Reduced from 5 to minimize latency
-
-      while (audioQueueRef.current.length > 0 && chunksProcessed < maxChunksToAccumulate) {
-        const arrayBuffer = audioQueueRef.current.shift();
-        if (!arrayBuffer) break;
-
-        const pcm16Data = new Int16Array(arrayBuffer);
-        
-        // If chunk is already large enough, process it immediately
-        if (pcm16Data.length >= minChunkSize && !accumulatedData) {
-          accumulatedData = pcm16Data;
-          break;
-        }
-        
-        if (!accumulatedData) {
-          accumulatedData = pcm16Data;
-        } else {
-          // Concatenate chunks
-          const combined = new Int16Array(accumulatedData.length + pcm16Data.length);
-          combined.set(accumulatedData, 0);
-          combined.set(pcm16Data, accumulatedData.length);
-          accumulatedData = combined;
-        }
-        
-        chunksProcessed++;
-        
-        // If we have enough data, process it
-        if (accumulatedData.length >= minChunkSize) {
-          break;
+        try {
+          await audioContext.resume();
+        } catch (error) {
+          console.error('❌ Failed to resume AudioContext:', error);
+          isProcessingQueueRef.current = false;
+          throw error;
         }
       }
 
-      if (!accumulatedData || accumulatedData.length === 0) {
+      // Process chunks individually without accumulation for smoother playback
+      // This prevents audio artifacts from concatenation
+      const arrayBuffer = audioQueueRef.current.shift();
+      if (!arrayBuffer) {
         setIsPlaying(false);
         isPlayingRef.current = false;
+        isProcessingQueueRef.current = false;
+        return;
+      }
+
+      // Validate buffer size
+      if (arrayBuffer.byteLength === 0) {
+        console.warn('⚠️ Received empty audio buffer, skipping');
+        isProcessingQueueRef.current = false;
+        // Process next chunk
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
+        return;
+      }
+
+      // Validate buffer size is reasonable (not too large)
+      // PCM16 is 2 bytes per sample, so 96000 bytes = 48000 samples = 2 seconds at 24kHz
+      const maxBufferSize = 96000; // 2 seconds at 24kHz (48000 samples * 2 bytes)
+      if (arrayBuffer.byteLength > maxBufferSize) {
+        console.warn('⚠️ Received unusually large audio buffer:', arrayBuffer.byteLength, 'bytes. Processing anyway.');
+      }
+
+      const pcm16Data = new Int16Array(arrayBuffer);
+      
+      // Validate sample count
+      if (pcm16Data.length === 0) {
+        console.warn('⚠️ PCM16 data is empty, skipping');
+        isProcessingQueueRef.current = false;
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
         return;
       }
 
       // Convert PCM16 to Float32
-      const float32Data = convertPCM16ToFloat32(accumulatedData);
+      const float32Data = convertPCM16ToFloat32(pcm16Data);
+      
+      // Validate buffer size before creating
+      if (float32Data.length === 0) {
+        console.warn('⚠️ Empty float32 data, skipping buffer creation');
+        isProcessingQueueRef.current = false;
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
+        return;
+      }
       
       // Create audio buffer with source sample rate (24kHz from OpenAI)
       // The browser's AudioContext will handle resampling automatically
       const sourceSampleRate = 24000;
-      const audioBuffer = audioContext.createBuffer(1, float32Data.length, sourceSampleRate);
-      audioBuffer.copyToChannel(float32Data, 0);
       
-      // Create and configure source
-      const source = audioContext.createBufferSource();
-      source.buffer = audioBuffer;
+      // Validate buffer size is reasonable (max 10 seconds)
+      // At 24kHz, 10 seconds = 240,000 samples
+      const maxSamples = sourceSampleRate * 10;
+      let finalFloat32Data = float32Data;
+      if (float32Data.length > maxSamples) {
+        console.warn('⚠️ Audio buffer unusually large:', float32Data.length, 'samples (', (float32Data.length / sourceSampleRate).toFixed(2), 'seconds). Truncating to', maxSamples, 'samples.');
+        finalFloat32Data = float32Data.slice(0, maxSamples);
+      }
       
-      // Use a gain node to prevent clipping and ensure smooth playback
-      const gainNode = audioContext.createGain();
-      gainNode.gain.value = 0.95; // Slight reduction to prevent clipping
-      source.connect(gainNode);
-      gainNode.connect(audioContext.destination);
+      let audioBuffer: AudioBuffer;
+      try {
+        audioBuffer = audioContext.createBuffer(1, finalFloat32Data.length, sourceSampleRate);
+        audioBuffer.copyToChannel(finalFloat32Data, 0);
+      } catch (error) {
+        console.error('❌ Failed to create audio buffer:', error);
+        isProcessingQueueRef.current = false;
+        // Try next chunk
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
+        return;
+      }
+      
+      // Ensure only one source plays at a time - stop any existing sources
+      // This should rarely happen, but protects against race conditions
+      if (activeSourcesRef.current.length > 0) {
+        console.warn('⚠️ Multiple audio sources detected, stopping previous sources');
+        const sourcesToStop = [...activeSourcesRef.current]; // Copy array before clearing
+        activeSourcesRef.current = []; // Clear immediately to prevent onended callbacks from interfering
+        sourcesToStop.forEach(existingSource => {
+          try {
+            // Remove onended callback to prevent interference
+            existingSource.onended = null;
+            existingSource.stop();
+          } catch (e) {
+            // Ignore errors - source may already be stopped
+          }
+          try {
+            existingSource.disconnect();
+          } catch (e) {
+            // Ignore disconnect errors
+          }
+        });
+        // Reset playing state since we stopped all sources
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+      }
+      
+      // Create and configure source with error handling
+      let source: AudioBufferSourceNode;
+      let gainNode: GainNode;
+      
+      try {
+        source = audioContext.createBufferSource();
+        source.buffer = audioBuffer;
+        
+        // Use a gain node to prevent clipping and ensure smooth playback
+        gainNode = audioContext.createGain();
+        gainNode.gain.value = 0.85; // Reduced from 0.95 to prevent clipping
+        source.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+      } catch (error) {
+        console.error('❌ Failed to create audio source or gain node:', error);
+        isProcessingQueueRef.current = false;
+        // Try next chunk
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
+        return;
+      }
 
       // Calculate duration based on actual sample rate
       const duration = audioBuffer.duration;
@@ -575,18 +709,36 @@ export default function VoiceInterviewWebSocket({
       // Schedule playback with precise timing
       const currentTime = audioContext.currentTime;
       
-      // Handle timing drift: if nextPlayTime is significantly behind (>100ms), reset it
+      // Handle timing drift: if nextPlayTime is significantly behind (>50ms), reset it
       const timeDrift = currentTime - nextPlayTimeRef.current;
-      if (timeDrift > 0.1) {
+      if (timeDrift > 0.05) {
         console.warn('⏱️ Timing drift detected:', (timeDrift * 1000).toFixed(0), 'ms. Resetting schedule.');
         nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
       }
       
       const scheduledTime = Math.max(currentTime, nextPlayTimeRef.current);
       
-      // Add a tiny buffer (5ms) to prevent scheduling in the past
-      const safeStartTime = Math.max(currentTime + 0.005, scheduledTime);
-      source.start(safeStartTime);
+      // Add a small buffer (10ms) to prevent scheduling in the past and ensure smooth playback
+      const safeStartTime = Math.max(currentTime + 0.01, scheduledTime);
+      
+      try {
+        source.start(safeStartTime);
+      } catch (error) {
+        console.error('❌ Failed to start audio source:', error);
+        // Cleanup on failure
+        try {
+          source.disconnect();
+          gainNode.disconnect();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        isProcessingQueueRef.current = false;
+        // Try next chunk
+        if (audioQueueRef.current.length > 0) {
+          setTimeout(() => processAudioQueue(), 0);
+        }
+        return;
+      }
       
       // Track active source for cleanup
       activeSourcesRef.current.push(source);
@@ -599,20 +751,38 @@ export default function VoiceInterviewWebSocket({
 
       // Cleanup and continue when chunk ends
       source.onended = () => {
-        // Remove from active sources
+        // Verify this source is still in activeSources (might have been stopped externally)
         const index = activeSourcesRef.current.indexOf(source);
-        if (index > -1) {
-          activeSourcesRef.current.splice(index, 1);
+        if (index === -1) {
+          // Source was already removed (likely stopped externally), ignore this callback
+          return;
         }
         
-        // Disconnect nodes
-        source.disconnect();
-        gainNode.disconnect();
+        // Remove from active sources
+        activeSourcesRef.current.splice(index, 1);
         
-        // Process next chunk if available
+        // Disconnect nodes with error handling
+        try {
+          source.stop();
+        } catch (e) {
+          // Ignore errors - source may already be stopped
+        }
+        try {
+          source.disconnect();
+          gainNode.disconnect();
+        } catch (e) {
+          // Ignore disconnect errors
+        }
+        
+        // Release processing lock and playing state
+        isPlayingRef.current = false;
+        isProcessingQueueRef.current = false;
+        
+        // Process next chunk if available using setTimeout to avoid recursion
         if (audioQueueRef.current.length > 0) {
-          isPlayingRef.current = false;
-          processAudioQueue();
+          setTimeout(() => {
+            processAudioQueue();
+          }, 0);
         } else {
           // Check if any other sources are still playing
           if (activeSourcesRef.current.length === 0) {
@@ -630,23 +800,31 @@ export default function VoiceInterviewWebSocket({
         }
       };
     } catch (error) {
-      console.error('Error playing audio chunk:', error);
+      console.error('❌ Error playing audio chunk:', error);
       setIsPlaying(false);
       isPlayingRef.current = false;
+      isProcessingQueueRef.current = false;
+      
       // Clear active sources on error
       activeSourcesRef.current.forEach(source => {
         try {
           source.stop();
+        } catch (e) {
+          // Ignore errors - source may already be stopped
+        }
+        try {
           source.disconnect();
         } catch (e) {
-          // Ignore errors during cleanup
+          // Ignore disconnect errors
         }
       });
       activeSourcesRef.current = [];
       
-      // Try next chunk if available
+      // Try next chunk if available using setTimeout to avoid recursion
       if (audioQueueRef.current.length > 0) {
-        processAudioQueue();
+        setTimeout(() => {
+          processAudioQueue();
+        }, 0);
       }
     }
   }, [convertPCM16ToFloat32, conversationState]);
