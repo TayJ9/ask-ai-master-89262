@@ -1202,6 +1202,7 @@ function handleFrontendConnection(frontendWs, httpServer) {
             console.error('❌ Frontend WebSocket not open, cannot send error message');
           }
         }
+        } // Close if block for OpenAI fallback (line 792: if (currentProvider === 'openai' || !elevenLabsWs))
       } else if (message.type === 'end_interview') {
         console.log('🛑 ========================================');
         console.log('🛑 PROCESSING end_interview MESSAGE');
