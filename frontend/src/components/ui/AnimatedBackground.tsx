@@ -144,7 +144,7 @@ export default function AnimatedBackground({ className = "", children }: Animate
   return (
     <div className={`relative min-h-screen overflow-hidden ${className}`}>
       {/* Gradient Mesh Blobs */}
-      <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 overflow-hidden z-[1]">
         {/* Blob 1 - Top Left */}
         <div
           className="mesh-blob-1 absolute w-[500px] h-[500px] rounded-full blur-3xl will-change-transform"
@@ -191,7 +191,7 @@ export default function AnimatedBackground({ className = "", children }: Animate
       </div>
 
       {/* Wave Pattern Overlay */}
-      <div className="absolute inset-0 overflow-hidden opacity-30">
+      <div className="absolute inset-0 overflow-hidden opacity-30 z-[2]">
         {/* Wave Layer 1 */}
         <svg
           className="wave-layer-1 absolute bottom-0 w-full h-full will-change-transform"
@@ -239,17 +239,19 @@ export default function AnimatedBackground({ className = "", children }: Animate
 
       {/* Base gradient overlay for smooth blending - Light mode */}
       <div
-        className="absolute inset-0 dark:hidden"
+        className="absolute inset-0 dark:hidden z-[3]"
         style={{
           background: 'linear-gradient(180deg, hsl(220, 25%, 97%) 0%, hsl(217, 91%, 95%) 100%)',
+          opacity: 0.65,
         }}
       />
 
       {/* Dark mode overlay */}
       <div
-        className="absolute inset-0 hidden dark:block"
+        className="absolute inset-0 hidden dark:block z-[3]"
         style={{
           background: 'linear-gradient(180deg, hsl(220, 40%, 8%) 0%, hsl(217, 91%, 15%) 100%)',
+          opacity: 0.7,
         }}
       />
 

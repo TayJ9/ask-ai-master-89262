@@ -7,7 +7,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, MicOff, Volume2, Loader2, CheckCircle2, X } from "lucide-react";
+import { Mic, MicOff, Volume2, Loader2, CheckCircle2, X, User, Headphones } from "lucide-react";
 import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
@@ -326,6 +326,13 @@ export default function VoiceInterviewWebSocket({
         }
         
         console.log('✅ AI audio stopped, ready for user input');
+        break;
+      case 'student_speech_ended':
+        console.log('🎤 User finished speaking - transitioning to processing state');
+        if (conversationState === 'user_speaking') {
+          setConversationState('processing');
+          setStatusMessage("Processing your response...");
+        }
         break;
       case 'ai_response_done':
         console.log('✅ AI response completed');
@@ -1073,6 +1080,16 @@ export default function VoiceInterviewWebSocket({
               ) : !isConnected ? (
                 <div className="flex items-center justify-center gap-2 text-yellow-600">
                   <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="font-medium">{statusMessage}</span>
+                </div>
+              ) : conversationState === 'user_speaking' ? (
+                <div className="flex items-center justify-center gap-2 text-blue-600">
+                  <User className="w-5 h-5" />
+                  <span className="font-medium">{statusMessage}</span>
+                </div>
+              ) : conversationState === 'listening' ? (
+                <div className="flex items-center justify-center gap-2 text-amber-600">
+                  <Headphones className="w-5 h-5" />
                   <span className="font-medium">{statusMessage}</span>
                 </div>
               ) : (

@@ -510,6 +510,17 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   }
                   break;
                 
+                case 'input_audio_buffer.speech_stopped':
+                  console.log('🎤 Student speech stopped detected');
+                  
+                  if (frontendWs.readyState === WebSocket.OPEN) {
+                    frontendWs.send(JSON.stringify({
+                      type: 'student_speech_ended'
+                    }));
+                    console.log('📤 Sent student_speech_ended to frontend');
+                  }
+                  break;
+                
                 case 'response.done':
                   console.log('✅ AI response completed');
                   if (frontendWs.readyState === WebSocket.OPEN) {
