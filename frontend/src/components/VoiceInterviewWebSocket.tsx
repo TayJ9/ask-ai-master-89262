@@ -193,20 +193,134 @@ export default function VoiceInterviewWebSocket({
         break;
       case 'transcript':
       case 'ai_transcription':
-        setTranscripts(prev => [...prev, {
-          type: 'ai',
-          text: message.text,
-          isFinal: message.is_final || false,
-          timestamp: Date.now()
-        }]);
+        setTranscripts(prev => {
+          const isFinal = message.is_final || false;
+          const newText = message.text || '';
+          
+          // If this is a final transcription with empty text, mark the last non-final entry as final
+          if (isFinal && !newText && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  isFinal: true,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // If this is a non-final transcription, try to update the last non-final entry
+          if (!isFinal && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            // If the last entry is also non-final and from AI, accumulate the text
+            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
+              // Accumulate text (server sends incremental words)
+              const updatedText = lastEntry.text + newText;
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  text: updatedText,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // If this is a final transcription with text, mark the last non-final entry as final and update text
+          if (isFinal && newText && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            if (lastEntry.type === 'ai' && !lastEntry.isFinal) {
+              // Update the last entry with final text
+              const updatedText = lastEntry.text + newText;
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  text: updatedText,
+                  isFinal: true,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // Otherwise, add as new entry
+          return [...prev, {
+            type: 'ai',
+            text: newText,
+            isFinal: isFinal,
+            timestamp: Date.now()
+          }];
+        });
         break;
       case 'student_transcription':
-        setTranscripts(prev => [...prev, {
-          type: 'student',
-          text: message.text,
-          isFinal: message.is_final || false,
-          timestamp: Date.now()
-        }]);
+        setTranscripts(prev => {
+          const isFinal = message.is_final || false;
+          const newText = message.text || '';
+          
+          // If this is a final transcription with empty text, mark the last non-final entry as final
+          if (isFinal && !newText && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            if (lastEntry.type === 'student' && !lastEntry.isFinal) {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  isFinal: true,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // If this is a non-final transcription, try to update the last non-final entry
+          if (!isFinal && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            // If the last entry is also non-final and from student, accumulate the text
+            if (lastEntry.type === 'student' && !lastEntry.isFinal) {
+              // Accumulate text (server sends incremental words)
+              const updatedText = lastEntry.text + newText;
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  text: updatedText,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // If this is a final transcription with text, mark the last non-final entry as final and update text
+          if (isFinal && newText && prev.length > 0) {
+            const lastEntry = prev[prev.length - 1];
+            if (lastEntry.type === 'student' && !lastEntry.isFinal) {
+              // Update the last entry with final text
+              const updatedText = lastEntry.text + newText;
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastEntry,
+                  text: updatedText,
+                  isFinal: true,
+                  timestamp: Date.now()
+                }
+              ];
+            }
+          }
+          
+          // Otherwise, add as new entry
+          return [...prev, {
+            type: 'student',
+            text: newText,
+            isFinal: isFinal,
+            timestamp: Date.now()
+          }];
+        });
         break;
       case 'session_ended':
       case 'interview_ended':
@@ -227,8 +341,19 @@ export default function VoiceInterviewWebSocket({
     }
   }, [toast]);
 
-  // Play audio chunk (PCM16 format) - defined before useEffect
-  const playAudioChunk = useCallback(async (arrayBuffer: ArrayBuffer) => {
+  // Process audio queue sequentially
+  const processAudioQueue = useCallback(async () => {
+    // If already playing or queue is empty, do nothing
+    if (isPlayingRef.current || audioQueueRef.current.length === 0) {
+      return;
+    }
+
+    // Get the next chunk from queue
+    const arrayBuffer = audioQueueRef.current.shift();
+    if (!arrayBuffer) {
+      return;
+    }
+
     try {
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: 24000 });
@@ -258,6 +383,8 @@ export default function VoiceInterviewWebSocket({
       source.onended = () => {
         setIsPlaying(false);
         isPlayingRef.current = false;
+        // Process next chunk in queue
+        processAudioQueue();
       };
 
       source.start(0);
@@ -265,8 +392,18 @@ export default function VoiceInterviewWebSocket({
       console.error('Error playing audio chunk:', error);
       setIsPlaying(false);
       isPlayingRef.current = false;
+      // Try next chunk even if this one failed
+      processAudioQueue();
     }
   }, []);
+
+  // Queue audio chunk for playback
+  const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
+    // Add to queue
+    audioQueueRef.current.push(arrayBuffer);
+    // Try to process queue
+    processAudioQueue();
+  }, [processAudioQueue]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -299,6 +436,11 @@ export default function VoiceInterviewWebSocket({
 
   // Cleanup audio resources
   const cleanupAudio = useCallback(() => {
+    // Clear audio queue
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+    setIsPlaying(false);
+    
     if (audioContextRef.current) {
       audioContextRef.current.close().catch(console.error);
       audioContextRef.current = null;
@@ -356,8 +498,8 @@ export default function VoiceInterviewWebSocket({
                 : event.data;
               
               console.log('🔊 Received audio chunk, size:', arrayBuffer.byteLength);
-              // Play audio chunk
-              await playAudioChunk(arrayBuffer);
+              // Queue audio chunk for sequential playback
+              queueAudioChunk(arrayBuffer);
             } else {
               // JSON message
               const rawData = event.data.toString();
@@ -672,9 +814,9 @@ export default function VoiceInterviewWebSocket({
                 } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100`}
               >
                 {isRecording ? (
-                  <MicOff className="w-16 h-16" />
-                ) : (
                   <Mic className="w-16 h-16" />
+                ) : (
+                  <MicOff className="w-16 h-16" />
                 )}
               </button>
             </div>
