@@ -701,16 +701,11 @@ export default function VoiceInterviewWebSocket({
     
     // Ensure we have complete PCM frames (multiple of 2 bytes)
     if (combinedBuffer.length >= PCM_FRAME_SIZE && combinedBuffer.length % 2 === 0) {
-      // Create ArrayBuffer from Uint8Array (ensure it's ArrayBuffer, not SharedArrayBuffer)
+      // Create ArrayBuffer from Uint8Array
+      // WebSocket messages always provide ArrayBuffer, not SharedArrayBuffer
       const bufferSlice = combinedBuffer.buffer.slice(combinedBuffer.byteOffset, combinedBuffer.byteOffset + combinedBuffer.length);
-      const completeBuffer = bufferSlice instanceof SharedArrayBuffer 
-        ? new ArrayBuffer(bufferSlice.byteLength)
-        : bufferSlice;
-      // Copy data if it was SharedArrayBuffer
-      if (bufferSlice instanceof SharedArrayBuffer) {
-        const view = new Uint8Array(completeBuffer);
-        view.set(new Uint8Array(bufferSlice));
-      }
+      // Type assertion: WebSocket messages always provide ArrayBuffer
+      const completeBuffer = bufferSlice as ArrayBuffer;
       completeFrames.push(completeBuffer);
       console.log(`✅ Complete PCM frame ready: ${completeBuffer.byteLength} bytes`);
     } else if (combinedBuffer.length > 0) {
