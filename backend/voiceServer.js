@@ -7,6 +7,12 @@ const OPENAI_REALTIME_API_URL = 'wss://api.openai.com/v1/realtime';
 const OPENAI_MODEL = 'gpt-4o-mini-realtime-preview-2024-12-17';
 const PING_INTERVAL = 30000;
 
+// ElevenLabs Conversational AI Configuration
+const ELEVENLABS_API_URL = 'wss://api.elevenlabs.io/v1/convai/conversation';
+const ELEVENLABS_AGENT_ID = 'agent_8601kavsezrheczradx9qmz8qp3e';
+const ELEVENLABS_VOICE_ID = 'kdmDKE6EkgrWrrykO9Qt';
+const ELEVENLABS_LLM = 'gpt-5.1';
+
 function createSystemPrompt(candidateContext) {
   const { name, major, year, skills = [], experience, education, summary } = candidateContext;
   const skillsList = Array.isArray(skills) && skills.length > 0 ? skills.join(', ') : 'general skills';
@@ -180,6 +186,63 @@ ${majorCategory === 'general' ? `     * General: Foundational questions appropri
 REMEMBER: Your goal is to help them PREPARE for real interviews while assessing their potential. Make this a positive, confidence-building experience that helps them learn and grow. Be their advocate, not their critic.`;
 }
 
+// Map year string to grade level format for ElevenLabs
+function mapYearToGradeLevel(year) {
+  if (!year) return 'Not specified';
+  const yearLower = year.toLowerCase();
+  
+  if (yearLower.includes('high school')) return 'High School';
+  if (yearLower.includes('freshman')) return 'Freshman';
+  if (yearLower.includes('sophomore')) return 'Sophomore';
+  if (yearLower.includes('junior')) return 'Junior';
+  if (yearLower.includes('senior')) return 'Senior';
+  if (yearLower.includes('post grad') || yearLower.includes('postgrad') || yearLower.includes('graduate')) return 'Graduate';
+  
+  return year; // Return as-is if no match
+}
+
+// Infer target role from major
+function inferTargetRole(major) {
+  if (!major) return 'Entry-level Professional';
+  const majorLower = major.toLowerCase();
+  
+  if (majorLower.includes('computer science') || majorLower.includes('cs ') || majorLower.includes('software') || majorLower.includes('programming')) {
+    return 'Software Engineer';
+  }
+  if (majorLower.includes('finance') || majorLower.includes('accounting') || majorLower.includes('financial')) {
+    return 'Financial Analyst';
+  }
+  if (majorLower.includes('engineering')) {
+    if (majorLower.includes('mechanical')) return 'Mechanical Engineer';
+    if (majorLower.includes('electrical')) return 'Electrical Engineer';
+    if (majorLower.includes('civil')) return 'Civil Engineer';
+    return 'Engineer';
+  }
+  if (majorLower.includes('business') || majorLower.includes('management') || majorLower.includes('marketing')) {
+    return 'Business Analyst';
+  }
+  if (majorLower.includes('psychology') || majorLower.includes('psych')) {
+    return 'Psychology Professional';
+  }
+  
+  return 'Entry-level Professional'; // Default fallback
+}
+
+// Map candidate context to ElevenLabs format
+function mapCandidateContextToElevenLabs(candidateContext) {
+  const { summary, experience, major, year } = candidateContext;
+  
+  // Combine summary and experience for resume field
+  const resume = summary || experience || '';
+  
+  return {
+    resume: resume,
+    major: major || '',
+    grade_level: mapYearToGradeLevel(year),
+    target_role: inferTargetRole(major)
+  };
+}
+
 function createOpenAIConnection(apiKey, systemPrompt) {
   return new Promise((resolve, reject) => {
     console.log('🔌 Connecting to OpenAI Realtime API...');
@@ -270,6 +333,93 @@ function createOpenAIConnection(apiKey, systemPrompt) {
   });
 }
 
+function createElevenLabsConnection(apiKey, candidateContext) {
+  return new Promise((resolve, reject) => {
+    console.log('🔌 Connecting to ElevenLabs Conversational AI...');
+    
+    // Validate API key format
+    if (!apiKey || typeof apiKey !== 'string') {
+      const error = new Error('ELEVENLABS_API_KEY is not set or invalid');
+      console.error('❌', error.message);
+      reject(error);
+      return;
+    }
+    
+    // Log masked API key for debugging
+    const maskedKey = apiKey.length > 11 
+      ? `${apiKey.substring(0, 7)}...${apiKey.substring(apiKey.length - 4)}`
+      : '***';
+    console.log('🔑 Using ElevenLabs API key:', maskedKey);
+    
+    // Map candidate context to ElevenLabs format
+    const elevenLabsContext = mapCandidateContextToElevenLabs(candidateContext);
+    console.log('📋 ElevenLabs Context Variables:');
+    console.log('   Resume:', elevenLabsContext.resume.substring(0, 100) + '...');
+    console.log('   Major:', elevenLabsContext.major);
+    console.log('   Grade Level:', elevenLabsContext.grade_level);
+    console.log('   Target Role:', elevenLabsContext.target_role);
+    
+    // Add connection timeout
+    const connectionTimeout = setTimeout(() => {
+      console.error('⏱️ ElevenLabs connection timeout after 10 seconds');
+      reject(new Error('ElevenLabs connection timeout - server did not respond'));
+    }, 10000);
+    
+    // Build WebSocket URL with agent ID
+    const wsUrl = `${ELEVENLABS_API_URL}?agent_id=${ELEVENLABS_AGENT_ID}`;
+    
+    const ws = new WebSocket(wsUrl, {
+      headers: {
+        'xi-api-key': apiKey
+      }
+    });
+    
+    ws.on('open', () => {
+      console.log('✓ Connected to ElevenLabs Conversational AI');
+      console.log('✓ Using Agent ID:', ELEVENLABS_AGENT_ID);
+      console.log('✓ Using Voice ID:', ELEVENLABS_VOICE_ID);
+      console.log('✓ Using LLM:', ELEVENLABS_LLM);
+      clearTimeout(connectionTimeout);
+      
+      // Initialize conversation with context variables
+      const initMessage = {
+        type: 'conversation_init',
+        agent_id: ELEVENLABS_AGENT_ID,
+        voice_id: ELEVENLABS_VOICE_ID,
+        llm: ELEVENLABS_LLM,
+        context: {
+          resume: elevenLabsContext.resume,
+          major: elevenLabsContext.major,
+          grade_level: elevenLabsContext.grade_level,
+          target_role: elevenLabsContext.target_role
+        }
+      };
+      
+      ws.send(JSON.stringify(initMessage));
+      console.log('✓ Conversation initialization sent to ElevenLabs');
+      console.log('📋 ElevenLabs Configuration:');
+      console.log('   Agent ID:', ELEVENLABS_AGENT_ID);
+      console.log('   Voice ID:', ELEVENLABS_VOICE_ID);
+      console.log('   LLM:', ELEVENLABS_LLM);
+      console.log('   Context Variables:', JSON.stringify(elevenLabsContext, null, 2));
+      
+      // Resolve immediately - we'll handle conversation events in the main handler
+      resolve(ws);
+    });
+    
+    ws.on('error', (error) => {
+      console.error('❌ ElevenLabs WebSocket error:', error);
+      clearTimeout(connectionTimeout);
+      reject(error);
+    });
+    
+    ws.on('close', (code, reason) => {
+      console.log(`✓ ElevenLabs WebSocket closed: ${code} - ${reason.toString()}`);
+      clearTimeout(connectionTimeout);
+    });
+  });
+}
+
 function handleFrontendConnection(frontendWs, httpServer) {
   console.log('🎯 ========================================');
   console.log('🎯 NEW FRONTEND WEBSOCKET CONNECTION');
@@ -278,9 +428,11 @@ function handleFrontendConnection(frontendWs, httpServer) {
   console.log('🎯 Timestamp:', new Date().toISOString());
   
   let openAIWs = null;
+  let elevenLabsWs = null;
   let candidateContext = null;
   let pingInterval = null;
   let isInterviewActive = false;
+  let currentProvider = null; // 'elevenlabs' or 'openai'
   
   // Set up ping/pong for connection health
   pingInterval = setInterval(() => {
@@ -329,8 +481,25 @@ function handleFrontendConnection(frontendWs, httpServer) {
       
       // Handle binary audio data (not JSON)
       if (!isJSON) {
-        console.log('🎵 Processing binary audio data, length:', data instanceof Buffer ? data.length : rawData.length);
-        if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive) {
+        const audioLength = data instanceof Buffer ? data.length : rawData.length;
+        console.log('🎵 Processing binary audio data, length:', audioLength);
+        
+        // Forward to ElevenLabs if active
+        if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'elevenlabs') {
+          try {
+            const audioBase64 = data instanceof Buffer ? data.toString('base64') : Buffer.from(rawData).toString('base64');
+            const audioMessage = {
+              type: 'audio_input',
+              audio: audioBase64
+            };
+            elevenLabsWs.send(JSON.stringify(audioMessage));
+            console.log('✅ Forwarded binary audio to ElevenLabs (16kHz PCM)');
+          } catch (error) {
+            console.error('❌ Error forwarding binary audio to ElevenLabs:', error);
+          }
+        }
+        // Forward to OpenAI if active (fallback)
+        else if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'openai') {
           const audioBase64 = data instanceof Buffer ? data.toString('base64') : Buffer.from(rawData).toString('base64');
           const audioMessage = {
             type: 'input_audio_buffer.append',
@@ -339,7 +508,7 @@ function handleFrontendConnection(frontendWs, httpServer) {
           openAIWs.send(JSON.stringify(audioMessage));
           console.log('✅ Forwarded audio data to OpenAI');
         } else {
-          console.log('⚠️  Received audio but OpenAI not ready - openAIWs:', !!openAIWs, 'readyState:', openAIWs?.readyState, 'isInterviewActive:', isInterviewActive);
+          console.log('⚠️  Received audio but provider not ready - provider:', currentProvider, 'elevenLabsWs:', !!elevenLabsWs, 'openAIWs:', !!openAIWs, 'isInterviewActive:', isInterviewActive);
         }
         return;
       }
@@ -401,27 +570,247 @@ function handleFrontendConnection(frontendWs, httpServer) {
           return;
         }
         
-        const apiKey = process.env.OPENAI_API_KEY;
-        if (!apiKey) {
-          console.error('❌ OPENAI_API_KEY not set!');
-          if (frontendWs.readyState === WebSocket.OPEN) {
-            frontendWs.send(JSON.stringify({
-              type: 'error',
-              message: 'OPENAI_API_KEY environment variable is not set on server'
-            }));
+        // Provider selection: default to ElevenLabs, fallback to OpenAI
+        const voiceProvider = process.env.VOICE_PROVIDER || 'elevenlabs';
+        console.log('🎯 Voice Provider:', voiceProvider);
+        currentProvider = voiceProvider;
+        
+        // Try ElevenLabs first (primary provider)
+        if (voiceProvider === 'elevenlabs') {
+          const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY;
+          if (!elevenLabsApiKey) {
+            console.warn('⚠️ ELEVENLABS_API_KEY not set, falling back to OpenAI');
+            currentProvider = 'openai';
+          } else {
+            try {
+              console.log('🔌 Attempting to connect to ElevenLabs...');
+              elevenLabsWs = await createElevenLabsConnection(elevenLabsApiKey, candidateContext);
+              console.log('✅ ElevenLabs connection established');
+              isInterviewActive = true;
+              
+              // Session metrics tracking for ElevenLabs
+              const sessionStartTime = Date.now();
+              const messageCounts = {
+                'audio': 0,
+                'transcript': 0,
+                'user_speech_started': 0,
+                'user_speech_ended': 0,
+                'conversation_end': 0,
+                'error': 0,
+                'other': 0
+              };
+              
+              // Set up ElevenLabs message handler
+              elevenLabsWs.on('message', (elevenLabsData) => {
+                try {
+                  // ElevenLabs may send binary audio or JSON messages
+                  if (elevenLabsData instanceof Buffer) {
+                    // Binary audio data - forward directly to frontend
+                    messageCounts.audio++;
+                    if (frontendWs.readyState === WebSocket.OPEN) {
+                      // Log audio chunk size for debugging (16kHz PCM)
+                      const chunkSize = elevenLabsData.length;
+                      // At 16kHz PCM16: 32000 bytes = 16000 samples = 1 second
+                      if (chunkSize > 32000 && Math.random() < 0.1) {
+                        console.log('🔊 ElevenLabs audio chunk:', chunkSize, 'bytes (16kHz PCM)');
+                      }
+                      frontendWs.send(elevenLabsData);
+                    }
+                    return;
+                  }
+                  
+                  // JSON message
+                  const elevenLabsMessage = JSON.parse(elevenLabsData.toString());
+                  const messageType = elevenLabsMessage.type || elevenLabsMessage.event || 'other';
+                  
+                  // Track message counts
+                  if (messageCounts.hasOwnProperty(messageType)) {
+                    messageCounts[messageType]++;
+                  } else {
+                    messageCounts.other++;
+                  }
+                  
+                  console.log('📨 ElevenLabs message:', messageType, JSON.stringify(elevenLabsMessage).substring(0, 200));
+                  
+                  // Map ElevenLabs events to frontend message types
+                  switch (messageType) {
+                    case 'conversation_init_response':
+                    case 'conversation_started':
+                      // Conversation initialized - send interview_started
+                      console.log('✓ ElevenLabs conversation started');
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'interview_started',
+                          message: 'Interview session started successfully',
+                          timestamp: new Date().toISOString()
+                        }));
+                      }
+                      break;
+                      
+                    case 'audio':
+                    case 'audio_chunk':
+                      // Audio chunk - forward as binary
+                      messageCounts.audio++;
+                      if (elevenLabsMessage.audio && frontendWs.readyState === WebSocket.OPEN) {
+                        const audioBuffer = Buffer.from(elevenLabsMessage.audio, 'base64');
+                        console.log('🔊 ElevenLabs audio chunk (base64):', audioBuffer.length, 'bytes');
+                        frontendWs.send(audioBuffer);
+                      }
+                      break;
+                      
+                    case 'transcript':
+                    case 'agent_speech_transcript':
+                      // AI transcript
+                      messageCounts.transcript++;
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'ai_transcription',
+                          text: elevenLabsMessage.text || elevenLabsMessage.transcript || '',
+                          is_final: elevenLabsMessage.is_final !== false
+                        }));
+                      }
+                      break;
+                      
+                    case 'user_speech_started':
+                    case 'user_started_speaking':
+                      // User started speaking
+                      messageCounts.user_speech_started++;
+                      console.log('🎤 ElevenLabs: User speech started');
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'student_speech_started'
+                        }));
+                      }
+                      break;
+                      
+                    case 'user_speech_ended':
+                    case 'user_stopped_speaking':
+                      // User stopped speaking
+                      messageCounts.user_speech_ended++;
+                      console.log('🎤 ElevenLabs: User speech ended');
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'student_speech_ended'
+                        }));
+                      }
+                      break;
+                      
+                    case 'user_transcript':
+                    case 'user_speech_transcript':
+                      // User transcript
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'student_transcription',
+                          text: elevenLabsMessage.text || elevenLabsMessage.transcript || '',
+                          is_final: elevenLabsMessage.is_final !== false
+                        }));
+                      }
+                      break;
+                      
+                    case 'conversation_end':
+                    case 'conversation_ended':
+                      // Conversation ended
+                      messageCounts.conversation_end++;
+                      console.log('✅ ElevenLabs conversation ended');
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'interview_ended',
+                          message: 'Interview session ended'
+                        }));
+                      }
+                      break;
+                      
+                    case 'error':
+                      // Error handling
+                      messageCounts.error++;
+                      console.error('❌ ElevenLabs error:', elevenLabsMessage);
+                      if (frontendWs.readyState === WebSocket.OPEN) {
+                        frontendWs.send(JSON.stringify({
+                          type: 'error',
+                          message: elevenLabsMessage.message || 'ElevenLabs API error',
+                          code: elevenLabsMessage.code
+                        }));
+                      }
+                      break;
+                      
+                    default:
+                      // Log unknown message types for debugging
+                      console.log('📨 Unknown ElevenLabs message type:', messageType, JSON.stringify(elevenLabsMessage).substring(0, 200));
+                      break;
+                  }
+                } catch (error) {
+                  console.error('❌ Error processing ElevenLabs message:', error);
+                }
+              });
+              
+              elevenLabsWs.on('error', (error) => {
+                console.error('❌ ElevenLabs WebSocket error:', error);
+                if (frontendWs.readyState === WebSocket.OPEN) {
+                  frontendWs.send(JSON.stringify({
+                    type: 'error',
+                    message: 'ElevenLabs connection error'
+                  }));
+                }
+              });
+              
+              elevenLabsWs.on('close', () => {
+                const sessionEndTime = Date.now();
+                const sessionDuration = sessionEndTime - sessionStartTime;
+                console.log('✓ ElevenLabs connection closed');
+                console.log('📊 ElevenLabs Session Metrics:');
+                console.log(`   Duration: ${(sessionDuration / 1000).toFixed(2)}s`);
+                console.log('   Message Counts:', JSON.stringify(messageCounts, null, 2));
+                isInterviewActive = false;
+                if (frontendWs.readyState === WebSocket.OPEN) {
+                  frontendWs.send(JSON.stringify({
+                    type: 'interview_ended'
+                  }));
+                }
+              });
+              
+              // Send interview_started message
+              if (frontendWs.readyState === WebSocket.OPEN) {
+                frontendWs.send(JSON.stringify({
+                  type: 'interview_started',
+                  message: 'Interview session started successfully',
+                  timestamp: new Date().toISOString()
+                }));
+              }
+              
+              // Continue with audio forwarding setup
+              return; // Exit early since ElevenLabs is set up
+              
+            } catch (elevenLabsError) {
+              console.error('❌ ElevenLabs connection failed:', elevenLabsError);
+              console.log('🔄 Falling back to OpenAI...');
+              currentProvider = 'openai';
+            }
           }
-          return;
         }
         
-        console.log('🔑 OpenAI API key found, creating connection...');
-        const systemPrompt = createSystemPrompt(candidateContext);
-        console.log('📝 System prompt created, length:', systemPrompt.length);
-        
-        try {
-          console.log('🔌 Attempting to connect to OpenAI...');
-          openAIWs = await createOpenAIConnection(apiKey, systemPrompt);
-          console.log('✅ OpenAI connection established');
-          isInterviewActive = true;
+        // Fallback to OpenAI if ElevenLabs failed or not selected
+        if (currentProvider === 'openai' || !elevenLabsWs) {
+          const apiKey = process.env.OPENAI_API_KEY;
+          if (!apiKey) {
+            console.error('❌ OPENAI_API_KEY not set!');
+            if (frontendWs.readyState === WebSocket.OPEN) {
+              frontendWs.send(JSON.stringify({
+                type: 'error',
+                message: 'Neither ELEVENLABS_API_KEY nor OPENAI_API_KEY is set on server'
+              }));
+            }
+            return;
+          }
+          
+          console.log('🔑 OpenAI API key found, creating connection...');
+          const systemPrompt = createSystemPrompt(candidateContext);
+          console.log('📝 System prompt created, length:', systemPrompt.length);
+          
+          try {
+            console.log('🔌 Attempting to connect to OpenAI...');
+            openAIWs = await createOpenAIConnection(apiKey, systemPrompt);
+            console.log('✅ OpenAI connection established');
+            isInterviewActive = true;
           
           let sessionReady = false;
           let currentResponseId = null; // Track current response ID for cancellation
@@ -818,6 +1207,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
         console.log('🛑 PROCESSING end_interview MESSAGE');
         console.log('🛑 ========================================');
         isInterviewActive = false;
+        if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
+          elevenLabsWs.close();
+        }
         if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
           openAIWs.close();
         }
@@ -830,7 +1222,23 @@ function handleFrontendConnection(frontendWs, httpServer) {
         }
       } else if (message.type === 'audio_chunk' && message.audio) {
         console.log('🎵 Processing audio_chunk message');
-        if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive) {
+        
+        // Forward to ElevenLabs if active
+        if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'elevenlabs') {
+          try {
+            // ElevenLabs expects audio in specific format - send as base64 or binary
+            const audioMessage = {
+              type: 'audio_input',
+              audio: message.audio // Base64 encoded PCM16 audio
+            };
+            elevenLabsWs.send(JSON.stringify(audioMessage));
+            console.log('✅ Forwarded audio_chunk to ElevenLabs');
+          } catch (error) {
+            console.error('❌ Error forwarding audio to ElevenLabs:', error);
+          }
+        }
+        // Forward to OpenAI if active (fallback)
+        else if (openAIWs && openAIWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'openai') {
           const audioMessage = {
             type: 'input_audio_buffer.append',
             audio: message.audio
@@ -838,7 +1246,7 @@ function handleFrontendConnection(frontendWs, httpServer) {
           openAIWs.send(JSON.stringify(audioMessage));
           console.log('✅ Forwarded audio_chunk to OpenAI');
         } else {
-          console.log('⚠️  Cannot forward audio - OpenAI not ready');
+          console.log('⚠️  Cannot forward audio - provider not ready');
         }
       } else {
         console.log('⚠️  UNKNOWN MESSAGE TYPE:', message.type);
@@ -868,6 +1276,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
     console.log('🔌 Close reason:', reason?.toString() || 'No reason provided');
     console.log('🔌 ========================================');
     if (pingInterval) clearInterval(pingInterval);
+    if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
+      elevenLabsWs.close();
+    }
     if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
       openAIWs.close();
     }
@@ -882,6 +1293,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
     console.error('❌ Error stack:', error.stack);
     console.error('❌ ========================================');
     if (pingInterval) clearInterval(pingInterval);
+    if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN) {
+      elevenLabsWs.close();
+    }
     if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
       openAIWs.close();
     }

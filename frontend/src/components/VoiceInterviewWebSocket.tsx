@@ -264,7 +264,7 @@ export default function VoiceInterviewWebSocket({
         // Initialize AudioContext early to handle autoplay policies
         if (!audioContextRef.current) {
           // Reduced logging
-          audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+          audioContextRef.current = new AudioContext({ sampleRate: 16000 });
           if (audioContextRef.current.state === 'suspended') {
             audioContextRef.current.resume().catch((error) => {
               console.error('❌ Failed to resume AudioContext:', error);
@@ -699,14 +699,14 @@ export default function VoiceInterviewWebSocket({
     }
 
     try {
-      // Initialize AudioContext with correct sample rate (24000 Hz to match OpenAI)
+      // Initialize AudioContext with correct sample rate (16000 Hz to match ElevenLabs)
       if (!audioContextRef.current) {
         try {
-          audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+          audioContextRef.current = new AudioContext({ sampleRate: 16000 });
           // Reduced logging - only log sample rate mismatch or on first creation
           const actualSampleRate = audioContextRef.current.sampleRate;
-          if (Math.abs(actualSampleRate - 24000) > 100) {
-            console.warn('⚠️ AudioContext sample rate mismatch:', actualSampleRate, 'expected 24000');
+          if (Math.abs(actualSampleRate - 16000) > 100) {
+            console.warn('⚠️ AudioContext sample rate mismatch:', actualSampleRate, 'expected 16000');
           }
           
           if (audioContextRef.current.state === 'suspended') {
@@ -765,8 +765,8 @@ export default function VoiceInterviewWebSocket({
       }
 
       // Validate buffer size is reasonable (not too large)
-      // PCM16 is 2 bytes per sample, so 96000 bytes = 48000 samples = 2 seconds at 24kHz
-      const maxBufferSize = 96000; // 2 seconds at 24kHz (48000 samples * 2 bytes)
+      // PCM16 is 2 bytes per sample, so 64000 bytes = 32000 samples = 2 seconds at 16kHz
+      const maxBufferSize = 64000; // 2 seconds at 16kHz (32000 samples * 2 bytes)
       if (arrayBuffer.byteLength > maxBufferSize) {
         console.warn('⚠️ Received unusually large audio buffer:', arrayBuffer.byteLength, 'bytes. Processing anyway.');
       }
@@ -802,12 +802,12 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // Create audio buffer with source sample rate (24kHz from OpenAI)
+      // Create audio buffer with source sample rate (16kHz from ElevenLabs)
       // The browser's AudioContext will handle resampling automatically
-      const sourceSampleRate = 24000;
+      const sourceSampleRate = 16000;
       
       // Validate buffer size is reasonable (max 10 seconds)
-      // At 24kHz, 10 seconds = 240,000 samples
+      // At 16kHz, 10 seconds = 160,000 samples
       const maxSamples = sourceSampleRate * 10;
       let finalFloat32Data = float32Data;
       if (float32Data.length > maxSamples) {
@@ -1032,9 +1032,13 @@ export default function VoiceInterviewWebSocket({
       const chunkRate = (audioChunkReceiveTimesRef.current.length / timeSpan) * 1000; // chunks per second
       const avgChunkSize = audioChunkSizesRef.current.reduce((a, b) => a + b, 0) / audioChunkSizesRef.current.length;
       
-      // Log metrics occasionally
+      // Log metrics occasionally (16kHz PCM audio)
       if (Math.random() < 0.1) {
-        console.log(`📊 Audio metrics: ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
+        console.log(`📊 Audio metrics (16kHz PCM): ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
+        // At 16kHz PCM16: 32000 bytes = 1 second, log if chunk size is unusual
+        if (avgChunkSize > 64000) {
+          console.warn(`⚠️ Large audio chunks detected: ${avgChunkSize.toFixed(0)} bytes avg (>2s at 16kHz)`);
+        }
       }
     }
     
@@ -1370,7 +1374,7 @@ export default function VoiceInterviewWebSocket({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 24000,
+          sampleRate: 16000,
           channelCount: 1,
         }
       });
