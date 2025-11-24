@@ -83,6 +83,10 @@ export default function VoiceInterviewWebSocket({
   const pendingAudioBufferRef = useRef<Uint8Array | null>(null);
   const lastChunkTimeRef = useRef<number | null>(null);
   
+  // Minimum buffer threshold before starting playback
+  const audioBufferAccumulatorRef = useRef<number>(0);
+  const MIN_BUFFER_BEFORE_PLAYBACK = 3200; // 100ms at 16kHz (16000 samples/s * 0.1s * 2 bytes)
+  
   const { toast } = useToast();
   
   // Update candidateContext ref when it changes
@@ -652,6 +656,46 @@ export default function VoiceInterviewWebSocket({
     }
   }, [toast]);
 
+  // Check if chunk is silence/keepalive packet
+  const isSilencePacket = useCallback((arrayBuffer: ArrayBuffer): boolean => {
+    const MIN_AUDIO_CHUNK_SIZE = 100; // Chunks smaller than this are likely keepalive/silence
+    
+    // Skip very small chunks (likely keepalive packets)
+    if (arrayBuffer.byteLength < MIN_AUDIO_CHUNK_SIZE) {
+      return true;
+    }
+    
+    // Check if audio content is silence (all zeros or very low amplitude)
+    try {
+      const pcm16Data = new Int16Array(arrayBuffer);
+      if (pcm16Data.length === 0) {
+        return true;
+      }
+      
+      // Calculate RMS (Root Mean Square) to detect silence
+      let sumSquares = 0;
+      let maxAmplitude = 0;
+      for (let i = 0; i < pcm16Data.length; i++) {
+        const sample = Math.abs(pcm16Data[i]);
+        sumSquares += sample * sample;
+        maxAmplitude = Math.max(maxAmplitude, sample);
+      }
+      
+      const rms = Math.sqrt(sumSquares / pcm16Data.length);
+      const SILENCE_THRESHOLD = 100; // PCM16 samples below this are considered silence
+      
+      // If RMS is very low and max amplitude is low, it's silence
+      if (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2) {
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      // If we can't analyze, assume it's not silence (safer to process)
+      return false;
+    }
+  }, []);
+
   // Buffer and validate audio chunks - ensures complete PCM frames
   const bufferAndValidateChunk = useCallback((arrayBuffer: ArrayBuffer): ArrayBuffer[] => {
     const MIN_CHUNK_SIZE = 320; // 20ms at 16kHz mono PCM16 (16000 samples/s * 0.02s * 2 bytes = 640 bytes, but 320 is safer minimum)
@@ -663,6 +707,12 @@ export default function VoiceInterviewWebSocket({
     
     // Log chunk received
     console.log(`🔊 Audio chunk received: ${arrayBuffer.byteLength} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
+    
+    // Filter out silence/keepalive packets
+    if (isSilencePacket(arrayBuffer)) {
+      console.log(`🔇 Skipping silence/keepalive packet: ${arrayBuffer.byteLength} bytes`);
+      return []; // Return empty array - don't process silence packets
+    }
     
     // Check if byte length is multiple of 2 (required for Int16Array)
     if (arrayBuffer.byteLength % 2 !== 0) {
@@ -716,6 +766,48 @@ export default function VoiceInterviewWebSocket({
     }
     
     return completeFrames;
+  }, [isSilencePacket]);
+  
+  // Validate audio content quality
+  const validateAudioContent = useCallback((pcm16Array: Int16Array): { valid: boolean; reason?: string } => {
+    if (pcm16Array.length === 0) {
+      return { valid: false, reason: 'Empty audio data' };
+    }
+    
+    // Check for silent chunk (all zeros or very low amplitude)
+    let allZero = true;
+    let maxAmplitude = 0;
+    let minAmplitude = 32767;
+    let sumSquares = 0;
+    
+    for (let i = 0; i < pcm16Array.length; i++) {
+      const sample = Math.abs(pcm16Array[i]);
+      sumSquares += sample * sample;
+      maxAmplitude = Math.max(maxAmplitude, sample);
+      minAmplitude = Math.min(minAmplitude, sample);
+      if (sample > 100) {
+        allZero = false;
+      }
+    }
+    
+    const rms = Math.sqrt(sumSquares / pcm16Array.length);
+    const SILENCE_THRESHOLD = 100;
+    
+    if (allZero || (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2)) {
+      return { valid: false, reason: 'Silence detected' };
+    }
+    
+    // Check for corrupted chunk (all same value, unusual patterns)
+    if (maxAmplitude === minAmplitude && pcm16Array.length > 10) {
+      return { valid: false, reason: 'Corrupted: all samples have same value' };
+    }
+    
+    // Check for clipping or unusual values
+    if (maxAmplitude > 32000) {
+      console.warn(`⚠️ High amplitude detected: ${maxAmplitude} (may indicate clipping)`);
+    }
+    
+    return { valid: true };
   }, []);
   
   // Convert PCM16 to Float32 with proper handling and normalization
@@ -726,15 +818,31 @@ export default function VoiceInterviewWebSocket({
     const float32Array = new Float32Array(buffer);
     
     // Normalize to ensure values stay within [-1.0, 1.0] range
+    // Use 32768.0 (not 32767) to properly handle -32768 edge case
     const maxValue = 32768.0;
+    let hasInvalidValues = false;
+    
     for (let i = 0; i < pcm16Array.length; i++) {
       // PCM16 is signed 16-bit: range is -32768 to 32767
       // Convert to float32 range [-1.0, 1.0] and clamp to prevent clipping
       let normalized = pcm16Array[i] / maxValue;
+      
       // Clamp to [-1.0, 1.0] to prevent any clipping
       normalized = Math.max(-1.0, Math.min(1.0, normalized));
+      
+      // Check for NaN or Infinity (shouldn't happen but validate)
+      if (!isFinite(normalized)) {
+        hasInvalidValues = true;
+        normalized = 0; // Replace invalid values with silence
+      }
+      
       float32Array[i] = normalized;
     }
+    
+    if (hasInvalidValues) {
+      console.warn('⚠️ Invalid values (NaN/Infinity) detected in PCM16 conversion, replaced with silence');
+    }
+    
     return float32Array;
   }, []);
 
@@ -757,6 +865,21 @@ export default function VoiceInterviewWebSocket({
         setIsPlaying(false);
       }
       return;
+    }
+    
+    // Check minimum buffer threshold before starting playback
+    // Accumulate at least 100ms of audio (3200 bytes at 16kHz) before first playback
+    const totalBufferedBytes = audioQueueRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    if (totalBufferedBytes < MIN_BUFFER_BEFORE_PLAYBACK && audioBufferAccumulatorRef.current < MIN_BUFFER_BEFORE_PLAYBACK) {
+      audioBufferAccumulatorRef.current = totalBufferedBytes;
+      console.log(`📦 Buffering audio: ${totalBufferedBytes} bytes (need ${MIN_BUFFER_BEFORE_PLAYBACK} for playback start)`);
+      return; // Wait for more audio before starting playback
+    }
+    
+    // Reset accumulator once we've started playing
+    if (audioBufferAccumulatorRef.current < MIN_BUFFER_BEFORE_PLAYBACK) {
+      audioBufferAccumulatorRef.current = MIN_BUFFER_BEFORE_PLAYBACK;
+      console.log(`✅ Audio buffer ready: ${totalBufferedBytes} bytes, starting playback`);
     }
     
     // Set processing lock
@@ -881,9 +1004,41 @@ export default function VoiceInterviewWebSocket({
         }
         return;
       }
+      
+      // Validate audio content quality
+      const validation = validateAudioContent(pcm16Data);
+      if (!validation.valid) {
+        console.log(`🔇 Skipping invalid audio chunk: ${validation.reason} (${pcm16Data.length} samples)`);
+        isProcessingQueueRef.current = false;
+        // Try next chunk - skip corrupted/silent chunks
+        if (audioQueueRef.current.length > 0) {
+          requestAnimationFrame(() => processAudioQueue());
+        }
+        return;
+      }
+      
+      // Log PCM16 sample range for debugging (occasionally)
+      if (Math.random() < 0.05) {
+        const minSample = Math.min(...Array.from(pcm16Data));
+        const maxSample = Math.max(...Array.from(pcm16Data));
+        console.log(`📊 PCM16 sample range: ${minSample} to ${maxSample} (${pcm16Data.length} samples)`);
+      }
 
-      // Convert PCM16 to Float32
-      const float32Data = convertPCM16ToFloat32(pcm16Data);
+      // Convert PCM16 to Float32 with error handling
+      let float32Data: Float32Array<ArrayBuffer>;
+      try {
+        float32Data = convertPCM16ToFloat32(pcm16Data);
+      } catch (error) {
+        console.error('❌ Error converting PCM16 to Float32:', error);
+        console.error(`   Chunk size: ${arrayBuffer.byteLength} bytes`);
+        console.error(`   Sample count: ${pcm16Data.length}`);
+        isProcessingQueueRef.current = false;
+        // Try next chunk - skip corrupted chunk
+        if (audioQueueRef.current.length > 0) {
+          requestAnimationFrame(() => processAudioQueue());
+        }
+        return;
+      }
       
       // Validate buffer size before creating
       if (float32Data.length === 0) {
@@ -1104,7 +1259,7 @@ export default function VoiceInterviewWebSocket({
         requestAnimationFrame(() => processAudioQueue());
       }
     }
-  }, [convertPCM16ToFloat32, conversationState]);
+  }, [convertPCM16ToFloat32, conversationState, validateAudioContent]);
 
   // Queue audio chunk for playback with aggressive size limits and validation
   const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
@@ -1224,6 +1379,7 @@ export default function VoiceInterviewWebSocket({
     audioQueueRef.current = [];
     audioBufferQueueRef.current = [];
     pendingAudioBufferRef.current = null; // Clear pending buffer
+    audioBufferAccumulatorRef.current = 0; // Reset buffer accumulator
     isPlayingRef.current = false;
     setIsPlaying(false);
     isProcessingQueueRef.current = false;

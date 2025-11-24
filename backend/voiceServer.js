@@ -644,6 +644,40 @@ function handleFrontendConnection(frontendWs, httpServer) {
                     
                     // Validate minimum chunk size (320 bytes = 20ms at 16kHz)
                     const MIN_CHUNK_SIZE = 320;
+                    const MIN_AUDIO_CHUNK_SIZE = 100; // Chunks smaller than this are likely keepalive/silence
+                    
+                    // Filter out very small chunks (likely keepalive/silence packets)
+                    if (combinedBuffer.length < MIN_AUDIO_CHUNK_SIZE) {
+                      console.log(`🔇 Skipping silence packet from ElevenLabs: ${combinedBuffer.length} bytes`);
+                      return; // Don't forward silence/keepalive packets
+                    }
+                    
+                    // Check if audio content is silence (all zeros or very low amplitude)
+                    try {
+                      const pcm16Data = new Int16Array(combinedBuffer.buffer, combinedBuffer.byteOffset, combinedBuffer.length / 2);
+                      if (pcm16Data.length > 0) {
+                        // Calculate RMS to detect silence
+                        let sumSquares = 0;
+                        let maxAmplitude = 0;
+                        for (let i = 0; i < pcm16Data.length; i++) {
+                          const sample = Math.abs(pcm16Data[i]);
+                          sumSquares += sample * sample;
+                          maxAmplitude = Math.max(maxAmplitude, sample);
+                        }
+                        const rms = Math.sqrt(sumSquares / pcm16Data.length);
+                        const SILENCE_THRESHOLD = 100;
+                        
+                        // If RMS is very low, it's silence
+                        if (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2) {
+                          console.log(`🔇 Skipping silence packet from ElevenLabs: ${combinedBuffer.length} bytes (RMS: ${rms.toFixed(1)})`);
+                          return; // Don't forward silence
+                        }
+                      }
+                    } catch (error) {
+                      // If we can't analyze, forward anyway (safer)
+                      console.warn(`⚠️ Could not analyze audio content: ${error.message}`);
+                    }
+                    
                     if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length > 0) {
                       console.warn(`⚠️ Very small chunk from ElevenLabs: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes). Forwarding anyway.`);
                     }
@@ -723,6 +757,36 @@ function handleFrontendConnection(frontendWs, httpServer) {
                             pendingAudioBuffer = combinedBuffer;
                             console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes`);
                             break; // Don't forward incomplete chunk
+                          }
+                          
+                          // Filter out very small chunks (likely keepalive/silence packets)
+                          const MIN_AUDIO_CHUNK_SIZE = 100;
+                          if (combinedBuffer.length < MIN_AUDIO_CHUNK_SIZE) {
+                            console.log(`🔇 Skipping silence packet from ElevenLabs (base64): ${combinedBuffer.length} bytes`);
+                            break; // Don't forward silence/keepalive packets
+                          }
+                          
+                          // Check if audio content is silence
+                          try {
+                            const pcm16Data = new Int16Array(combinedBuffer.buffer, combinedBuffer.byteOffset, combinedBuffer.length / 2);
+                            if (pcm16Data.length > 0) {
+                              let sumSquares = 0;
+                              let maxAmplitude = 0;
+                              for (let i = 0; i < pcm16Data.length; i++) {
+                                const sample = Math.abs(pcm16Data[i]);
+                                sumSquares += sample * sample;
+                                maxAmplitude = Math.max(maxAmplitude, sample);
+                              }
+                              const rms = Math.sqrt(sumSquares / pcm16Data.length);
+                              const SILENCE_THRESHOLD = 100;
+                              
+                              if (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2) {
+                                console.log(`🔇 Skipping silence packet from ElevenLabs (base64): ${combinedBuffer.length} bytes (RMS: ${rms.toFixed(1)})`);
+                                break; // Don't forward silence
+                              }
+                            }
+                          } catch (error) {
+                            console.warn(`⚠️ Could not analyze audio content (base64): ${error.message}`);
                           }
                           
                           // Forward complete PCM frame
