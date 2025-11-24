@@ -236,7 +236,7 @@ function createOpenAIConnection(apiKey, systemPrompt) {
             type: 'server_vad',
             threshold: 0.5,
             prefix_padding_ms: 300,
-            silence_duration_ms: 500
+            silence_duration_ms: 2500  // Increased to 2.5 seconds - AI should wait for user response
           },
           temperature: 0.8,
           max_response_output_tokens: 4096

@@ -44,6 +44,7 @@ export default function VoiceInterviewWebSocket({
   const [isProcessing, setIsProcessing] = useState(false);
   const [statusMessage, setStatusMessage] = useState("Connecting...");
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
+  const [conversationState, setConversationState] = useState<'ai_speaking' | 'listening' | 'user_speaking' | 'processing'>('listening');
   
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -188,6 +189,7 @@ export default function VoiceInterviewWebSocket({
           interviewStartTimeoutRef.current = null;
         }
         setIsInterviewActive(true);
+        setConversationState('ai_speaking');
         setStatusMessage("Interview started. AI is speaking...");
         
         // Initialize AudioContext early to handle autoplay policies
@@ -210,6 +212,11 @@ export default function VoiceInterviewWebSocket({
         break;
       case 'transcript':
       case 'ai_transcription':
+        // Update conversation state when AI starts speaking
+        if (conversationState === 'listening' || conversationState === 'user_speaking') {
+          console.log('🔄 Conversation state: AI started speaking');
+          setConversationState('ai_speaking');
+        }
         setTranscripts(prev => {
           const isFinal = message.is_final || false;
           const newText = message.text || '';
@@ -274,7 +281,45 @@ export default function VoiceInterviewWebSocket({
           }];
         });
         break;
+      case 'student_speech_started':
+        console.log('🎤 User started speaking - stopping AI audio and clearing queue');
+        setConversationState('user_speaking');
+        setStatusMessage("You're speaking...");
+        
+        // Immediately stop all playing audio
+        activeSourcesRef.current.forEach(source => {
+          try {
+            source.stop();
+            source.disconnect();
+          } catch (e) {
+            // Ignore errors during cleanup
+          }
+        });
+        activeSourcesRef.current = [];
+        
+        // Clear audio queue to prevent backlog
+        const queueSizeBeforeClear = audioQueueRef.current.length;
+        audioQueueRef.current = [];
+        console.log('🔊 Cleared audio queue:', queueSizeBeforeClear, 'chunks removed');
+        
+        // Reset playback state
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        nextPlayTimeRef.current = 0;
+        
+        // Stop recording if it was active (shouldn't be, but safety check)
+        if (isRecording) {
+          stopRecording();
+        }
+        
+        console.log('✅ AI audio stopped, ready for user input');
+        break;
       case 'student_transcription':
+        // Update conversation state when receiving student transcription
+        if (conversationState !== 'user_speaking') {
+          console.log('🔄 Conversation state: User speaking');
+          setConversationState('user_speaking');
+        }
         setTranscripts(prev => {
           const isFinal = message.is_final || false;
           const newText = message.text || '';
@@ -375,12 +420,24 @@ export default function VoiceInterviewWebSocket({
 
   // Process audio queue with improved buffering and timing
   const processAudioQueue = useCallback(async () => {
+    // Don't process if user is speaking - they should have priority
+    if (conversationState === 'user_speaking') {
+      console.log('🔊 Skipping audio processing - user is speaking');
+      return;
+    }
+    
     // Don't process if already playing or queue is empty
     if (isPlayingRef.current || audioQueueRef.current.length === 0) {
       if (audioQueueRef.current.length === 0 && !isPlayingRef.current) {
         setIsPlaying(false);
       }
       return;
+    }
+    
+    // Log queue health
+    const queueSize = audioQueueRef.current.length;
+    if (queueSize > 30) {
+      console.warn('⚠️ Audio queue is large:', queueSize, 'chunks. Consider clearing if user starts speaking.');
     }
 
     try {
@@ -498,9 +555,16 @@ export default function VoiceInterviewWebSocket({
         } else {
           // Check if any other sources are still playing
           if (activeSourcesRef.current.length === 0) {
+            console.log('🔊 All AI audio finished, transitioning to listening state');
             setIsPlaying(false);
             isPlayingRef.current = false;
             nextPlayTimeRef.current = 0;
+            
+            // Transition to listening state when AI finishes speaking
+            if (conversationState === 'ai_speaking') {
+              setConversationState('listening');
+              setStatusMessage("Listening... Please speak your answer.");
+            }
           }
         }
       };
@@ -524,12 +588,29 @@ export default function VoiceInterviewWebSocket({
         processAudioQueue();
       }
     }
-  }, [convertPCM16ToFloat32]);
+  }, [convertPCM16ToFloat32, conversationState]);
 
-  // Queue audio chunk for playback
+  // Queue audio chunk for playback with size limits
   const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
+    const MAX_QUEUE_SIZE = 50; // Maximum chunks in queue to prevent overflow
+    
+    // Check queue size and warn if getting too large
+    if (audioQueueRef.current.length >= MAX_QUEUE_SIZE) {
+      console.warn('⚠️ Audio queue size limit reached:', audioQueueRef.current.length, 'chunks. Clearing old chunks.');
+      // Keep only the most recent chunks
+      const chunksToKeep = 30;
+      audioQueueRef.current = audioQueueRef.current.slice(-chunksToKeep);
+      console.log('🔊 Queue reduced to', audioQueueRef.current.length, 'chunks');
+    }
+    
+    // Log queue size periodically
+    if (audioQueueRef.current.length % 10 === 0) {
+      console.log('📊 Audio queue size:', audioQueueRef.current.length, 'chunks');
+    }
+    
     // Add to queue
     audioQueueRef.current.push(arrayBuffer);
+    
     // Try to process queue
     processAudioQueue();
   }, [processAudioQueue]);
