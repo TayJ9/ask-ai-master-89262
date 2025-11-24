@@ -62,6 +62,7 @@ export default function VoiceInterviewWebSocket({
   const isMountedRef = useRef(true);
   const candidateContextRef = useRef(candidateContext);
   const interviewStartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const stateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
   
   // Update candidateContext ref when it changes
@@ -192,6 +193,18 @@ export default function VoiceInterviewWebSocket({
         setConversationState('ai_speaking');
         setStatusMessage("Interview started. AI is speaking...");
         
+        // Set timeout to prevent stuck state (30 seconds max for AI response)
+        if (stateTimeoutRef.current) {
+          clearTimeout(stateTimeoutRef.current);
+        }
+        stateTimeoutRef.current = setTimeout(() => {
+          if (conversationState === 'ai_speaking') {
+            console.warn('⚠️ State timeout: AI speaking state exceeded 30s, forcing transition to listening');
+            setConversationState('listening');
+            setStatusMessage("Listening... Please speak your answer.");
+          }
+        }, 30000);
+        
         // Initialize AudioContext early to handle autoplay policies
         if (!audioContextRef.current) {
           console.log('🔊 Pre-initializing AudioContext for interview...');
@@ -316,6 +329,11 @@ export default function VoiceInterviewWebSocket({
         break;
       case 'ai_response_done':
         console.log('✅ AI response completed');
+        // Clear any state timeout
+        if (stateTimeoutRef.current) {
+          clearTimeout(stateTimeoutRef.current);
+          stateTimeoutRef.current = null;
+        }
         // Transition to listening state when AI finishes
         if (conversationState === 'ai_speaking') {
           setConversationState('listening');
@@ -324,6 +342,11 @@ export default function VoiceInterviewWebSocket({
         break;
       case 'ai_audio_done':
         console.log('✅ AI audio stream completed');
+        // Clear any state timeout
+        if (stateTimeoutRef.current) {
+          clearTimeout(stateTimeoutRef.current);
+          stateTimeoutRef.current = null;
+        }
         // Ensure we transition to listening state
         if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0) {
           setConversationState('listening');
@@ -463,8 +486,11 @@ export default function VoiceInterviewWebSocket({
         if (audioContextRef.current.state === 'suspended') {
           await audioContextRef.current.resume();
         }
-        nextPlayTimeRef.current = audioContextRef.current.currentTime;
+        // Add initial buffer delay (100ms) for smooth start
+        const currentTime = audioContextRef.current.currentTime;
+        nextPlayTimeRef.current = currentTime + 0.1;
         console.log('🎵 AudioContext created, sample rate:', audioContextRef.current.sampleRate);
+        console.log('⏱️ Initial buffer delay set to 100ms');
       }
 
       const audioContext = audioContextRef.current;
@@ -541,6 +567,14 @@ export default function VoiceInterviewWebSocket({
       
       // Schedule playback with precise timing
       const currentTime = audioContext.currentTime;
+      
+      // Handle timing drift: if nextPlayTime is significantly behind (>100ms), reset it
+      const timeDrift = currentTime - nextPlayTimeRef.current;
+      if (timeDrift > 0.1) {
+        console.warn('⏱️ Timing drift detected:', (timeDrift * 1000).toFixed(0), 'ms. Resetting schedule.');
+        nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
+      }
+      
       const scheduledTime = Math.max(currentTime, nextPlayTimeRef.current);
       
       // Add a tiny buffer (5ms) to prevent scheduling in the past
@@ -845,6 +879,12 @@ export default function VoiceInterviewWebSocket({
       if (interviewStartTimeoutRef.current) {
         clearTimeout(interviewStartTimeoutRef.current);
         interviewStartTimeoutRef.current = null;
+      }
+      
+      // Clear state timeout
+      if (stateTimeoutRef.current) {
+        clearTimeout(stateTimeoutRef.current);
+        stateTimeoutRef.current = null;
       }
       
       // Close WebSocket connection

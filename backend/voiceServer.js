@@ -489,10 +489,14 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   // Cancel ongoing AI response when user starts speaking
                   if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
                     try {
-                      // Find and cancel the current response
-                      // Note: OpenAI Realtime API doesn't have explicit cancel, but we can stop sending audio
-                      // The response will naturally end when user speaks
-                      console.log('🛑 User interrupted - AI response will be cut short');
+                      // OpenAI Realtime API: When user speaks, server VAD automatically interrupts
+                      // We can send response.cancel if we have the response ID, but typically
+                      // the server handles this automatically via turn detection
+                      // For now, we rely on server VAD to handle interruption
+                      console.log('🛑 User interrupted - server VAD will handle interruption');
+                      
+                      // Optional: Try to cancel if response ID is tracked (future enhancement)
+                      // openAIWs.send(JSON.stringify({ type: 'response.cancel', response_id: currentResponseId }));
                     } catch (error) {
                       console.error('❌ Error handling speech interruption:', error);
                     }
