@@ -4,7 +4,7 @@
 const WebSocket = require('ws');
 
 const OPENAI_REALTIME_API_URL = 'wss://api.openai.com/v1/realtime';
-const OPENAI_MODEL = 'gpt-4o-realtime-preview-2024-10-01';
+const OPENAI_MODEL = 'gpt-4o-mini-realtime-preview-2024-12-17';
 const PING_INTERVAL = 30000;
 
 function createSystemPrompt(candidateContext) {
@@ -222,6 +222,7 @@ function createOpenAIConnection(apiKey, systemPrompt) {
     
     ws.on('open', () => {
       console.log('✓ Connected to OpenAI Realtime API');
+      console.log('✓ Using OpenAI model:', OPENAI_MODEL);
       clearTimeout(connectionTimeout);
       
       const configMessage = {
@@ -229,7 +230,7 @@ function createOpenAIConnection(apiKey, systemPrompt) {
         session: {
           modalities: ['text', 'audio'],
           instructions: systemPrompt,
-          voice: 'coral',
+          voice: 'cedar',
           input_audio_format: 'pcm16',
           output_audio_format: 'pcm16',
           turn_detection: {
@@ -245,6 +246,13 @@ function createOpenAIConnection(apiKey, systemPrompt) {
       
       ws.send(JSON.stringify(configMessage));
       console.log('✓ Session configuration sent to OpenAI');
+      console.log('📋 Session Configuration:');
+      console.log('   Model:', OPENAI_MODEL);
+      console.log('   Voice:', configMessage.session.voice);
+      console.log('   Input Audio Format:', configMessage.session.input_audio_format);
+      console.log('   Output Audio Format:', configMessage.session.output_audio_format);
+      console.log('   Turn Detection:', JSON.stringify(configMessage.session.turn_detection));
+      console.log('   Temperature:', configMessage.session.temperature);
       // Resolve immediately - we'll handle session.updated in the main handler
       resolve(ws);
     });
@@ -416,10 +424,37 @@ function handleFrontendConnection(frontendWs, httpServer) {
           isInterviewActive = true;
           
           let sessionReady = false;
+          let currentResponseId = null; // Track current response ID for cancellation
+          
+          // Session metrics tracking
+          const sessionStartTime = Date.now();
+          const messageCounts = {
+            'response.created': 0,
+            'response.audio.delta': 0,
+            'response.audio_transcript.delta': 0,
+            'response.audio_transcript.done': 0,
+            'input_audio_buffer.speech_started': 0,
+            'input_audio_buffer.speech_stopped': 0,
+            'response.done': 0,
+            'response.audio.done': 0,
+            'conversation.item.input_audio_transcript.completed': 0,
+            'error': 0,
+            'other': 0
+          };
+          let lastSpeechStartedTime = null;
+          let lastSpeechStoppedTime = null;
           
           openAIWs.on('message', (openAIData) => {
             try {
               const openAIMessage = JSON.parse(openAIData.toString());
+              
+              // Track message counts
+              const messageType = openAIMessage.type || 'other';
+              if (messageCounts.hasOwnProperty(messageType)) {
+                messageCounts[messageType]++;
+              } else {
+                messageCounts.other++;
+              }
               
               // Handle session.updated event
               if (openAIMessage.type === 'session.updated') {
@@ -428,7 +463,7 @@ function handleFrontendConnection(frontendWs, httpServer) {
                 // Trigger AI to start speaking now that session is ready
                 setTimeout(() => {
                   if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
-                    console.log('🎤 Triggering AI to start speaking...');
+                    // Reduced logging
                     try {
                       openAIWs.send(JSON.stringify({
                         type: 'response.create',
@@ -436,7 +471,6 @@ function handleFrontendConnection(frontendWs, httpServer) {
                           modalities: ['text', 'audio']
                         }
                       }));
-                      console.log('✓ Response creation request sent to OpenAI');
                     } catch (error) {
                       console.error('❌ Error sending response.create:', error);
                     }
@@ -446,6 +480,14 @@ function handleFrontendConnection(frontendWs, httpServer) {
               }
               
               switch (openAIMessage.type) {
+                case 'response.created':
+                  // Track response ID for cancellation
+                  currentResponseId = openAIMessage.response?.id || null;
+                  if (currentResponseId) {
+                    console.log('📝 Tracking response ID:', currentResponseId);
+                  }
+                  break;
+                  
                 case 'response.audio.delta':
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     try {
@@ -464,30 +506,38 @@ function handleFrontendConnection(frontendWs, httpServer) {
                         break;
                       }
                       
-                      // Log chunk size periodically to detect anomalies
-                      if (Math.random() < 0.01) { // Log ~1% of audio deltas
-                        console.log('🎵 Forwarded audio delta to frontend, size:', audioBuffer.length, 'bytes');
-                      }
-                      
+                      // Reduced logging - only log anomalies
                       // Detect unusually large or small chunks
                       // PCM16 is 2 bytes per sample, so 48000 bytes = 24000 samples = 1 second at 24kHz
                       // 96000 bytes would be 2 seconds
                       if (audioBuffer.length > 48000) { // > 1 second at 24kHz
-                        console.warn('⚠️ Unusually large audio chunk:', audioBuffer.length, 'bytes');
+                        if (Math.random() < 0.1) {
+                          console.warn('⚠️ Unusually large audio chunk:', audioBuffer.length, 'bytes');
+                        }
                       }
                       if (audioBuffer.length < 100) {
-                        console.warn('⚠️ Unusually small audio chunk:', audioBuffer.length, 'bytes');
+                        if (Math.random() < 0.1) {
+                          console.warn('⚠️ Unusually small audio chunk:', audioBuffer.length, 'bytes');
+                        }
                       }
                       
                       // Forward immediately without buffering
                       // Check if WebSocket is ready to send (not in backpressure)
-                      if (frontendWs.bufferedAmount === 0 || frontendWs.bufferedAmount < 1024 * 1024) {
-                        // Less than 1MB buffered, safe to send
+                      const bufferedAmount = frontendWs.bufferedAmount;
+                      if (bufferedAmount === 0 || bufferedAmount < 512 * 1024) {
+                        // Less than 512KB buffered, safe to send
+                        frontendWs.send(audioBuffer);
+                      } else if (bufferedAmount < 1024 * 1024) {
+                        // Moderate backpressure (512KB-1MB), send but log warning
+                        if (Math.random() < 0.1) {
+                          console.warn('⚠️ WebSocket backpressure detected, buffered:', bufferedAmount, 'bytes');
+                        }
                         frontendWs.send(audioBuffer);
                       } else {
-                        // Backpressure detected, log warning but still send
-                        console.warn('⚠️ WebSocket backpressure detected, buffered:', frontendWs.bufferedAmount, 'bytes');
-                        frontendWs.send(audioBuffer);
+                        // Severe backpressure (>1MB), drop old chunks or skip this chunk
+                        console.warn('⚠️ Severe WebSocket backpressure, buffered:', bufferedAmount, 'bytes. Dropping audio chunk.');
+                        // Don't send - let frontend catch up
+                        // Frontend will request more when ready
                       }
                     } catch (error) {
                       console.error('❌ Error forwarding audio delta:', error);
@@ -497,7 +547,10 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   break;
                   
                 case 'response.audio_transcript.delta':
-                  console.log('📝 OpenAI transcript delta:', openAIMessage.delta);
+                  // Reduced logging - only log occasionally
+                  if (Math.random() < 0.05) {
+                    console.log('📝 OpenAI transcript delta received');
+                  }
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     const transcriptMessage = {
                       type: 'ai_transcription',
@@ -505,11 +558,11 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       is_final: false
                     };
                     frontendWs.send(JSON.stringify(transcriptMessage));
-                    console.log('📤 Sent ai_transcription delta to frontend');
                   }
                   break;
                   
                 case 'response.audio_transcript.done':
+                  // Keep this log as it's important
                   console.log('✅ OpenAI transcript done:', openAIMessage.text);
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     const transcriptMessage = {
@@ -518,24 +571,38 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       is_final: true
                     };
                     frontendWs.send(JSON.stringify(transcriptMessage));
-                    console.log('📤 Sent final ai_transcription to frontend');
                   }
                   break;
                   
                 case 'input_audio_buffer.speech_started':
-                  console.log('🎤 Student speech started detected - canceling AI response');
+                  // Keep this log as it's important
+                  const speechStartTime = Date.now();
+                  lastSpeechStartedTime = speechStartTime;
+                  
+                  // Calculate time since last speech stopped (if available)
+                  let timeSinceLastStop = null;
+                  if (lastSpeechStoppedTime) {
+                    timeSinceLastStop = speechStartTime - lastSpeechStoppedTime;
+                    console.log(`🎤 Student speech started detected (${timeSinceLastStop}ms since last stop) - canceling AI response`);
+                  } else {
+                    console.log('🎤 Student speech started detected - canceling AI response');
+                  }
                   
                   // Cancel ongoing AI response when user starts speaking
                   if (openAIWs && openAIWs.readyState === WebSocket.OPEN) {
                     try {
-                      // OpenAI Realtime API: When user speaks, server VAD automatically interrupts
-                      // We can send response.cancel if we have the response ID, but typically
-                      // the server handles this automatically via turn detection
-                      // For now, we rely on server VAD to handle interruption
-                      console.log('🛑 User interrupted - server VAD will handle interruption');
-                      
-                      // Optional: Try to cancel if response ID is tracked (future enhancement)
-                      // openAIWs.send(JSON.stringify({ type: 'response.cancel', response_id: currentResponseId }));
+                      // Send explicit response.cancel if we have the response ID
+                      if (currentResponseId) {
+                        openAIWs.send(JSON.stringify({ 
+                          type: 'response.cancel', 
+                          response_id: currentResponseId 
+                        }));
+                        console.log('🛑 Sent response.cancel for response:', currentResponseId);
+                        currentResponseId = null; // Clear after canceling
+                      } else {
+                        // Server VAD will handle interruption, but log for debugging
+                        console.log('🛑 User interrupted - server VAD will handle (no response ID tracked)');
+                      }
                     } catch (error) {
                       console.error('❌ Error handling speech interruption:', error);
                     }
@@ -545,38 +612,47 @@ function handleFrontendConnection(frontendWs, httpServer) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_speech_started'
                     }));
-                    console.log('📤 Sent student_speech_started to frontend');
                   }
                   break;
                 
                 case 'input_audio_buffer.speech_stopped':
-                  console.log('🎤 Student speech stopped detected');
+                  const speechStopTime = Date.now();
+                  lastSpeechStoppedTime = speechStopTime;
+                  
+                  // Calculate speech duration if we have start time
+                  if (lastSpeechStartedTime) {
+                    const speechDuration = speechStopTime - lastSpeechStartedTime;
+                    console.log(`🎤 Student speech stopped (duration: ${speechDuration}ms)`);
+                  } else {
+                    console.log('🎤 Student speech stopped');
+                  }
                   
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_speech_ended'
                     }));
-                    console.log('📤 Sent student_speech_ended to frontend');
                   }
                   break;
                 
                 case 'response.done':
+                  // Keep this log as it's important
                   console.log('✅ AI response completed');
+                  currentResponseId = null; // Clear response ID
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'ai_response_done'
                     }));
-                    console.log('📤 Sent ai_response_done to frontend');
                   }
                   break;
                 
                 case 'response.audio.done':
+                  // Keep this log as it's important
                   console.log('✅ AI audio stream completed');
+                  currentResponseId = null; // Clear response ID
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'ai_audio_done'
                     }));
-                    console.log('📤 Sent ai_audio_done to frontend');
                   }
                   break;
                   
@@ -656,7 +732,11 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   break;
                   
                 default:
-                  console.log('ℹ️  Unhandled OpenAI message type:', openAIMessage.type);
+                  // Log unhandled message types occasionally for debugging
+                  if (Math.random() < 0.01 && !openAIMessage.type?.startsWith('input_audio_buffer')) {
+                    console.log('📨 Unhandled OpenAI message type:', openAIMessage.type);
+                  }
+                  break;
               }
             } catch (error) {
               console.error('❌ Error processing OpenAI message:', error);
@@ -674,7 +754,16 @@ function handleFrontendConnection(frontendWs, httpServer) {
           });
           
           openAIWs.on('close', () => {
+            const sessionEndTime = Date.now();
+            const sessionDuration = sessionEndTime - sessionStartTime;
+            const sessionDurationSeconds = (sessionDuration / 1000).toFixed(2);
+            
             console.log('✓ OpenAI connection closed');
+            console.log('📊 Session Metrics:');
+            console.log(`   Duration: ${sessionDurationSeconds}s (${sessionDuration}ms)`);
+            console.log('   Message Counts:', JSON.stringify(messageCounts, null, 2));
+            console.log(`   Total Messages: ${Object.values(messageCounts).reduce((a, b) => a + b, 0)}`);
+            
             isInterviewActive = false;
             if (frontendWs.readyState === WebSocket.OPEN) {
               frontendWs.send(JSON.stringify({
