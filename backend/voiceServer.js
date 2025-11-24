@@ -600,21 +600,62 @@ function handleFrontendConnection(frontendWs, httpServer) {
                 'other': 0
               };
               
+              // Chunk buffer for assembling incomplete PCM frames
+              let pendingAudioBuffer = null;
+              let lastChunkTime = null;
+              
               // Set up ElevenLabs message handler
               elevenLabsWs.on('message', (elevenLabsData) => {
                 try {
                   // ElevenLabs may send binary audio or JSON messages
                   if (elevenLabsData instanceof Buffer) {
-                    // Binary audio data - forward directly to frontend
+                    // Binary audio data - buffer and validate before forwarding
                     messageCounts.audio++;
-                    if (frontendWs.readyState === WebSocket.OPEN) {
-                      // Log audio chunk size for debugging (16kHz PCM)
-                      const chunkSize = elevenLabsData.length;
+                    const now = Date.now();
+                    const timeSinceLastChunk = lastChunkTime ? now - lastChunkTime : null;
+                    lastChunkTime = now;
+                    
+                    const chunkSize = elevenLabsData.length;
+                    console.log(`🔊 ElevenLabs audio chunk received: ${chunkSize} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
+                    
+                    // Check if chunk size is multiple of 2 (required for PCM16)
+                    if (chunkSize % 2 !== 0) {
+                      console.warn(`⚠️ Invalid chunk size from ElevenLabs: ${chunkSize} bytes (not multiple of 2). Buffering.`);
+                    }
+                    
+                    // Combine with pending buffer if exists
+                    let combinedBuffer;
+                    if (pendingAudioBuffer) {
+                      const pending = pendingAudioBuffer;
+                      combinedBuffer = Buffer.concat([pending, elevenLabsData]);
+                      console.log(`📦 Combined with pending buffer: ${pending.length} + ${chunkSize} = ${combinedBuffer.length} bytes`);
+                      pendingAudioBuffer = null; // Clear pending buffer
+                    } else {
+                      combinedBuffer = elevenLabsData;
+                    }
+                    
+                    // Check if combined buffer is still incomplete (not multiple of 2)
+                    if (combinedBuffer.length % 2 !== 0) {
+                      // Save incomplete chunk for next iteration
+                      pendingAudioBuffer = combinedBuffer;
+                      console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
+                      return; // Don't forward incomplete chunk
+                    }
+                    
+                    // Validate minimum chunk size (320 bytes = 20ms at 16kHz)
+                    const MIN_CHUNK_SIZE = 320;
+                    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length > 0) {
+                      console.warn(`⚠️ Very small chunk from ElevenLabs: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes). Forwarding anyway.`);
+                    }
+                    
+                    // Forward complete PCM frame to frontend
+                    if (frontendWs.readyState === WebSocket.OPEN && combinedBuffer.length > 0) {
                       // At 16kHz PCM16: 32000 bytes = 16000 samples = 1 second
-                      if (chunkSize > 32000 && Math.random() < 0.1) {
-                        console.log('🔊 ElevenLabs audio chunk:', chunkSize, 'bytes (16kHz PCM)');
+                      if (combinedBuffer.length > 32000 && Math.random() < 0.1) {
+                        console.log(`🔊 Forwarding large audio chunk: ${combinedBuffer.length} bytes (16kHz PCM)`);
                       }
-                      frontendWs.send(elevenLabsData);
+                      frontendWs.send(combinedBuffer);
+                      console.log(`✅ Forwarded complete PCM frame: ${combinedBuffer.length} bytes`);
                     }
                     return;
                   }
@@ -649,12 +690,49 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       
                     case 'audio':
                     case 'audio_chunk':
-                      // Audio chunk - forward as binary
+                      // Audio chunk from JSON message (base64 encoded) - decode and buffer
                       messageCounts.audio++;
                       if (elevenLabsMessage.audio && frontendWs.readyState === WebSocket.OPEN) {
-                        const audioBuffer = Buffer.from(elevenLabsMessage.audio, 'base64');
-                        console.log('🔊 ElevenLabs audio chunk (base64):', audioBuffer.length, 'bytes');
-                        frontendWs.send(audioBuffer);
+                        try {
+                          const audioBuffer = Buffer.from(elevenLabsMessage.audio, 'base64');
+                          const chunkSize = audioBuffer.length;
+                          const now = Date.now();
+                          const timeSinceLastChunk = lastChunkTime ? now - lastChunkTime : null;
+                          lastChunkTime = now;
+                          
+                          console.log(`🔊 ElevenLabs audio chunk (base64): ${chunkSize} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
+                          
+                          // Check if chunk size is multiple of 2
+                          if (chunkSize % 2 !== 0) {
+                            console.warn(`⚠️ Invalid chunk size from ElevenLabs (base64): ${chunkSize} bytes (not multiple of 2). Buffering.`);
+                          }
+                          
+                          // Combine with pending buffer if exists
+                          let combinedBuffer;
+                          if (pendingAudioBuffer) {
+                            const pending = pendingAudioBuffer;
+                            combinedBuffer = Buffer.concat([pending, audioBuffer]);
+                            console.log(`📦 Combined with pending buffer: ${pending.length} + ${chunkSize} = ${combinedBuffer.length} bytes`);
+                            pendingAudioBuffer = null;
+                          } else {
+                            combinedBuffer = audioBuffer;
+                          }
+                          
+                          // Check if combined buffer is still incomplete
+                          if (combinedBuffer.length % 2 !== 0) {
+                            pendingAudioBuffer = combinedBuffer;
+                            console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes`);
+                            break; // Don't forward incomplete chunk
+                          }
+                          
+                          // Forward complete PCM frame
+                          if (combinedBuffer.length > 0) {
+                            frontendWs.send(combinedBuffer);
+                            console.log(`✅ Forwarded complete PCM frame (base64): ${combinedBuffer.length} bytes`);
+                          }
+                        } catch (error) {
+                          console.error('❌ Error processing ElevenLabs base64 audio:', error);
+                        }
                       }
                       break;
                       

@@ -79,6 +79,10 @@ export default function VoiceInterviewWebSocket({
   const audioChunkSizesRef = useRef<number[]>([]);
   const lastChunkReceiveTimeRef = useRef<number | null>(null);
   
+  // Chunk buffering for incomplete PCM frames
+  const pendingAudioBufferRef = useRef<Uint8Array | null>(null);
+  const lastChunkTimeRef = useRef<number | null>(null);
+  
   const { toast } = useToast();
   
   // Update candidateContext ref when it changes
@@ -647,6 +651,77 @@ export default function VoiceInterviewWebSocket({
     }
   }, [toast]);
 
+  // Buffer and validate audio chunks - ensures complete PCM frames
+  const bufferAndValidateChunk = useCallback((arrayBuffer: ArrayBuffer): ArrayBuffer[] => {
+    const MIN_CHUNK_SIZE = 320; // 20ms at 16kHz mono PCM16 (16000 samples/s * 0.02s * 2 bytes = 640 bytes, but 320 is safer minimum)
+    const PCM_FRAME_SIZE = 2; // PCM16 = 2 bytes per sample
+    
+    const now = Date.now();
+    const timeSinceLastChunk = lastChunkTimeRef.current ? now - lastChunkTimeRef.current : null;
+    lastChunkTimeRef.current = now;
+    
+    // Log chunk received
+    console.log(`🔊 Audio chunk received: ${arrayBuffer.byteLength} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
+    
+    // Check if byte length is multiple of 2 (required for Int16Array)
+    if (arrayBuffer.byteLength % 2 !== 0) {
+      console.warn(`⚠️ Invalid chunk size: ${arrayBuffer.byteLength} bytes (not multiple of 2). Buffering for completion.`);
+    }
+    
+    // Combine with pending buffer if exists
+    let combinedBuffer: Uint8Array;
+    if (pendingAudioBufferRef.current) {
+      const pending = pendingAudioBufferRef.current;
+      const newData = new Uint8Array(arrayBuffer);
+      combinedBuffer = new Uint8Array(pending.length + newData.length);
+      combinedBuffer.set(pending);
+      combinedBuffer.set(newData, pending.length);
+      console.log(`📦 Combined with pending buffer: ${pending.length} + ${newData.length} = ${combinedBuffer.length} bytes`);
+      pendingAudioBufferRef.current = null; // Clear pending buffer
+    } else {
+      combinedBuffer = new Uint8Array(arrayBuffer);
+    }
+    
+    // Check if combined buffer is still incomplete (not multiple of 2)
+    if (combinedBuffer.length % 2 !== 0) {
+      // Save incomplete chunk for next iteration
+      pendingAudioBufferRef.current = combinedBuffer;
+      console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
+      return []; // Return empty array - no complete frames yet
+    }
+    
+    // Validate minimum chunk size (unless it's a very small final chunk)
+    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length > 0) {
+      console.warn(`⚠️ Very small chunk: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes minimum). Processing anyway.`);
+    }
+    
+    // If we have complete frames, return them
+    const completeFrames: ArrayBuffer[] = [];
+    
+    // Ensure we have complete PCM frames (multiple of 2 bytes)
+    if (combinedBuffer.length >= PCM_FRAME_SIZE && combinedBuffer.length % 2 === 0) {
+      // Create ArrayBuffer from Uint8Array (ensure it's ArrayBuffer, not SharedArrayBuffer)
+      const bufferSlice = combinedBuffer.buffer.slice(combinedBuffer.byteOffset, combinedBuffer.byteOffset + combinedBuffer.length);
+      const completeBuffer = bufferSlice instanceof SharedArrayBuffer 
+        ? new ArrayBuffer(bufferSlice.byteLength)
+        : bufferSlice;
+      // Copy data if it was SharedArrayBuffer
+      if (bufferSlice instanceof SharedArrayBuffer) {
+        const view = new Uint8Array(completeBuffer);
+        view.set(new Uint8Array(bufferSlice));
+      }
+      completeFrames.push(completeBuffer);
+      console.log(`✅ Complete PCM frame ready: ${completeBuffer.byteLength} bytes`);
+    } else if (combinedBuffer.length > 0) {
+      // Still incomplete, buffer it
+      pendingAudioBufferRef.current = combinedBuffer;
+      console.log(`📦 Still incomplete, buffering: ${combinedBuffer.length} bytes`);
+      return [];
+    }
+    
+    return completeFrames;
+  }, []);
+  
   // Convert PCM16 to Float32 with proper handling and normalization
   const convertPCM16ToFloat32 = useCallback((pcm16Array: Int16Array): Float32Array<ArrayBuffer> => {
     // Create Float32Array with explicit ArrayBuffer to satisfy TypeScript 5.9+ type checking
@@ -771,7 +846,32 @@ export default function VoiceInterviewWebSocket({
         console.warn('⚠️ Received unusually large audio buffer:', arrayBuffer.byteLength, 'bytes. Processing anyway.');
       }
 
-      const pcm16Data = new Int16Array(arrayBuffer);
+      // Validate buffer size is multiple of 2 before creating Int16Array
+      if (arrayBuffer.byteLength % 2 !== 0) {
+        console.error(`❌ RangeError prevented: Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
+        isProcessingQueueRef.current = false;
+        // Try next chunk
+        if (audioQueueRef.current.length > 0) {
+          requestAnimationFrame(() => processAudioQueue());
+        }
+        return;
+      }
+
+      // Create Int16Array with error handling
+      let pcm16Data: Int16Array;
+      try {
+        pcm16Data = new Int16Array(arrayBuffer);
+      } catch (error) {
+        console.error('❌ RangeError creating Int16Array:', error);
+        console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
+        console.error(`   Buffer size % 2: ${arrayBuffer.byteLength % 2}`);
+        isProcessingQueueRef.current = false;
+        // Try next chunk - don't stop playback
+        if (audioQueueRef.current.length > 0) {
+          requestAnimationFrame(() => processAudioQueue());
+        }
+        return;
+      }
       
       // Validate sample count
       if (pcm16Data.length === 0) {
@@ -1010,61 +1110,72 @@ export default function VoiceInterviewWebSocket({
     }
   }, [convertPCM16ToFloat32, conversationState]);
 
-  // Queue audio chunk for playback with aggressive size limits
+  // Queue audio chunk for playback with aggressive size limits and validation
   const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
     const MAX_QUEUE_SIZE = 30; // Reduced from 50 - more aggressive limit
     const WARN_QUEUE_SIZE = 20; // Warn when queue exceeds this
     
-    // Track audio chunk metrics
-    const now = Date.now();
-    audioChunkSizesRef.current.push(arrayBuffer.byteLength);
-    audioChunkReceiveTimesRef.current.push(now);
+    // Buffer and validate chunk - ensures complete PCM frames
+    const completeFrames = bufferAndValidateChunk(arrayBuffer);
     
-    // Keep only last 100 chunk timestamps for rate calculation
-    if (audioChunkReceiveTimesRef.current.length > 100) {
-      audioChunkReceiveTimesRef.current.shift();
-      audioChunkSizesRef.current.shift();
+    // If no complete frames yet (buffering), return early
+    if (completeFrames.length === 0) {
+      return; // Chunk is being buffered, will be processed when complete
     }
     
-    // Calculate receive rate if we have enough data
-    if (audioChunkReceiveTimesRef.current.length >= 10) {
-      const timeSpan = now - audioChunkReceiveTimesRef.current[0];
-      const chunkRate = (audioChunkReceiveTimesRef.current.length / timeSpan) * 1000; // chunks per second
-      const avgChunkSize = audioChunkSizesRef.current.reduce((a, b) => a + b, 0) / audioChunkSizesRef.current.length;
+    // Process each complete frame
+    for (const frame of completeFrames) {
+      // Track audio chunk metrics
+      const now = Date.now();
+      audioChunkSizesRef.current.push(frame.byteLength);
+      audioChunkReceiveTimesRef.current.push(now);
       
-      // Log metrics occasionally (16kHz PCM audio)
-      if (Math.random() < 0.1) {
-        console.log(`📊 Audio metrics (16kHz PCM): ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
-        // At 16kHz PCM16: 32000 bytes = 1 second, log if chunk size is unusual
-        if (avgChunkSize > 64000) {
-          console.warn(`⚠️ Large audio chunks detected: ${avgChunkSize.toFixed(0)} bytes avg (>2s at 16kHz)`);
+      // Keep only last 100 chunk timestamps for rate calculation
+      if (audioChunkReceiveTimesRef.current.length > 100) {
+        audioChunkReceiveTimesRef.current.shift();
+        audioChunkSizesRef.current.shift();
+      }
+      
+      // Calculate receive rate if we have enough data
+      if (audioChunkReceiveTimesRef.current.length >= 10) {
+        const timeSpan = now - audioChunkReceiveTimesRef.current[0];
+        const chunkRate = (audioChunkReceiveTimesRef.current.length / timeSpan) * 1000; // chunks per second
+        const avgChunkSize = audioChunkSizesRef.current.reduce((a, b) => a + b, 0) / audioChunkSizesRef.current.length;
+        
+        // Log metrics occasionally (16kHz PCM audio)
+        if (Math.random() < 0.1) {
+          console.log(`📊 Audio metrics (16kHz PCM): ${chunkRate.toFixed(2)} chunks/s, avg size: ${avgChunkSize.toFixed(0)} bytes, queue: ${audioQueueRef.current.length}`);
+          // At 16kHz PCM16: 32000 bytes = 1 second, log if chunk size is unusual
+          if (avgChunkSize > 64000) {
+            console.warn(`⚠️ Large audio chunks detected: ${avgChunkSize.toFixed(0)} bytes avg (>2s at 16kHz)`);
+          }
         }
       }
+      
+      // Aggressive queue management - drop old chunks when limit exceeded
+      if (audioQueueRef.current.length >= MAX_QUEUE_SIZE) {
+        // Keep only the most recent chunks (50% of max)
+        const chunksToKeep = Math.floor(MAX_QUEUE_SIZE / 2);
+        const dropped = audioQueueRef.current.length - chunksToKeep;
+        audioQueueRef.current = audioQueueRef.current.slice(-chunksToKeep);
+        console.warn('⚠️ Audio queue limit reached. Dropped', dropped, 'old chunks, kept', chunksToKeep);
+      } else if (audioQueueRef.current.length >= WARN_QUEUE_SIZE) {
+        // Warn but don't drop yet
+        console.warn('⚠️ Audio queue is large:', audioQueueRef.current.length, 'chunks');
+      }
+      
+      // Log when queue exceeds thresholds
+      if (audioQueueRef.current.length === 25) {
+        console.warn('⚠️ Audio queue reached 25 chunks');
+      }
+      
+      // Add complete frame to queue
+      audioQueueRef.current.push(frame);
     }
-    
-    // Aggressive queue management - drop old chunks when limit exceeded
-    if (audioQueueRef.current.length >= MAX_QUEUE_SIZE) {
-      // Keep only the most recent chunks (50% of max)
-      const chunksToKeep = Math.floor(MAX_QUEUE_SIZE / 2);
-      const dropped = audioQueueRef.current.length - chunksToKeep;
-      audioQueueRef.current = audioQueueRef.current.slice(-chunksToKeep);
-      console.warn('⚠️ Audio queue limit reached. Dropped', dropped, 'old chunks, kept', chunksToKeep);
-    } else if (audioQueueRef.current.length >= WARN_QUEUE_SIZE) {
-      // Warn but don't drop yet
-      console.warn('⚠️ Audio queue is large:', audioQueueRef.current.length, 'chunks');
-    }
-    
-    // Log when queue exceeds thresholds
-    if (audioQueueRef.current.length === 25) {
-      console.warn('⚠️ Audio queue reached 25 chunks');
-    }
-    
-    // Add to queue
-    audioQueueRef.current.push(arrayBuffer);
     
     // Try to process queue immediately (no setTimeout delay)
     processAudioQueue();
-  }, [processAudioQueue]);
+  }, [processAudioQueue, bufferAndValidateChunk]);
 
   // Stop recording
   const stopRecording = useCallback(() => {
@@ -1116,6 +1227,7 @@ export default function VoiceInterviewWebSocket({
     // Clear audio queue
     audioQueueRef.current = [];
     audioBufferQueueRef.current = [];
+    pendingAudioBufferRef.current = null; // Clear pending buffer
     isPlayingRef.current = false;
     setIsPlaying(false);
     isProcessingQueueRef.current = false;
@@ -1221,21 +1333,25 @@ export default function VoiceInterviewWebSocket({
               const now = Date.now();
               if (lastChunkReceiveTimeRef.current) {
                 const timeSinceLastChunk = now - lastChunkReceiveTimeRef.current;
-                // Log if chunk interval is unusual (>200ms or <10ms)
-                if (timeSinceLastChunk > 200 || timeSinceLastChunk < 10) {
-                  console.log(`🔊 Audio chunk received: size=${arrayBuffer.byteLength} bytes, interval=${timeSinceLastChunk}ms, queue=${audioQueueRef.current.length}`);
-                }
+                // Log chunk timing (16kHz PCM)
+                console.log(`🔊 Audio chunk received: size=${arrayBuffer.byteLength} bytes, interval=${timeSinceLastChunk}ms, queue=${audioQueueRef.current.length}`);
               }
               lastChunkReceiveTimeRef.current = now;
               
-              // Log unusually large or small chunks
-              if (arrayBuffer.byteLength > 96000) {
-                console.warn(`⚠️ Unusually large audio chunk: ${arrayBuffer.byteLength} bytes (>2 seconds at 24kHz)`);
+              // Log unusually large or small chunks (16kHz thresholds)
+              // At 16kHz PCM16: 64000 bytes = 2 seconds
+              if (arrayBuffer.byteLength > 64000) {
+                console.warn(`⚠️ Unusually large audio chunk: ${arrayBuffer.byteLength} bytes (>2 seconds at 16kHz)`);
               } else if (arrayBuffer.byteLength < 100) {
                 console.warn(`⚠️ Unusually small audio chunk: ${arrayBuffer.byteLength} bytes`);
               }
               
-              // Queue audio chunk for sequential playback
+              // Validate chunk before queuing (will be buffered if incomplete)
+              if (arrayBuffer.byteLength % 2 !== 0) {
+                console.warn(`⚠️ Invalid chunk size before queuing: ${arrayBuffer.byteLength} bytes (not multiple of 2). Will be buffered.`);
+              }
+              
+              // Queue audio chunk for sequential playback (buffering happens inside)
               queueAudioChunk(arrayBuffer);
             } else {
               // JSON message
@@ -1383,7 +1499,7 @@ export default function VoiceInterviewWebSocket({
 
       // Create AudioContext for processing
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 24000 });
+        audioContextRef.current = new AudioContext({ sampleRate: 16000 });
       }
 
       const audioContext = audioContextRef.current;
