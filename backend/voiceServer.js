@@ -975,9 +975,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       
                       // Reduced logging - only log anomalies
                       // Detect unusually large or small chunks
-                      // PCM16 is 2 bytes per sample, so 48000 bytes = 24000 samples = 1 second at 24kHz
-                      // 96000 bytes would be 2 seconds
-                      if (audioBuffer.length > 48000) { // > 1 second at 24kHz
+                      // PCM16 is 2 bytes per sample, so 32000 bytes = 16000 samples = 1 second at 16kHz
+                      // 64000 bytes would be 2 seconds
+                      if (audioBuffer.length > 32000) { // > 1 second at 16kHz
                         if (Math.random() < 0.1) {
                           console.warn('⚠️ Unusually large audio chunk:', audioBuffer.length, 'bytes');
                         }
