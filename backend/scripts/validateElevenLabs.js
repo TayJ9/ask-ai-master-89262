@@ -14,11 +14,15 @@ const ELEVENLABS_AGENT_ID = 'agent_8601kavsezrheczradx9qmz8qp3e';
 const ELEVENLABS_VOICE_ID = 'kdmDKE6EkgrWrrykO9Qt';
 const ELEVENLABS_LLM = 'gpt-5.1';
 
+// Import WebSocket for agent connection test (using dynamic import for ES module compatibility)
+let WebSocket: any;
+
 /**
  * Validates ElevenLabs configuration and logs results
- * @returns {Object} Validation result with status and details
+ * @param {boolean} testConnection - If true, also test actual agent connection (async)
+ * @returns {Object|Promise<Object>} Validation result with status and details
  */
-function validateElevenLabsConfig() {
+function validateElevenLabsConfig(testConnection = false) {
   console.log('\n' + '='.repeat(80));
   console.log('🔍 ELEVENLABS CONFIGURATION VALIDATION');
   console.log('='.repeat(80));
@@ -120,6 +124,111 @@ function validateElevenLabsConfig() {
     process.stdout.write(''); // Force flush
   }
   
+  return results;
+}
+
+/**
+ * Tests actual connection to ElevenLabs agent to verify backend can interact with it
+ * This is an async check that attempts to connect and verify agent accessibility
+ * @returns {Promise<Object>} Test result with status and details
+ */
+async function testElevenLabsAgentConnection() {
+  console.log('\n[6/6] Testing ElevenLabs Agent Connection...');
+  
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    console.log('   ⚠️  SKIPPED: ELEVENLABS_API_KEY not set, cannot test connection');
+    console.log('   [6/6] CHECK COMPLETE');
+    return { success: false, skipped: true, reason: 'API key not set' };
+  }
+  
+  if (process.env.VOICE_PROVIDER && process.env.VOICE_PROVIDER !== 'elevenlabs') {
+    console.log('   ⚠️  SKIPPED: VOICE_PROVIDER is not ElevenLabs, skipping connection test');
+    console.log('   [6/6] CHECK COMPLETE');
+    return { success: false, skipped: true, reason: 'Voice provider not ElevenLabs' };
+  }
+  
+  // Dynamically import WebSocket module (ES module compatibility)
+  let WebSocket;
+  try {
+    const wsModule = await import('ws');
+    WebSocket = wsModule.default || wsModule;
+  } catch (error) {
+    console.log('   ❌ FAILED: Could not import WebSocket module');
+    console.log(`   📝 Error: ${error instanceof Error ? error.message : String(error)}`);
+    console.log('   [6/6] CHECK COMPLETE');
+    return { success: false, reason: 'WebSocket module not available' };
+  }
+  
+  return new Promise((resolve) => {
+    const wsUrl = `${ELEVENLABS_API_URL}?agent_id=${ELEVENLABS_AGENT_ID}`;
+    let connectionEstablished = false;
+    let connectionClosed = false;
+    
+    const timeout = setTimeout(() => {
+      if (!connectionEstablished) {
+        console.log('   ❌ FAILED: Connection timeout after 5 seconds');
+        console.log('   💡 Check that:');
+        console.log('      1. ELEVENLABS_API_KEY is valid and has access to the agent');
+        console.log('      2. Agent ID is correct and agent exists in your ElevenLabs account');
+        console.log('      3. Agent permissions allow backend access');
+        console.log('      4. Network connectivity to api.elevenlabs.io');
+        console.log('   [6/6] CHECK COMPLETE');
+        resolve({ success: false, reason: 'Connection timeout' });
+      }
+    }, 5000);
+    
+    try {
+      const ws = new WebSocket(wsUrl, {
+        headers: {
+          'xi-api-key': apiKey
+        }
+      });
+      
+      ws.on('open', () => {
+        connectionEstablished = true;
+        clearTimeout(timeout);
+        console.log('   ✅ PASSED: Successfully connected to ElevenLabs agent');
+        console.log(`   📝 Agent ID: ${ELEVENLABS_AGENT_ID}`);
+        console.log('   ✅ Backend can interact with ElevenLabs agent');
+        
+        // Close connection immediately after verifying it works
+        ws.close(1000, 'Connection test complete');
+      });
+      
+      ws.on('error', (error) => {
+        clearTimeout(timeout);
+        if (!connectionEstablished) {
+          console.log('   ❌ FAILED: Connection error');
+          console.log(`   📝 Error: ${error.message || error}`);
+          console.log('   💡 Possible issues:');
+          console.log('      1. Invalid API key or API key does not have access to this agent');
+          console.log('      2. Agent ID is incorrect or agent does not exist');
+          console.log('      3. Agent permissions do not allow backend access');
+          console.log('      4. Network/firewall blocking connection to ElevenLabs');
+          console.log('   [6/6] CHECK COMPLETE');
+          resolve({ success: false, reason: error.message || 'Connection error' });
+        }
+      });
+      
+      ws.on('close', (code, reason) => {
+        if (connectionEstablished && !connectionClosed) {
+          connectionClosed = true;
+          console.log(`   ✅ Connection closed cleanly (code: ${code})`);
+          console.log('   [6/6] CHECK COMPLETE');
+          resolve({ success: true, code, reason: reason.toString() });
+        }
+      });
+    } catch (error) {
+      clearTimeout(timeout);
+      console.log('   ❌ FAILED: Exception during connection test');
+      console.log(`   📝 Error: ${error.message || error}`);
+      console.log('   [6/6] CHECK COMPLETE');
+      resolve({ success: false, reason: error.message || 'Exception' });
+    }
+  });
+}
+  
   // Summary
   console.log('\n' + '='.repeat(80));
   console.log('📊 VALIDATION SUMMARY');
@@ -156,11 +265,21 @@ function validateElevenLabsConfig() {
   
   console.log('='.repeat(80) + '\n');
   
+  // If testConnection is true, return a promise that includes connection test
+  if (testConnection) {
+    return testElevenLabsAgentConnection().then(connectionTest => {
+      return {
+        ...results,
+        connectionTest
+      };
+    });
+  }
+  
   return results;
 }
 
 // Export for use in other files
-export { validateElevenLabsConfig, ELEVENLABS_AGENT_ID, ELEVENLABS_VOICE_ID, ELEVENLABS_LLM };
+export { validateElevenLabsConfig, testElevenLabsAgentConnection, ELEVENLABS_AGENT_ID, ELEVENLABS_VOICE_ID, ELEVENLABS_LLM };
 
 // If run directly, execute validation
 // Check if this is the main module (ES module way)

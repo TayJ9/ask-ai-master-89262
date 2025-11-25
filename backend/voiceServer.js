@@ -410,6 +410,19 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       console.log('   LLM:', ELEVENLABS_LLM);
       console.log('   Input Audio Format: 16kHz PCM16 mono');
       console.log('   Context Variables:', JSON.stringify(elevenLabsContext, null, 2));
+      console.log('');
+      console.log('💡 ElevenLabs Settings to Check (if experiencing static/audio issues):');
+      console.log('   1. Voice Settings (in ElevenLabs dashboard):');
+      console.log('      - Voice Stability: Should be 0.5-0.75 (too high = robotic, too low = unstable)');
+      console.log('      - Similarity Boost: Should be 0.5-0.75 (too high = over-processed)');
+      console.log('      - Style: Should be moderate (0.0-0.5) to avoid artifacts');
+      console.log('   2. Conversational AI Agent Settings:');
+      console.log('      - Output Audio Format: Must be 16kHz PCM16 mono');
+      console.log('      - Audio Quality: Should be "high" or "ultra" (not "low")');
+      console.log('      - Streaming Settings: Ensure streaming is enabled properly');
+      console.log('   3. Model Settings:');
+      console.log('      - LLM Model: Verify', ELEVENLABS_LLM, 'is correct and available');
+      console.log('      - Temperature: Should be moderate (0.7-0.9) for natural speech');
       
       // Resolve immediately - we'll handle conversation events in the main handler
       resolve(ws);
@@ -684,6 +697,26 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       pendingAudioBuffer = combinedBuffer;
                       console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
                       return; // Don't forward incomplete chunk
+                    }
+                    
+                    // Check audio quality: verify PCM16 format and detect potential issues
+                    // Log occasionally to monitor audio quality from ElevenLabs
+                    if (Math.random() < 0.1 && combinedBuffer.length >= 4) {
+                      try {
+                        const samples = new Int16Array(combinedBuffer.buffer, combinedBuffer.byteOffset, Math.min(combinedBuffer.length / 2, 100));
+                        const maxSample = Math.max(...Array.from(samples).map(Math.abs));
+                        const avgSample = Array.from(samples).reduce((a, b) => a + Math.abs(b), 0) / samples.length;
+                        
+                        // Check for potential audio quality issues
+                        if (maxSample > 32000) {
+                          console.warn(`⚠️ High amplitude audio from ElevenLabs: max=${maxSample} (${(maxSample/32767*100).toFixed(1)}% of max)`);
+                        }
+                        if (avgSample < 100 && combinedBuffer.length > 1000) {
+                          console.warn(`⚠️ Low amplitude audio from ElevenLabs: avg=${avgSample.toFixed(0)} (possible silence or quality issue)`);
+                        }
+                      } catch (e) {
+                        // Ignore quality check errors
+                      }
                     }
                     
                     // Validate minimum chunk size (320 bytes = 20ms at 16kHz)

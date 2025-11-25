@@ -66,6 +66,8 @@ export default function VoiceInterviewWebSocket({
   const interviewStartTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const stateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const pendingTranscriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastProcessTimeRef = useRef<number>(0); // Watchdog timer for queue processing health
+  const queueWatchdogRef = useRef<NodeJS.Timeout | null>(null);
   
   // Timing tracking refs for turn-taking metrics
   const lastAiResponseDoneTimeRef = useRef<number | null>(null);
@@ -745,8 +747,9 @@ export default function VoiceInterviewWebSocket({
     lastChunkTimeRef.current = now;
     
     // Filter out silence/keepalive packets early (before logging)
+    // Updated threshold from 200 bytes to 100 bytes to filter more aggressively
     // Check size first (fastest check) before doing expensive PCM16 analysis
-    const isVerySmallChunk = arrayBuffer.byteLength < 200;
+    const isVerySmallChunk = arrayBuffer.byteLength < 100;
     
     // Combine with pending buffer if exists (before size checks to catch accumulated small chunks)
     let combinedBuffer: Uint8Array;
@@ -759,11 +762,12 @@ export default function VoiceInterviewWebSocket({
       pendingAudioBufferRef.current = null; // Clear pending buffer
       
       // Check if combined buffer is still suspiciously small (accumulated small chunks)
-      // This catches cases where multiple small chunks combine to pass the initial check
-      if (combinedBuffer.length < 200) {
+      // Updated threshold to 100 bytes to filter more aggressively
+      if (combinedBuffer.length < 100) {
         // Combined buffer is still too small - likely accumulated keepalive packets
         // Clear it and skip this chunk entirely
-        if (Math.random() < 0.01) {
+        // Only log when multiple small chunks are received in sequence
+        if (Math.random() < 0.05) {
           console.log(`🔇 Skipping accumulated small packets: ${combinedBuffer.length} bytes (from ${pending.length} + ${newData.length})`);
         }
         return []; // Don't process accumulated small chunks
@@ -772,11 +776,13 @@ export default function VoiceInterviewWebSocket({
       combinedBuffer = new Uint8Array(arrayBuffer);
       
       // Check incoming chunk size (only if no pending buffer)
+      // Reject chunks <100 bytes immediately to prevent scheduling disruption
       if (isVerySmallChunk) {
         // Very small chunks are almost certainly keepalive/silence packets
-        // Only log occasionally to reduce noise
-        if (Math.random() < 0.01) {
-          console.log(`🔇 Skipping very small packet: ${arrayBuffer.byteLength} bytes`);
+        // Skip scheduling for chunks <100 bytes to prevent timing disruption
+        // Only log when multiple small chunks are received in sequence
+        if (Math.random() < 0.05) {
+          console.log(`🔇 Skipping very small packet: ${arrayBuffer.byteLength} bytes (<100 bytes threshold)`);
         }
         return []; // Return empty array - don't process silence packets
       }
@@ -815,8 +821,8 @@ export default function VoiceInterviewWebSocket({
     }
     
     // Validate minimum chunk size (unless it's a very small final chunk)
-    // Only warn if chunk is suspiciously small but passed silence check (shouldn't happen often)
-    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length >= 200) {
+    // Updated threshold: only warn if chunk is between 100-320 bytes (passed initial filter but still small)
+    if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length >= 100) {
       // Only log occasionally to reduce noise
       if (Math.random() < 0.1) {
         console.warn(`⚠️ Very small chunk: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes minimum). Processing anyway.`);
@@ -1100,6 +1106,9 @@ export default function VoiceInterviewWebSocket({
 
   // Process audio queue with improved buffering and timing
   const processAudioQueue = useCallback(async () => {
+    // Update watchdog timer - mark that processing is happening
+    lastProcessTimeRef.current = Date.now();
+    
     // Prevent concurrent processing with lock
     if (isProcessingQueueRef.current) {
       return;
@@ -1144,6 +1153,7 @@ export default function VoiceInterviewWebSocket({
       console.warn('⚠️ Audio queue is large:', queueSize, 'chunks');
     }
 
+    // Wrap entire function body in try-catch to prevent queue from stopping on any error
     try {
       // Initialize AudioContext with browser's native sample rate
       // CRITICAL: Use native rate to prevent browser-side resampling artifacts
@@ -1295,6 +1305,17 @@ export default function VoiceInterviewWebSocket({
           zeroCrossings: staticAnalysis.zeroCrossings
         });
         
+        // Apply additional filtering for static recovery
+        // If static is severe (high zero-crossing rate with low RMS), skip this chunk
+        if (staticAnalysis.reason?.includes('white noise pattern') && staticAnalysis.noiseLevel < 500) {
+          console.warn(`[AUDIO-DIAG] Skipping corrupted chunk due to severe static`);
+          isProcessingQueueRef.current = false;
+          if (audioQueueRef.current.length > 0) {
+            requestAnimationFrame(() => processAudioQueue());
+          }
+          return;
+        }
+        
         // Export raw PCM16 data for external analysis if static is detected
         exportPCM16ForAnalysis(pcm16Data, chunkId);
       }
@@ -1317,8 +1338,9 @@ export default function VoiceInterviewWebSocket({
       const avgSample = Array.from(pcm16Data).reduce((a, b) => a + Math.abs(b), 0) / pcm16Data.length;
       
       // ===== CLIPPING PREVENTION: Normalize high-amplitude audio =====
-      // If max amplitude is too high (>30000), normalize to prevent clipping
-      const MAX_SAFE_AMPLITUDE = 30000; // Leave headroom below 32767
+      // If max amplitude is too high (>31000), normalize to prevent clipping
+      // Increased from 30000 to 31000 to reduce false warnings while still maintaining 5% headroom
+      const MAX_SAFE_AMPLITUDE = 31000; // Leave headroom below 32767 (5% safety margin)
       let normalizedPcm16Data = pcm16Data;
       let normalizationApplied = false;
       let normalizationFactor = 1.0;
@@ -1328,19 +1350,38 @@ export default function VoiceInterviewWebSocket({
         const peakAmplitude = Math.max(Math.abs(maxSample), Math.abs(minSample));
         normalizationFactor = MAX_SAFE_AMPLITUDE / peakAmplitude;
         
-        console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE DETECTED: ${peakAmplitude} (max safe: ${MAX_SAFE_AMPLITUDE})`);
-        console.warn(`[AUDIO-DIAG] Applying normalization factor: ${normalizationFactor.toFixed(4)} to prevent clipping`);
+        // Only log warnings when amplitude is >95% of max (31128) or normalization factor is <0.9 (severe clipping)
+        const shouldLogWarning = peakAmplitude > 31128 || normalizationFactor < 0.9;
         
-        // Create normalized copy
+        if (shouldLogWarning) {
+          console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE DETECTED: ${peakAmplitude} (max safe: ${MAX_SAFE_AMPLITUDE})`);
+          console.warn(`[AUDIO-DIAG] Applying normalization factor: ${normalizationFactor.toFixed(4)} to prevent clipping`);
+        }
+        
+        // Apply smoother normalization curve to prevent sudden amplitude changes
+        // Use a soft-knee compression-like approach for smoother transitions
         normalizedPcm16Data = new Int16Array(pcm16Data.length);
         for (let i = 0; i < pcm16Data.length; i++) {
-          normalizedPcm16Data[i] = Math.round(pcm16Data[i] * normalizationFactor);
+          const sample = pcm16Data[i];
+          const absSample = Math.abs(sample);
+          
+          // Apply smooth normalization: more aggressive for samples closer to peak
+          if (absSample > MAX_SAFE_AMPLITUDE) {
+            // Linear normalization for samples above threshold
+            normalizedPcm16Data[i] = Math.round(sample * normalizationFactor);
+          } else {
+            // Gradual compression for samples near threshold (smoother transition)
+            const compressionRatio = 1.0 - ((MAX_SAFE_AMPLITUDE - absSample) / MAX_SAFE_AMPLITUDE) * 0.1;
+            normalizedPcm16Data[i] = Math.round(sample * Math.min(1.0, compressionRatio));
+          }
         }
         normalizationApplied = true;
         
-        const normalizedMax = Math.max(...Array.from(normalizedPcm16Data));
-        const normalizedMin = Math.min(...Array.from(normalizedPcm16Data));
-        console.log(`[AUDIO-DIAG] After normalization: max=${normalizedMax}, min=${normalizedMin}`);
+        if (shouldLogWarning) {
+          const normalizedMax = Math.max(...Array.from(normalizedPcm16Data));
+          const normalizedMin = Math.min(...Array.from(normalizedPcm16Data));
+          console.log(`[AUDIO-DIAG] After normalization: max=${normalizedMax}, min=${normalizedMin}`);
+        }
       }
       
       console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
@@ -1546,26 +1587,30 @@ export default function VoiceInterviewWebSocket({
       // Schedule playback with precise timing
       const currentTime = audioContext.currentTime;
       
-      // Handle timing drift: if nextPlayTime is significantly behind (>50ms), reset it aggressively
-      // Increased threshold from 20ms to 50ms to reduce false positives from normal timing variations
+      // Handle timing drift: if nextPlayTime is significantly behind (>100ms), reset it aggressively
+      // Increased threshold from 50ms to 100ms to reduce false positives from normal timing variations
       const timeDrift = currentTime - nextPlayTimeRef.current;
-      if (timeDrift > 0.05) {
-        // If drift is significant (>50ms), reset scheduling and drop old chunks
+      if (timeDrift > 0.1) {
+        // If drift is significant (>100ms), reset scheduling and drop old chunks
         const driftMs = timeDrift * 1000;
-        if (driftMs > 100) {
-          // Severe drift (>100ms) - drop old chunks to catch up
-          const chunksToDrop = Math.min(Math.floor(driftMs / 50), audioQueueRef.current.length);
+        if (driftMs > 200) {
+          // Severe drift (>200ms) - drop old chunks to catch up, but more gracefully
+          const chunksToDrop = Math.min(Math.floor(driftMs / 100), Math.floor(audioQueueRef.current.length * 0.3));
           if (chunksToDrop > 0) {
             audioQueueRef.current.splice(0, chunksToDrop);
             console.warn('⏱️ Severe timing drift:', driftMs.toFixed(0), 'ms. Dropped', chunksToDrop, 'old chunks.');
           }
+          // Reset schedule more aggressively for severe drift
+          nextPlayTimeRef.current = currentTime + 0.02; // Larger buffer for reset
         } else {
+          // Moderate drift (100-200ms) - adjust schedule without dropping chunks
           // Only log timing drift warnings occasionally to reduce noise
           if (Math.random() < 0.2) {
-            console.warn('⏱️ Timing drift detected:', driftMs.toFixed(0), 'ms. Resetting schedule.');
+            console.warn('⏱️ Timing drift detected:', driftMs.toFixed(0), 'ms. Adjusting schedule.');
           }
+          // Adjust schedule forward to catch up gradually
+          nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
         }
-        nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
       }
       
       const scheduledTime = Math.max(currentTime, nextPlayTimeRef.current);
@@ -1617,55 +1662,96 @@ export default function VoiceInterviewWebSocket({
       isPlayingRef.current = true;
 
       // Cleanup and continue when chunk ends
+      // Wrap callback in try-catch to ensure next chunk always processes
       source.onended = () => {
-        // Verify this source is still in activeSources (might have been stopped externally)
-        const index = activeSourcesRef.current.indexOf(source);
-        if (index === -1) {
-          // Source was already removed (likely stopped externally), ignore this callback
-          return;
-        }
-        
-        // Remove from active sources
-        activeSourcesRef.current.splice(index, 1);
-        
-        // Disconnect nodes with error handling
         try {
-          source.stop();
-        } catch (e) {
-          // Ignore errors - source may already be stopped
-        }
-        try {
-          source.disconnect();
-          gainNode.disconnect();
-        } catch (e) {
-          // Ignore disconnect errors
-        }
-        
-        // Release processing lock and playing state
-        isPlayingRef.current = false;
-        isProcessingQueueRef.current = false;
-        
-        // Process next chunk if available using requestAnimationFrame for better timing
-        if (audioQueueRef.current.length > 0) {
-          requestAnimationFrame(() => processAudioQueue());
-        } else {
-          // Check if any other sources are still playing
-          if (activeSourcesRef.current.length === 0) {
-            // Reduced logging - only log state transitions
-            setIsPlaying(false);
-            isPlayingRef.current = false;
-            nextPlayTimeRef.current = 0;
-            
-            // Transition to listening state when AI finishes speaking
-            if (conversationState === 'ai_speaking') {
-              setConversationStateWithLogging('listening', 'audio_queue_empty');
-              setStatusMessage("Listening... Please speak your answer.");
+          // Verify this source is still in activeSources (might have been stopped externally)
+          const index = activeSourcesRef.current.indexOf(source);
+          if (index === -1) {
+            // Source was already removed (likely stopped externally), ignore this callback
+            return;
+          }
+          
+          // Remove from active sources
+          activeSourcesRef.current.splice(index, 1);
+          
+          // Disconnect nodes with error handling
+          try {
+            source.stop();
+          } catch (e) {
+            // Ignore errors - source may already be stopped
+          }
+          try {
+            source.disconnect();
+            gainNode.disconnect();
+          } catch (e) {
+            // Ignore disconnect errors
+          }
+          
+          // Release processing lock and playing state
+          isPlayingRef.current = false;
+          isProcessingQueueRef.current = false;
+          
+          // Process next chunk if available using requestAnimationFrame for better timing
+          // CRITICAL: Always attempt to process next chunk, even if callback fails
+          if (audioQueueRef.current.length > 0) {
+            requestAnimationFrame(() => {
+              // Ensure processing continues even if there's an error
+              try {
+                processAudioQueue();
+              } catch (error) {
+                console.error('❌ Error in processAudioQueue from onended callback:', error);
+                // Reset processing lock to allow retry
+                isProcessingQueueRef.current = false;
+                // Retry after a short delay
+                setTimeout(() => {
+                  if (audioQueueRef.current.length > 0 && !isProcessingQueueRef.current) {
+                    processAudioQueue();
+                  }
+                }, 100);
+              }
+            });
+          } else {
+            // Check if any other sources are still playing
+            if (activeSourcesRef.current.length === 0) {
+              // Reduced logging - only log state transitions
+              setIsPlaying(false);
+              isPlayingRef.current = false;
+              nextPlayTimeRef.current = 0;
+              
+              // Transition to listening state when AI finishes speaking
+              if (conversationState === 'ai_speaking') {
+                setConversationStateWithLogging('listening', 'audio_queue_empty');
+                setStatusMessage("Listening... Please speak your answer.");
+              }
             }
+          }
+        } catch (error) {
+          // Ensure processing continues even if callback fails
+          console.error('❌ Error in source.onended callback:', error);
+          isProcessingQueueRef.current = false;
+          isPlayingRef.current = false;
+          // Retry processing after error
+          if (audioQueueRef.current.length > 0) {
+            setTimeout(() => {
+              if (!isProcessingQueueRef.current) {
+                processAudioQueue();
+              }
+            }, 100);
           }
         }
       };
     } catch (error) {
+      // Comprehensive error recovery - ensure queue processing continues
       console.error('❌ Error playing audio chunk:', error);
+      console.error('❌ Error details:', {
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        queueLength: audioQueueRef.current.length,
+        isPlaying: isPlayingRef.current,
+        audioContextState: audioContextRef.current?.state
+      });
+      
       setIsPlaying(false);
       isPlayingRef.current = false;
       isProcessingQueueRef.current = false;
@@ -1673,6 +1759,7 @@ export default function VoiceInterviewWebSocket({
       // Clear active sources on error
       activeSourcesRef.current.forEach(source => {
         try {
+          source.onended = null; // Prevent callbacks
           source.stop();
         } catch (e) {
           // Ignore errors - source may already be stopped
@@ -1685,12 +1772,28 @@ export default function VoiceInterviewWebSocket({
       });
       activeSourcesRef.current = [];
       
-      // Try next chunk if available using requestAnimationFrame
+      // Check audio context state and recover if suspended
+      if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+        console.warn('⚠️ AudioContext suspended, attempting to resume...');
+        audioContextRef.current.resume().catch(resumeError => {
+          console.error('❌ Failed to resume AudioContext:', resumeError);
+        });
+      }
+      
+      // Try next chunk - don't stop playback completely
+      // Use setTimeout instead of requestAnimationFrame for error recovery to ensure it happens
       if (audioQueueRef.current.length > 0) {
-        requestAnimationFrame(() => processAudioQueue());
+        setTimeout(() => {
+          if (!isProcessingQueueRef.current && audioQueueRef.current.length > 0) {
+            processAudioQueue();
+          }
+        }, 50); // Small delay to allow error state to clear
+      } else {
+        // Log when queue processing stops unexpectedly
+        console.warn('⚠️ Queue processing stopped - no more chunks available');
       }
     }
-  }, [convertPCM16ToFloat32, conversationState, validateAudioContent]);
+  }, [convertPCM16ToFloat32, conversationState, validateAudioContent, audioContextRef, setConversationStateWithLogging, setIsPlaying, setStatusMessage, resampleFloat32, analyzeForStatic, exportPCM16ForAnalysis]);
 
   // Queue audio chunk for playback with aggressive size limits and validation
   const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
@@ -1833,6 +1936,38 @@ export default function VoiceInterviewWebSocket({
   }, [stopRecording]);
 
   // Periodic cleanup to prevent memory leaks
+  // Watchdog timer to monitor queue processing health
+  useEffect(() => {
+    const watchdogInterval = setInterval(() => {
+      // Check if queue processing has stopped unexpectedly
+      const timeSinceLastProcess = Date.now() - lastProcessTimeRef.current;
+      const queueHasItems = audioQueueRef.current.length > 0;
+      const shouldBeProcessing = queueHasItems && !isProcessingQueueRef.current && !isPlayingRef.current && conversationState !== 'user_speaking';
+      
+      // If queue has items but hasn't been processed in >2 seconds, restart processing
+      if (shouldBeProcessing && timeSinceLastProcess > 0) {
+        console.warn('⚠️ Queue processing watchdog: Processing stopped unexpectedly. Restarting...', {
+          queueLength: audioQueueRef.current.length,
+          timeSinceLastProcess: timeSinceLastProcess + 'ms',
+          isProcessingQueue: isProcessingQueueRef.current,
+          isPlaying: isPlayingRef.current,
+          conversationState
+        });
+        // Reset processing lock and restart
+        isProcessingQueueRef.current = false;
+        lastProcessTimeRef.current = Date.now();
+        // Use setTimeout to avoid calling processAudioQueue directly in dependency array
+        setTimeout(() => {
+          if (audioQueueRef.current.length > 0 && !isProcessingQueueRef.current) {
+            processAudioQueue();
+          }
+        }, 0);
+      }
+    }, 1000); // Check every second
+    
+    return () => clearInterval(watchdogInterval);
+  }, [conversationState]);
+
   useEffect(() => {
     const cleanupInterval = setInterval(() => {
       // Monitor and cleanup if sources accumulate

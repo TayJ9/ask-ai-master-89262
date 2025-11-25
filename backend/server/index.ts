@@ -188,7 +188,7 @@ app.use((req, res, next) => {
       // This ensures all validation checks are visible in Railway logs
       try {
         // Use dynamic import for ES module
-        const { validateElevenLabsConfig } = await import("../scripts/validateElevenLabs.js");
+        const { validateElevenLabsConfig, testElevenLabsAgentConnection } = await import("../scripts/validateElevenLabs.js");
         const elevenLabsValidation = validateElevenLabsConfig();
         
         // Force a small delay to ensure all validation logs are flushed
@@ -197,6 +197,20 @@ app.use((req, res, next) => {
         if (!elevenLabsValidation.valid) {
           log(`⚠️  ElevenLabs validation failed - voice interviews may not work`);
           log(`   Fix the issues above and redeploy`);
+        } else {
+          // Test actual agent connection if basic validation passed
+          log(`🔌 Testing ElevenLabs agent connection...`);
+          try {
+            const connectionTest = await testElevenLabsAgentConnection();
+            if (connectionTest.success) {
+              log(`✅ ElevenLabs agent connection test passed - backend can interact with agent`);
+            } else if (!connectionTest.skipped) {
+              log(`⚠️  ElevenLabs agent connection test failed: ${connectionTest.reason}`);
+              log(`   Check agent permissions and API key access`);
+            }
+          } catch (connectionError: any) {
+            log(`⚠️  ElevenLabs agent connection test error: ${connectionError.message || connectionError}`);
+          }
         }
       } catch (validationError: any) {
         log(`⚠️  ElevenLabs validation script error: ${validationError.message || validationError}`);
