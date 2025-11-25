@@ -14,8 +14,7 @@ const ELEVENLABS_AGENT_ID = 'agent_8601kavsezrheczradx9qmz8qp3e';
 const ELEVENLABS_VOICE_ID = 'kdmDKE6EkgrWrrykO9Qt';
 const ELEVENLABS_LLM = 'gpt-5.1';
 
-// Import WebSocket for agent connection test (using dynamic import for ES module compatibility)
-let WebSocket: any;
+// WebSocket will be imported dynamically in testElevenLabsAgentConnection function
 
 /**
  * Validates ElevenLabs configuration and logs results
