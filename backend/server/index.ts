@@ -184,11 +184,16 @@ app.use((req, res, next) => {
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
       
-      // Validate ElevenLabs configuration
+      // Validate ElevenLabs configuration FIRST (before other initialization)
+      // This ensures all validation checks are visible in Railway logs
       try {
         // Use dynamic import for ES module
         const { validateElevenLabsConfig } = await import("../scripts/validateElevenLabs.js");
         const elevenLabsValidation = validateElevenLabsConfig();
+        
+        // Force a small delay to ensure all validation logs are flushed
+        await new Promise(resolve => setImmediate(resolve));
+        
         if (!elevenLabsValidation.valid) {
           log(`⚠️  ElevenLabs validation failed - voice interviews may not work`);
           log(`   Fix the issues above and redeploy`);
@@ -198,7 +203,7 @@ app.use((req, res, next) => {
         log(`   Continuing startup, but ElevenLabs may not be properly configured`);
       }
       
-      // Initialize WebSocket server for voice interviews
+      // Initialize WebSocket server for voice interviews AFTER validation
       try {
         createVoiceServer(server);
         log(`✅ WebSocket server initialized on path /voice`);

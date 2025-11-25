@@ -92,10 +92,12 @@ function validateElevenLabsConfig() {
     results.valid = false;
     results.errors.push('ELEVENLABS_VOICE_ID is not configured');
     console.log('   ❌ FAILED: ELEVENLABS_VOICE_ID is not set in code');
+    console.log('   [4/5] CHECK COMPLETE');
   } else {
     results.config.voiceId = ELEVENLABS_VOICE_ID;
     console.log('   ✅ PASSED: ELEVENLABS_VOICE_ID is configured');
     console.log(`   📝 Voice ID: ${ELEVENLABS_VOICE_ID}`);
+    console.log('   [4/5] CHECK COMPLETE');
   }
   
   // Check 5: ELEVENLABS_LLM (hardcoded constant)
@@ -104,10 +106,18 @@ function validateElevenLabsConfig() {
     results.valid = false;
     results.errors.push('ELEVENLABS_LLM is not configured');
     console.log('   ❌ FAILED: ELEVENLABS_LLM is not set in code');
+    console.log('   [5/5] CHECK COMPLETE');
   } else {
     results.config.llm = ELEVENLABS_LLM;
     console.log('   ✅ PASSED: ELEVENLABS_LLM is configured');
     console.log(`   📝 LLM: ${ELEVENLABS_LLM}`);
+    console.log('   [5/5] CHECK COMPLETE');
+  }
+  
+  // Force flush stdout to ensure all checks are visible before summary
+  // This helps Railway's log viewer display all checks properly
+  if (process.stdout && typeof process.stdout.write === 'function') {
+    process.stdout.write(''); // Force flush
   }
   
   // Summary
