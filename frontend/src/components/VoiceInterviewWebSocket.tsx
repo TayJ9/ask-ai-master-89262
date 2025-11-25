@@ -87,6 +87,21 @@ export default function VoiceInterviewWebSocket({
   const audioBufferAccumulatorRef = useRef<number>(0);
   const MIN_BUFFER_BEFORE_PLAYBACK = 3200; // 100ms at 16kHz (16000 samples/s * 0.1s * 2 bytes)
   
+  // ElevenLabs requires 16kHz PCM16 mono audio
+  const ELEVENLABS_SAMPLE_RATE = 16000;
+  
+  // Detect browser's native sample rate for recording
+  const getNativeSampleRate = (): number => {
+    const tempContext = new AudioContext();
+    const nativeRate = tempContext.sampleRate;
+    tempContext.close();
+    // Round to nearest supported rate (44.1kHz or 48kHz)
+    return nativeRate >= 47000 ? 48000 : 44100;
+  };
+  
+  const NATIVE_SAMPLE_RATE = getNativeSampleRate();
+  const currentSampleRateRef = useRef<number>(NATIVE_SAMPLE_RATE);
+  
   const { toast } = useToast();
   
   // Update candidateContext ref when it changes
@@ -132,6 +147,30 @@ export default function VoiceInterviewWebSocket({
     }
     return pcm16;
   };
+
+  // Encode PCM16 to base64 using chunked approach to prevent stack overflow
+  const encodePCM16ToBase64 = useCallback((pcm16: Int16Array): string => {
+    try {
+      const uint8Array = new Uint8Array(pcm16.buffer);
+      const chunkSize = 8192; // Process in chunks to avoid stack overflow
+      
+      // For small arrays, use direct encoding
+      if (uint8Array.length <= chunkSize) {
+        return btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+      }
+      
+      // For large arrays, process in chunks
+      let result = '';
+      for (let i = 0; i < uint8Array.length; i += chunkSize) {
+        const chunk = uint8Array.slice(i, i + chunkSize);
+        result += String.fromCharCode.apply(null, Array.from(chunk));
+      }
+      return btoa(result);
+    } catch (error) {
+      console.error('❌ Error encoding PCM16 to base64:', error);
+      throw new Error('Failed to encode audio data');
+    }
+  }, []);
 
   // Helper function to log state transitions
   const logStateTransition = useCallback((newState: 'ai_speaking' | 'listening' | 'user_speaking' | 'processing', reason?: string) => {
@@ -270,9 +309,11 @@ export default function VoiceInterviewWebSocket({
         }, 30000);
         
         // Initialize AudioContext early to handle autoplay policies
+        // Use native sample rate to match browser capabilities and prevent resampling artifacts
         if (!audioContextRef.current) {
           // Reduced logging
-          audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+          audioContextRef.current = new AudioContext({ sampleRate: NATIVE_SAMPLE_RATE });
+          currentSampleRateRef.current = audioContextRef.current.sampleRate; // Store actual rate
           if (audioContextRef.current.state === 'suspended') {
             audioContextRef.current.resume().catch((error) => {
               console.error('❌ Failed to resume AudioContext:', error);
@@ -983,6 +1024,52 @@ export default function VoiceInterviewWebSocket({
     
     return float32Array;
   }, []);
+
+  // Resample Float32Array from source sample rate to target sample rate using linear interpolation
+  // This is used to resample ElevenLabs 16kHz audio to browser's native rate before playback
+  // Eliminates browser-side resampling which can introduce artifacts
+  const resampleFloat32 = useCallback((inputData: Float32Array<ArrayBuffer>, sourceSampleRate: number, targetSampleRate: number): Float32Array<ArrayBuffer> => {
+    // Validate input data
+    if (!inputData || inputData.length === 0) {
+      throw new Error('Empty input data provided for resampling');
+    }
+    
+    // Validate sample rates
+    if (sourceSampleRate <= 0 || targetSampleRate <= 0) {
+      throw new Error(`Invalid sample rate: source=${sourceSampleRate}, target=${targetSampleRate}`);
+    }
+    
+    if (sourceSampleRate === targetSampleRate) {
+      return inputData; // No resampling needed
+    }
+
+    const ratio = targetSampleRate / sourceSampleRate;
+    const outputLength = Math.ceil(inputData.length * ratio);
+    const buffer = new ArrayBuffer(outputLength * 4); // 4 bytes per float32
+    const output = new Float32Array(buffer);
+
+    // Linear interpolation resampling
+    for (let i = 0; i < outputLength; i++) {
+      const sourcePos = i / ratio;
+      const sourceIndex = Math.floor(sourcePos);
+      const fraction = sourcePos - sourceIndex;
+
+      if (sourceIndex + 1 < inputData.length) {
+        // Linear interpolation between two samples
+        const sample1 = inputData[sourceIndex];
+        const sample2 = inputData[sourceIndex + 1];
+        output[i] = sample1 + (sample2 - sample1) * fraction;
+      } else if (sourceIndex < inputData.length) {
+        // Last sample, no interpolation needed
+        output[i] = inputData[sourceIndex];
+      } else {
+        // Beyond source data, use last sample
+        output[i] = inputData[inputData.length - 1];
+      }
+    }
+
+    return output;
+  }, []);
   
   // Export raw PCM16 data for external analysis (for debugging static issues)
   const exportPCM16ForAnalysis = useCallback((pcm16Array: Int16Array, chunkId: string) => {
@@ -1058,30 +1145,33 @@ export default function VoiceInterviewWebSocket({
     }
 
     try {
-      // Initialize AudioContext with correct sample rate (16000 Hz to match ElevenLabs)
-      // CRITICAL: Must match source sample rate exactly to avoid resampling artifacts
+      // Initialize AudioContext with browser's native sample rate
+      // CRITICAL: Use native rate to prevent browser-side resampling artifacts
+      // Backend will resample to 16kHz before sending to ElevenLabs
       if (!audioContextRef.current) {
         try {
-          // Try to create AudioContext with exact 16kHz sample rate
-          audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+          // Create AudioContext with browser's native sample rate
+          audioContextRef.current = new AudioContext({ sampleRate: NATIVE_SAMPLE_RATE });
           const actualSampleRate = audioContextRef.current.sampleRate;
+          currentSampleRateRef.current = actualSampleRate; // Store actual rate
           
           console.log(`[AUDIO-DIAG] AudioContext Initialization:`, {
-            requestedSampleRate: 16000,
+            requestedSampleRate: NATIVE_SAMPLE_RATE,
             actualSampleRate,
-            sampleRateMatch: actualSampleRate === 16000,
-            willResample: actualSampleRate !== 16000,
-            state: audioContextRef.current.state
+            sampleRateMatch: actualSampleRate === NATIVE_SAMPLE_RATE,
+            willResample: actualSampleRate !== NATIVE_SAMPLE_RATE,
+            state: audioContextRef.current.state,
+            note: 'Backend will resample to 16kHz for ElevenLabs'
           });
           
-          if (Math.abs(actualSampleRate - 16000) > 0.1) {
+          if (Math.abs(actualSampleRate - NATIVE_SAMPLE_RATE) > 0.1) {
             console.error(`[AUDIO-DIAG] ⚠️ CRITICAL: AudioContext sample rate mismatch!`, {
-              requested: 16000,
+              requested: NATIVE_SAMPLE_RATE,
               actual: actualSampleRate,
-              difference: Math.abs(actualSampleRate - 16000),
+              difference: Math.abs(actualSampleRate - NATIVE_SAMPLE_RATE),
               impact: 'Resampling will introduce artifacts and static'
             });
-            console.warn(`[AUDIO-DIAG] Browser may not support 16kHz AudioContext. Static may be caused by resampling.`);
+            console.warn(`[AUDIO-DIAG] Browser may not support ${NATIVE_SAMPLE_RATE}Hz AudioContext. Static may be caused by resampling.`);
           }
           
           if (audioContextRef.current.state === 'suspended') {
@@ -1260,7 +1350,7 @@ export default function VoiceInterviewWebSocket({
         maxSample,
         avgAmplitude: avgSample.toFixed(2),
         range: maxSample - minSample,
-        durationMs: (pcm16Data.length / 16000) * 1000,
+        durationMs: (pcm16Data.length / ELEVENLABS_SAMPLE_RATE) * 1000,
         normalizationApplied,
         normalizationFactor: normalizationApplied ? normalizationFactor.toFixed(4) : 1.0,
         peakAmplitude: Math.max(Math.abs(maxSample), Math.abs(minSample))
@@ -1316,40 +1406,59 @@ export default function VoiceInterviewWebSocket({
       }
       
       // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 4: AudioBuffer Creation
-      const sourceSampleRate = 16000;
+      // Stage 4: Resample to AudioContext's native rate (eliminates browser-side resampling)
+      // ElevenLabs sends 16kHz audio, but AudioContext is at NATIVE_SAMPLE_RATE
+      // Resample on frontend to avoid browser-side resampling artifacts
+      const sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // ElevenLabs sends 16kHz
       const audioContextSampleRate = audioContext.sampleRate;
       const needsResampling = audioContextSampleRate !== sourceSampleRate;
       
-      // Validate buffer size is reasonable (max 10 seconds)
-      // At 16kHz, 10 seconds = 160,000 samples
-      const maxSamples = sourceSampleRate * 10;
-      let finalFloat32Data = float32Data;
-      if (float32Data.length > maxSamples) {
-        console.warn('⚠️ Audio buffer unusually large:', float32Data.length, 'samples (', (float32Data.length / sourceSampleRate).toFixed(2), 'seconds). Truncating to', maxSamples, 'samples.');
-        finalFloat32Data = float32Data.slice(0, maxSamples);
+      // Resample Float32 data to match AudioContext's native sample rate
+      let resampledFloat32Data = float32Data;
+      if (needsResampling) {
+        console.log(`[AUDIO-DIAG] Resampling audio from ${sourceSampleRate}Hz to ${audioContextSampleRate}Hz to match AudioContext`);
+        const startTime = Date.now();
+        resampledFloat32Data = resampleFloat32(float32Data, sourceSampleRate, audioContextSampleRate);
+        const resampleTime = Date.now() - startTime;
+        console.log(`[AUDIO-DIAG] Resampling complete: ${float32Data.length} samples → ${resampledFloat32Data.length} samples (${resampleTime}ms)`);
+      }
+      
+      // Validate buffer size is reasonable (max 10 seconds at target rate)
+      const maxSamples = audioContextSampleRate * 10;
+      let finalFloat32Data = resampledFloat32Data;
+      if (finalFloat32Data.length > maxSamples) {
+        console.warn('⚠️ Audio buffer unusually large:', finalFloat32Data.length, 'samples (', (finalFloat32Data.length / audioContextSampleRate).toFixed(2), 'seconds). Truncating to', maxSamples, 'samples.');
+        finalFloat32Data = finalFloat32Data.slice(0, maxSamples);
+      }
+      
+      // Validate buffer length before creating AudioBuffer
+      if (finalFloat32Data.length === 0) {
+        console.warn(`[AUDIO-DIAG] Empty float32 data after resampling:`, { chunkId });
+        isProcessingQueueRef.current = false;
+        if (audioQueueRef.current.length > 0) {
+          requestAnimationFrame(() => processAudioQueue());
+        }
+        return;
       }
       
       let audioBuffer: AudioBuffer;
       try {
-        audioBuffer = audioContext.createBuffer(1, finalFloat32Data.length, sourceSampleRate);
+        // Create AudioBuffer at AudioContext's native sample rate (no browser resampling needed)
+        audioBuffer = audioContext.createBuffer(1, finalFloat32Data.length, audioContextSampleRate);
         audioBuffer.copyToChannel(finalFloat32Data, 0);
         
         console.log(`[AUDIO-DIAG] Stage 4 - AudioBuffer Creation:`, {
           chunkId,
           bufferSampleRate: audioBuffer.sampleRate,
           audioContextSampleRate,
-          needsResampling,
+          sourceSampleRate,
+          resampled: needsResampling,
           bufferLength: audioBuffer.length,
           bufferDuration: audioBuffer.duration.toFixed(3) + 's',
           numberOfChannels: audioBuffer.numberOfChannels,
-          matchesFloat32: audioBuffer.length === finalFloat32Data.length
+          matchesFloat32: audioBuffer.length === finalFloat32Data.length,
+          note: needsResampling ? 'Resampled on frontend - no browser resampling' : 'No resampling needed'
         });
-        
-        if (needsResampling) {
-          console.warn(`[AUDIO-DIAG] ⚠️ SAMPLE RATE MISMATCH: AudioContext (${audioContextSampleRate}Hz) will resample from ${sourceSampleRate}Hz`);
-          console.warn(`[AUDIO-DIAG] This may introduce artifacts. Consider matching AudioContext sample rate to source.`);
-        }
       } catch (error) {
         console.error('❌ Failed to create audio buffer:', error);
         console.error(`[AUDIO-DIAG] Buffer creation failed:`, {
@@ -1824,7 +1933,7 @@ export default function VoiceInterviewWebSocket({
                 size: arrayBuffer.byteLength,
                 isMultipleOf2: arrayBuffer.byteLength % 2 === 0,
                 expectedSamples: arrayBuffer.byteLength / 2,
-                expectedDurationMs: (arrayBuffer.byteLength / 2 / 16000) * 1000,
+                expectedDurationMs: (arrayBuffer.byteLength / 2 / ELEVENLABS_SAMPLE_RATE) * 1000,
                 timeSinceLastChunk: lastChunkReceiveTimeRef.current ? now - lastChunkReceiveTimeRef.current : null
               });
               
@@ -2000,21 +2109,28 @@ export default function VoiceInterviewWebSocket({
   // Start recording microphone using AudioWorkletNode (replaces deprecated ScriptProcessorNode)
   const startRecording = useCallback(async () => {
     try {
-      // Request microphone access
+      // Request microphone access with native sample rate
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
-          sampleRate: 16000,
+          sampleRate: NATIVE_SAMPLE_RATE,
           channelCount: 1,
         }
       });
 
       mediaStreamRef.current = stream;
 
-      // Create AudioContext for processing raw audio
+      // Create AudioContext for processing raw audio with native sample rate
+      // Note: AudioContext is shared between playback and recording to ensure consistency
       if (!audioContextRef.current) {
-        audioContextRef.current = new AudioContext({ sampleRate: 16000 });
+        audioContextRef.current = new AudioContext({ sampleRate: NATIVE_SAMPLE_RATE });
+        currentSampleRateRef.current = audioContextRef.current.sampleRate; // Store actual rate
+        console.log(`[AUDIO] AudioContext created with sample rate: ${currentSampleRateRef.current}Hz`);
+      } else {
+        // Update sample rate ref if AudioContext already exists (from playback initialization)
+        currentSampleRateRef.current = audioContextRef.current.sampleRate;
+        console.log(`[AUDIO] Using existing AudioContext with sample rate: ${currentSampleRateRef.current}Hz`);
       }
 
       const audioContext = audioContextRef.current;
@@ -2044,12 +2160,14 @@ export default function VoiceInterviewWebSocket({
             // Convert to PCM16
             const pcm16 = convertToPCM16(inputData);
             
-            // Send as base64 encoded audio chunk
-            const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+            // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
+            const base64 = encodePCM16ToBase64(pcm16);
             
             wsRef.current.send(JSON.stringify({
               type: 'audio_chunk',
-              audio: base64
+              audio: base64,
+              sampleRate: currentSampleRateRef.current, // Include sample rate for backend resampling
+              channels: 1 // Mono audio
             }));
           }
         };
@@ -2073,12 +2191,14 @@ export default function VoiceInterviewWebSocket({
           // Convert to PCM16
           const pcm16 = convertToPCM16(inputData);
           
-          // Send as base64 encoded audio chunk
-          const base64 = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
+          // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
+          const base64 = encodePCM16ToBase64(pcm16);
           
           wsRef.current.send(JSON.stringify({
             type: 'audio_chunk',
-            audio: base64
+            audio: base64,
+            sampleRate: currentSampleRateRef.current, // Include sample rate for backend resampling
+            channels: 1 // Mono audio
           }));
         };
         

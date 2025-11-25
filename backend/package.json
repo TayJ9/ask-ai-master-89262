@@ -29,7 +29,7 @@
   "dependencies": {
     "@google-cloud/functions-framework": "^3.0.0",
     "@neondatabase/serverless": "^0.9.0",
-    "pg": "^8.11.3",
+    "audio-resampler": "^1.0.1",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -41,6 +41,7 @@
     "multer": "^2.0.2",
     "openai": "^4.28.0",
     "pdf-parse": "^1.1.1",
+    "pg": "^8.11.3",
     "tsx": "^4.7.0",
     "uuid": "^9.0.1",
     "vite": "^5.2.0",

@@ -2,6 +2,7 @@
 // Voice Interview WebSocket Server
 // ============================================================================
 const WebSocket = require('ws');
+const { resampleAudio, estimateSampleRate, isValidPCM16 } = require('./audioResampler');
 
 const OPENAI_REALTIME_API_URL = 'wss://api.openai.com/v1/realtime';
 const OPENAI_MODEL = 'gpt-4o-mini-realtime-preview-2024-12-17';
@@ -12,6 +13,7 @@ const ELEVENLABS_API_URL = 'wss://api.elevenlabs.io/v1/convai/conversation';
 const ELEVENLABS_AGENT_ID = 'agent_8601kavsezrheczradx9qmz8qp3e';
 const ELEVENLABS_VOICE_ID = 'kdmDKE6EkgrWrrykO9Qt';
 const ELEVENLABS_LLM = 'gpt-5.1';
+const ELEVENLABS_SAMPLE_RATE = 16000; // ElevenLabs requires 16kHz PCM16 mono
 
 function createSystemPrompt(candidateContext) {
   const { name, major, year, skills = [], experience, education, summary } = candidateContext;
@@ -387,6 +389,11 @@ function createElevenLabsConnection(apiKey, candidateContext) {
         agent_id: ELEVENLABS_AGENT_ID,
         voice_id: ELEVENLABS_VOICE_ID,
         llm: ELEVENLABS_LLM,
+        input_audio_format: {
+          sample_rate: ELEVENLABS_SAMPLE_RATE, // ElevenLabs requires 16kHz PCM16 mono
+          encoding: 'pcm16',
+          channels: 1 // Mono
+        },
         context: {
           resume: elevenLabsContext.resume,
           major: elevenLabsContext.major,
@@ -401,6 +408,7 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       console.log('   Agent ID:', ELEVENLABS_AGENT_ID);
       console.log('   Voice ID:', ELEVENLABS_VOICE_ID);
       console.log('   LLM:', ELEVENLABS_LLM);
+      console.log('   Input Audio Format: 16kHz PCM16 mono');
       console.log('   Context Variables:', JSON.stringify(elevenLabsContext, null, 2));
       
       // Resolve immediately - we'll handle conversation events in the main handler
@@ -487,15 +495,51 @@ function handleFrontendConnection(frontendWs, httpServer) {
         // Forward to ElevenLabs if active
         if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'elevenlabs') {
           try {
-            const audioBase64 = data instanceof Buffer ? data.toString('base64') : Buffer.from(rawData).toString('base64');
+            // Convert to buffer
+            const audioBuffer = data instanceof Buffer ? data : Buffer.from(rawData);
+            
+            // Validate PCM16 format
+            if (!isValidPCM16(audioBuffer)) {
+              console.error('❌ Invalid PCM16 binary audio format: buffer length must be multiple of 2');
+              return;
+            }
+            
+            // Estimate sample rate (binary data doesn't include metadata)
+            // Default to 48kHz (most common browser rate) if unknown
+            const estimatedSampleRate = estimateSampleRate(audioBuffer);
+            console.log(`[AUDIO-RESAMPLE] Binary audio detected: ${audioBuffer.length} bytes, estimated ${estimatedSampleRate}Hz`);
+            
+            // Resample to 16kHz if needed
+            let finalBuffer;
+            if (estimatedSampleRate === ELEVENLABS_SAMPLE_RATE) {
+              console.log(`[AUDIO-RESAMPLE] ✅ Binary audio already at ${ELEVENLABS_SAMPLE_RATE}Hz - no resampling needed`);
+              finalBuffer = audioBuffer;
+            } else {
+              console.log(`[AUDIO-RESAMPLE] 🔄 Resampling binary audio ${estimatedSampleRate}Hz → ${ELEVENLABS_SAMPLE_RATE}Hz`);
+              // Note: Binary audio format is assumed to be mono (1 channel)
+              // If stereo binary audio is received, it will be incorrectly processed
+              // This is acceptable as ElevenLabs expects mono input
+              const resampleResult = resampleAudio(
+                audioBuffer,
+                estimatedSampleRate,
+                ELEVENLABS_SAMPLE_RATE,
+                1, // Assume mono for binary data
+                { logDetails: true }
+              );
+              finalBuffer = resampleResult.buffer;
+            }
+            
+            // Encode to base64
+            const audioBase64 = finalBuffer.toString('base64');
             const audioMessage = {
               type: 'audio_input',
               audio: audioBase64
             };
             elevenLabsWs.send(JSON.stringify(audioMessage));
-            console.log('✅ Forwarded binary audio to ElevenLabs (16kHz PCM)');
+            console.log(`✅ Forwarded binary audio to ElevenLabs (${ELEVENLABS_SAMPLE_RATE}Hz PCM mono)`);
           } catch (error) {
             console.error('❌ Error forwarding binary audio to ElevenLabs:', error);
+            console.error('   Error details:', error.message);
           }
         }
         // Forward to OpenAI if active (fallback)
@@ -644,40 +688,6 @@ function handleFrontendConnection(frontendWs, httpServer) {
                     
                     // Validate minimum chunk size (320 bytes = 20ms at 16kHz)
                     const MIN_CHUNK_SIZE = 320;
-                    const MIN_AUDIO_CHUNK_SIZE = 100; // Chunks smaller than this are likely keepalive/silence
-                    
-                    // Filter out very small chunks (likely keepalive/silence packets)
-                    if (combinedBuffer.length < MIN_AUDIO_CHUNK_SIZE) {
-                      console.log(`🔇 Skipping silence packet from ElevenLabs: ${combinedBuffer.length} bytes`);
-                      return; // Don't forward silence/keepalive packets
-                    }
-                    
-                    // Check if audio content is silence (all zeros or very low amplitude)
-                    try {
-                      const pcm16Data = new Int16Array(combinedBuffer.buffer, combinedBuffer.byteOffset, combinedBuffer.length / 2);
-                      if (pcm16Data.length > 0) {
-                        // Calculate RMS to detect silence
-                        let sumSquares = 0;
-                        let maxAmplitude = 0;
-                        for (let i = 0; i < pcm16Data.length; i++) {
-                          const sample = Math.abs(pcm16Data[i]);
-                          sumSquares += sample * sample;
-                          maxAmplitude = Math.max(maxAmplitude, sample);
-                        }
-                        const rms = Math.sqrt(sumSquares / pcm16Data.length);
-                        const SILENCE_THRESHOLD = 100;
-                        
-                        // If RMS is very low, it's silence
-                        if (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2) {
-                          console.log(`🔇 Skipping silence packet from ElevenLabs: ${combinedBuffer.length} bytes (RMS: ${rms.toFixed(1)})`);
-                          return; // Don't forward silence
-                        }
-                      }
-                    } catch (error) {
-                      // If we can't analyze, forward anyway (safer)
-                      console.warn(`⚠️ Could not analyze audio content: ${error.message}`);
-                    }
-                    
                     if (combinedBuffer.length < MIN_CHUNK_SIZE && combinedBuffer.length > 0) {
                       console.warn(`⚠️ Very small chunk from ElevenLabs: ${combinedBuffer.length} bytes (< ${MIN_CHUNK_SIZE} bytes). Forwarding anyway.`);
                     }
@@ -757,36 +767,6 @@ function handleFrontendConnection(frontendWs, httpServer) {
                             pendingAudioBuffer = combinedBuffer;
                             console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes`);
                             break; // Don't forward incomplete chunk
-                          }
-                          
-                          // Filter out very small chunks (likely keepalive/silence packets)
-                          const MIN_AUDIO_CHUNK_SIZE = 100;
-                          if (combinedBuffer.length < MIN_AUDIO_CHUNK_SIZE) {
-                            console.log(`🔇 Skipping silence packet from ElevenLabs (base64): ${combinedBuffer.length} bytes`);
-                            break; // Don't forward silence/keepalive packets
-                          }
-                          
-                          // Check if audio content is silence
-                          try {
-                            const pcm16Data = new Int16Array(combinedBuffer.buffer, combinedBuffer.byteOffset, combinedBuffer.length / 2);
-                            if (pcm16Data.length > 0) {
-                              let sumSquares = 0;
-                              let maxAmplitude = 0;
-                              for (let i = 0; i < pcm16Data.length; i++) {
-                                const sample = Math.abs(pcm16Data[i]);
-                                sumSquares += sample * sample;
-                                maxAmplitude = Math.max(maxAmplitude, sample);
-                              }
-                              const rms = Math.sqrt(sumSquares / pcm16Data.length);
-                              const SILENCE_THRESHOLD = 100;
-                              
-                              if (rms < SILENCE_THRESHOLD && maxAmplitude < SILENCE_THRESHOLD * 2) {
-                                console.log(`🔇 Skipping silence packet from ElevenLabs (base64): ${combinedBuffer.length} bytes (RMS: ${rms.toFixed(1)})`);
-                                break; // Don't forward silence
-                              }
-                            }
-                          } catch (error) {
-                            console.warn(`⚠️ Could not analyze audio content (base64): ${error.message}`);
                           }
                           
                           // Forward complete PCM frame
@@ -1369,15 +1349,62 @@ function handleFrontendConnection(frontendWs, httpServer) {
         // Forward to ElevenLabs if active
         if (elevenLabsWs && elevenLabsWs.readyState === WebSocket.OPEN && isInterviewActive && currentProvider === 'elevenlabs') {
           try {
-            // ElevenLabs expects audio in specific format - send as base64 or binary
+            // Decode base64 audio
+            const audioBuffer = Buffer.from(message.audio, 'base64');
+            
+            // Validate PCM16 format
+            if (!isValidPCM16(audioBuffer)) {
+              console.error('❌ Invalid PCM16 audio format: buffer length must be multiple of 2');
+              return;
+            }
+            
+            // Get source sample rate from message or estimate
+            const sourceSampleRate = message.sampleRate || estimateSampleRate(audioBuffer);
+            const sourceChannels = message.channels || 1;
+            const targetSampleRate = ELEVENLABS_SAMPLE_RATE; // ElevenLabs requires 16kHz
+            
+            console.log(`[AUDIO-RESAMPLE] Received audio: ${audioBuffer.length} bytes, ${sourceSampleRate}Hz, ${sourceChannels} channel(s)`);
+            
+            // Resample to 16kHz if needed
+            let resampledAudio;
+            let finalBase64;
+            
+            if (sourceSampleRate === targetSampleRate && sourceChannels === 1) {
+              // Already correct format
+              console.log(`[AUDIO-RESAMPLE] ✅ Audio already at ${targetSampleRate}Hz mono - no resampling needed`);
+              finalBase64 = message.audio; // Use original base64
+            } else {
+              // Resample to ELEVENLABS_SAMPLE_RATE (16kHz) mono
+              console.log(`[AUDIO-RESAMPLE] 🔄 Resampling ${sourceSampleRate}Hz → ${targetSampleRate}Hz${sourceChannels === 2 ? ' (stereo → mono)' : ''}`);
+              
+              const resampleResult = resampleAudio(
+                audioBuffer,
+                sourceSampleRate,
+                targetSampleRate,
+                sourceChannels,
+                { logDetails: true }
+              );
+              
+              resampledAudio = resampleResult.buffer;
+              
+              // Re-encode to base64
+              finalBase64 = resampledAudio.toString('base64');
+              
+              console.log(`[AUDIO-RESAMPLE] ✅ Resampling complete: ${audioBuffer.length} bytes → ${resampledAudio.length} bytes`);
+            }
+            
+            // Send to ElevenLabs with correct format
             const audioMessage = {
               type: 'audio_input',
-              audio: message.audio // Base64 encoded PCM16 audio
+              audio: finalBase64 // Base64 encoded PCM16 audio at ELEVENLABS_SAMPLE_RATE (16kHz) mono
             };
+            
             elevenLabsWs.send(JSON.stringify(audioMessage));
-            console.log('✅ Forwarded audio_chunk to ElevenLabs');
+            console.log(`✅ Forwarded audio_chunk to ElevenLabs (${targetSampleRate}Hz PCM16 mono)`);
           } catch (error) {
-            console.error('❌ Error forwarding audio to ElevenLabs:', error);
+            console.error('❌ Error processing/forwarding audio to ElevenLabs:', error);
+            console.error('   Error details:', error.message);
+            console.error('   Stack:', error.stack);
           }
         }
         // Forward to OpenAI if active (fallback)
