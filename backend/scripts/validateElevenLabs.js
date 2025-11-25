@@ -123,6 +123,52 @@ function validateElevenLabsConfig(testConnection = false) {
     process.stdout.write(''); // Force flush
   }
   
+  // Summary
+  console.log('\n' + '='.repeat(80));
+  console.log('📊 VALIDATION SUMMARY');
+  console.log('='.repeat(80));
+  
+  if (results.valid && results.errors.length === 0) {
+    console.log('✅ ALL CHECKS PASSED - ElevenLabs is properly configured!');
+    console.log('\n📋 Configuration Summary:');
+    console.log(`   API Key: ${results.config.apiKey || 'NOT SET'}`);
+    console.log(`   Voice Provider: ${results.config.voiceProvider}`);
+    console.log(`   Agent ID: ${results.config.agentId || 'NOT SET'}`);
+    console.log(`   Voice ID: ${results.config.voiceId || 'NOT SET'}`);
+    console.log(`   LLM: ${results.config.llm || 'NOT SET'}`);
+    console.log(`   API URL: ${ELEVENLABS_API_URL}`);
+  } else {
+    console.log('❌ VALIDATION FAILED - Please fix the following issues:');
+    results.errors.forEach((error, index) => {
+      console.log(`   ${index + 1}. ${error}`);
+    });
+    
+    if (results.warnings.length > 0) {
+      console.log('\n⚠️  WARNINGS:');
+      results.warnings.forEach((warning, index) => {
+        console.log(`   ${index + 1}. ${warning}`);
+      });
+    }
+    
+    console.log('\n💡 FIX INSTRUCTIONS:');
+    console.log('   1. Go to Railway Dashboard > Your Project > Settings > Variables');
+    console.log('   2. Add ELEVENLABS_API_KEY with your ElevenLabs API key');
+    console.log('   3. Redeploy the service');
+    console.log('   4. Verify the key is correct (starts with your account prefix)');
+  }
+  
+  console.log('='.repeat(80) + '\n');
+  
+  // If testConnection is true, return a promise that includes connection test
+  if (testConnection) {
+    return testElevenLabsAgentConnection().then(connectionTest => {
+      return {
+        ...results,
+        connectionTest
+      };
+    });
+  }
+  
   return results;
 }
 
@@ -226,55 +272,6 @@ async function testElevenLabsAgentConnection() {
       resolve({ success: false, reason: error.message || 'Exception' });
     }
   });
-}
-  
-  // Summary
-  console.log('\n' + '='.repeat(80));
-  console.log('📊 VALIDATION SUMMARY');
-  console.log('='.repeat(80));
-  
-  if (results.valid && results.errors.length === 0) {
-    console.log('✅ ALL CHECKS PASSED - ElevenLabs is properly configured!');
-    console.log('\n📋 Configuration Summary:');
-    console.log(`   API Key: ${results.config.apiKey || 'NOT SET'}`);
-    console.log(`   Voice Provider: ${results.config.voiceProvider}`);
-    console.log(`   Agent ID: ${results.config.agentId || 'NOT SET'}`);
-    console.log(`   Voice ID: ${results.config.voiceId || 'NOT SET'}`);
-    console.log(`   LLM: ${results.config.llm || 'NOT SET'}`);
-    console.log(`   API URL: ${ELEVENLABS_API_URL}`);
-  } else {
-    console.log('❌ VALIDATION FAILED - Please fix the following issues:');
-    results.errors.forEach((error, index) => {
-      console.log(`   ${index + 1}. ${error}`);
-    });
-    
-    if (results.warnings.length > 0) {
-      console.log('\n⚠️  WARNINGS:');
-      results.warnings.forEach((warning, index) => {
-        console.log(`   ${index + 1}. ${warning}`);
-      });
-    }
-    
-    console.log('\n💡 FIX INSTRUCTIONS:');
-    console.log('   1. Go to Railway Dashboard > Your Project > Settings > Variables');
-    console.log('   2. Add ELEVENLABS_API_KEY with your ElevenLabs API key');
-    console.log('   3. Redeploy the service');
-    console.log('   4. Verify the key is correct (starts with your account prefix)');
-  }
-  
-  console.log('='.repeat(80) + '\n');
-  
-  // If testConnection is true, return a promise that includes connection test
-  if (testConnection) {
-    return testElevenLabsAgentConnection().then(connectionTest => {
-      return {
-        ...results,
-        connectionTest
-      };
-    });
-  }
-  
-  return results;
 }
 
 // Export for use in other files
