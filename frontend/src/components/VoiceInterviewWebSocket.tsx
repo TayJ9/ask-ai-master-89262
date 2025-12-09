@@ -708,9 +708,19 @@ export default function VoiceInterviewWebSocket({
     
     // Check if audio content is silence (all zeros or very low amplitude)
     try {
-      const pcm16Data = new Int16Array(arrayBuffer);
-      if (pcm16Data.length === 0) {
+      // CRITICAL: Use DataView with explicit little-endian reading to match main processing
+      // This ensures consistent endianness handling throughout the audio pipeline
+      const dataView = new DataView(arrayBuffer);
+      const sampleCount = arrayBuffer.byteLength / 2;
+      
+      if (sampleCount === 0) {
         return true;
+      }
+      
+      // Read samples as little-endian Int16 (matching ElevenLabs format)
+      const pcm16Data = new Int16Array(sampleCount);
+      for (let i = 0; i < sampleCount; i++) {
+        pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
       }
       
       // Calculate RMS (Root Mean Square) to detect silence
@@ -1365,9 +1375,9 @@ export default function VoiceInterviewWebSocket({
       const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
       
       // Create Int16Array with error handling
-      // CRITICAL: PCM16 audio is little-endian (standard for audio)
-      // Int16Array uses platform byte order, but we need to ensure little-endian
-      // For safety, we'll use DataView to read with explicit little-endian, then create Int16Array
+      // CRITICAL: PCM16 audio from ElevenLabs is little-endian (standard for audio)
+      // We MUST use DataView with explicit little-endian reading to prevent endianness mismatch
+      // Int16Array uses platform byte order which can cause issues on some systems
       let pcm16Data: Int16Array;
       try {
         // Verify byte length is multiple of 2 (required for Int16)
@@ -1375,22 +1385,41 @@ export default function VoiceInterviewWebSocket({
           throw new Error(`Invalid buffer size: ${arrayBuffer.byteLength} bytes (not multiple of 2)`);
         }
         
-        // Create Int16Array directly from ArrayBuffer
-        // Note: Int16Array reads bytes in platform byte order (little-endian on x86/x64)
-        // PCM16 audio is little-endian, so this should work correctly on most systems
-        pcm16Data = new Int16Array(arrayBuffer);
+        // CRITICAL FIX: Use DataView to explicitly read Int16 values as little-endian
+        // This prevents endianness mismatch that causes high-amplitude noise (~32000)
+        const dataView = new DataView(arrayBuffer);
+        const sampleCount = arrayBuffer.byteLength / 2;
+        pcm16Data = new Int16Array(sampleCount);
+        
+        // Read each Int16 sample as little-endian (true = little-endian)
+        // ElevenLabs sends PCM16 in little-endian format
+        for (let i = 0; i < sampleCount; i++) {
+          pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
+        }
         
         // Verify the data is valid PCM16 (samples should be in range -32768 to 32767)
-        // Quick sanity check: verify first few samples are reasonable
+        // Check for suspicious high-amplitude values that indicate endianness issues
         if (pcm16Data.length > 0) {
           const firstSample = pcm16Data[0];
-          const isOutOfRange = Math.abs(firstSample) > 32768;
-          if (isOutOfRange && Math.random() < 0.1) {
+          const maxSample = Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))));
+          const minSample = Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))));
+          const isOutOfRange = Math.abs(firstSample) > 32767;
+          const hasHighAmplitudeNoise = Math.abs(maxSample) > 30000 || Math.abs(minSample) < -30000;
+          
+          if (hasHighAmplitudeNoise) {
+            console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE NOISE DETECTED:`, {
+              chunkId,
+              firstSample,
+              maxSample,
+              minSample,
+              note: 'This may indicate endianness mismatch - using DataView with little-endian'
+            });
+          } else if (isOutOfRange && Math.random() < 0.1) {
             console.warn(`[AUDIO-DIAG] ⚠️ Suspicious PCM16 sample value: ${firstSample} (expected range: -32768 to 32767)`);
           }
         }
         
-        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation:`, {
+        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation (DataView little-endian):`, {
           chunkId,
           bufferSize: arrayBuffer.byteLength,
           sampleCount: pcm16Data.length,
@@ -1400,7 +1429,8 @@ export default function VoiceInterviewWebSocket({
           sampleRange: pcm16Data.length > 0 ? {
             min: Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length)))),
             max: Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))))
-          } : null
+          } : null,
+          endianness: 'little-endian (explicit via DataView)'
         });
       } catch (error) {
         console.error('❌ RangeError creating Int16Array:', error);
