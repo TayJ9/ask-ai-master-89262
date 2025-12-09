@@ -857,6 +857,43 @@ export default function VoiceInterviewWebSocket({
     return completeFrames;
   }, [isSilencePacket]);
   
+  // Apply filtering to reduce static-like noise in PCM16 audio
+  const applyStaticFilter = useCallback((pcm16Array: Int16Array): Int16Array => {
+    // Simple high-frequency filter to reduce static
+    // Uses a moving average to smooth out high-frequency noise
+    const filtered = new Int16Array(pcm16Array.length);
+    const filterSize = 3; // Small filter for minimal latency
+    
+    for (let i = 0; i < pcm16Array.length; i++) {
+      let sum = 0;
+      let count = 0;
+      const start = Math.max(0, i - Math.floor(filterSize / 2));
+      const end = Math.min(pcm16Array.length, i + Math.ceil(filterSize / 2));
+      
+      for (let j = start; j < end; j++) {
+        sum += pcm16Array[j];
+        count++;
+      }
+      filtered[i] = Math.round(sum / count);
+    }
+    
+    // Remove DC bias (center around zero)
+    let dcBias = 0;
+    for (let i = 0; i < filtered.length; i++) {
+      dcBias += filtered[i];
+    }
+    dcBias = Math.round(dcBias / filtered.length);
+    
+    if (Math.abs(dcBias) > 10) {
+      // Remove significant DC bias
+      for (let i = 0; i < filtered.length; i++) {
+        filtered[i] -= dcBias;
+      }
+    }
+    
+    return filtered;
+  }, []);
+
   // Analyze PCM16 data for static/noise patterns
   const analyzeForStatic = useCallback((pcm16Array: Int16Array): {
     hasStatic: boolean;
@@ -906,14 +943,18 @@ export default function VoiceInterviewWebSocket({
     const peakToPeak = maxAmplitude - minAmplitude;
     const zeroCrossingRate = zeroCrossings / pcm16Array.length;
     
-    // Static detection heuristics:
+    // Static detection heuristics (enhanced to catch more patterns):
     // 1. High zero-crossing rate with low RMS (white noise pattern)
     // 2. Very high peak-to-peak range relative to RMS (clipping/distortion)
     // 3. High-frequency noise patterns
+    // 4. High amplitude with low RMS (normalization artifacts)
+    // 5. Very high amplitude (>31000) indicating near-clipping distortion
     const hasStatic = (
       (zeroCrossingRate > 0.3 && rms < 1000) || // High zero-crossings with low energy = noise
-      (peakToPeak > 30000 && rms < 5000) || // Large dynamic range with low RMS = distortion
-      (highFreqNoise > pcm16Array.length / 200) // Excessive high-frequency content
+      (peakToPeak > 28000 && rms < 5000) || // Lowered threshold: Large dynamic range with low RMS = distortion
+      (highFreqNoise > pcm16Array.length / 200) || // Excessive high-frequency content
+      (maxAmplitude > 31000 && rms < 10000) || // High amplitude with low RMS = normalization artifacts
+      (maxAmplitude > 32000) // Very high amplitude = near-clipping distortion
     );
     
     let reason: string | undefined;
@@ -1031,7 +1072,30 @@ export default function VoiceInterviewWebSocket({
     return float32Array;
   }, []);
 
-  // Resample Float32Array from source sample rate to target sample rate using linear interpolation
+  // Apply simple low-pass filter to reduce aliasing before resampling
+  const applyAntiAliasingFilter = useCallback((data: Float32Array<ArrayBuffer>, sampleRate: number): Float32Array<ArrayBuffer> => {
+    // Simple moving average filter for anti-aliasing
+    // Cutoff frequency approximately 0.4 * Nyquist frequency (0.4 * sampleRate / 2)
+    const filterSize = Math.max(2, Math.floor(sampleRate / 8000)); // Adaptive filter size
+    const filtered = new Float32Array(data.length);
+    
+    for (let i = 0; i < data.length; i++) {
+      let sum = 0;
+      let count = 0;
+      const start = Math.max(0, i - Math.floor(filterSize / 2));
+      const end = Math.min(data.length, i + Math.ceil(filterSize / 2));
+      
+      for (let j = start; j < end; j++) {
+        sum += data[j];
+        count++;
+      }
+      filtered[i] = sum / count;
+    }
+    
+    return filtered;
+  }, []);
+
+  // Resample Float32Array from source sample rate to target sample rate using improved interpolation
   // This is used to resample ElevenLabs 16kHz audio to browser's native rate before playback
   // Eliminates browser-side resampling which can introduce artifacts
   const resampleFloat32 = useCallback((inputData: Float32Array<ArrayBuffer>, sourceSampleRate: number, targetSampleRate: number): Float32Array<ArrayBuffer> => {
@@ -1049,33 +1113,73 @@ export default function VoiceInterviewWebSocket({
       return inputData; // No resampling needed
     }
 
+    // Apply anti-aliasing filter before upsampling to prevent high-frequency artifacts
+    let filteredData = inputData;
+    if (targetSampleRate > sourceSampleRate) {
+      // Only apply anti-aliasing when upsampling (prevents aliasing artifacts)
+      filteredData = applyAntiAliasingFilter(inputData, sourceSampleRate);
+    }
+
+    // CRITICAL: Calculate resampling ratio correctly
+    // ratio = target / source means: for each input sample, we produce (target/source) output samples
+    // Example: 16kHz -> 48kHz: ratio = 48/16 = 3.0 (3 output samples per 1 input sample)
+    // This maintains the same playback speed (duration) but increases sample count
     const ratio = targetSampleRate / sourceSampleRate;
-    const outputLength = Math.ceil(inputData.length * ratio);
+    const outputLength = Math.ceil(filteredData.length * ratio);
     const buffer = new ArrayBuffer(outputLength * 4); // 4 bytes per float32
     const output = new Float32Array(buffer);
 
-    // Linear interpolation resampling
+    // Improved cubic interpolation for better quality (smoother than linear)
+    // For each output sample, find the corresponding position in the source data
     for (let i = 0; i < outputLength; i++) {
+      // Map output position to source position: sourcePos = outputPos / ratio
+      // This ensures correct time mapping (e.g., output[3] maps to source[1] when ratio=3)
       const sourcePos = i / ratio;
       const sourceIndex = Math.floor(sourcePos);
       const fraction = sourcePos - sourceIndex;
 
-      if (sourceIndex + 1 < inputData.length) {
-        // Linear interpolation between two samples
-        const sample1 = inputData[sourceIndex];
-        const sample2 = inputData[sourceIndex + 1];
-        output[i] = sample1 + (sample2 - sample1) * fraction;
-      } else if (sourceIndex < inputData.length) {
+      if (sourceIndex + 1 < filteredData.length) {
+        // Cubic interpolation for smoother resampling (reduces artifacts)
+        const p0 = sourceIndex > 0 ? filteredData[sourceIndex - 1] : filteredData[sourceIndex];
+        const p1 = filteredData[sourceIndex];
+        const p2 = filteredData[sourceIndex + 1];
+        const p3 = sourceIndex + 2 < filteredData.length ? filteredData[sourceIndex + 2] : filteredData[sourceIndex + 1];
+        
+        // Cubic Hermite interpolation
+        const t = fraction;
+        const t2 = t * t;
+        const t3 = t2 * t;
+        
+        const h1 = 2 * t3 - 3 * t2 + 1;
+        const h2 = -2 * t3 + 3 * t2;
+        const h3 = t3 - 2 * t2 + t;
+        const h4 = t3 - t2;
+        
+        output[i] = h1 * p1 + h2 * p2 + h3 * (p2 - p0) * 0.5 + h4 * (p3 - p1) * 0.5;
+      } else if (sourceIndex < filteredData.length) {
         // Last sample, no interpolation needed
-        output[i] = inputData[sourceIndex];
+        output[i] = filteredData[sourceIndex];
       } else {
         // Beyond source data, use last sample
-        output[i] = inputData[inputData.length - 1];
+        output[i] = filteredData[filteredData.length - 1];
       }
     }
 
+    // Apply gentle smoothing to reduce high-frequency artifacts from resampling
+    if (targetSampleRate > sourceSampleRate && output.length > 4) {
+      const smoothed = new Float32Array(output.length);
+      smoothed[0] = output[0];
+      smoothed[output.length - 1] = output[output.length - 1];
+      
+      for (let i = 1; i < output.length - 1; i++) {
+        // Simple 3-point moving average for smoothing
+        smoothed[i] = (output[i - 1] + output[i] + output[i + 1]) / 3;
+      }
+      return smoothed;
+    }
+
     return output;
-  }, []);
+  }, [applyAntiAliasingFilter]);
   
   // Export raw PCM16 data for external analysis (for debugging static issues)
   const exportPCM16ForAnalysis = useCallback((pcm16Array: Int16Array, chunkId: string) => {
@@ -1261,16 +1365,42 @@ export default function VoiceInterviewWebSocket({
       const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
       
       // Create Int16Array with error handling
+      // CRITICAL: PCM16 audio is little-endian (standard for audio)
+      // Int16Array uses platform byte order, but we need to ensure little-endian
+      // For safety, we'll use DataView to read with explicit little-endian, then create Int16Array
       let pcm16Data: Int16Array;
       try {
+        // Verify byte length is multiple of 2 (required for Int16)
+        if (arrayBuffer.byteLength % 2 !== 0) {
+          throw new Error(`Invalid buffer size: ${arrayBuffer.byteLength} bytes (not multiple of 2)`);
+        }
+        
+        // Create Int16Array directly from ArrayBuffer
+        // Note: Int16Array reads bytes in platform byte order (little-endian on x86/x64)
+        // PCM16 audio is little-endian, so this should work correctly on most systems
         pcm16Data = new Int16Array(arrayBuffer);
+        
+        // Verify the data is valid PCM16 (samples should be in range -32768 to 32767)
+        // Quick sanity check: verify first few samples are reasonable
+        if (pcm16Data.length > 0) {
+          const firstSample = pcm16Data[0];
+          const isOutOfRange = Math.abs(firstSample) > 32768;
+          if (isOutOfRange && Math.random() < 0.1) {
+            console.warn(`[AUDIO-DIAG] ⚠️ Suspicious PCM16 sample value: ${firstSample} (expected range: -32768 to 32767)`);
+          }
+        }
         
         console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation:`, {
           chunkId,
           bufferSize: arrayBuffer.byteLength,
           sampleCount: pcm16Data.length,
           expectedSamples: arrayBuffer.byteLength / 2,
-          matches: pcm16Data.length === arrayBuffer.byteLength / 2
+          matches: pcm16Data.length === arrayBuffer.byteLength / 2,
+          firstSample: pcm16Data.length > 0 ? pcm16Data[0] : null,
+          sampleRange: pcm16Data.length > 0 ? {
+            min: Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length)))),
+            max: Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))))
+          } : null
         });
       } catch (error) {
         console.error('❌ RangeError creating Int16Array:', error);
@@ -1338,17 +1468,29 @@ export default function VoiceInterviewWebSocket({
       const avgSample = Array.from(pcm16Data).reduce((a, b) => a + Math.abs(b), 0) / pcm16Data.length;
       
       // ===== CLIPPING PREVENTION: Normalize high-amplitude audio =====
-      // If max amplitude is too high (>31000), normalize to prevent clipping
-      // Increased from 30000 to 31000 to reduce false warnings while still maintaining 5% headroom
-      const MAX_SAFE_AMPLITUDE = 31000; // Leave headroom below 32767 (5% safety margin)
+      // Reduced MAX_SAFE_AMPLITUDE to 28000 (15% headroom) to prevent distortion from near-clipping audio
+      // This provides more safety margin for ElevenLabs audio that's consistently loud (97.8% of max)
+      const MAX_SAFE_AMPLITUDE = 28000; // Leave headroom below 32767 (15% safety margin)
+      const VERY_LOUD_THRESHOLD = 31000; // Pre-normalization threshold for very loud audio
       let normalizedPcm16Data = pcm16Data;
       let normalizationApplied = false;
       let normalizationFactor = 1.0;
+      let preGainReduction = 1.0;
+      
+      const peakAmplitude = Math.max(Math.abs(maxSample), Math.abs(minSample));
+      
+      // Apply pre-normalization gain reduction for very loud audio (>31000)
+      // This prevents distortion from normalization artifacts on already-loud audio
+      if (peakAmplitude > VERY_LOUD_THRESHOLD) {
+        preGainReduction = 0.85; // Reduce by 15% before normalization
+        console.log(`[AUDIO-DIAG] ⚠️ Very loud audio detected: ${peakAmplitude}, applying pre-gain reduction: ${preGainReduction}`);
+      }
       
       if (Math.abs(maxSample) > MAX_SAFE_AMPLITUDE || Math.abs(minSample) > MAX_SAFE_AMPLITUDE) {
         // Calculate normalization factor to bring max amplitude to safe level
-        const peakAmplitude = Math.max(Math.abs(maxSample), Math.abs(minSample));
-        normalizationFactor = MAX_SAFE_AMPLITUDE / peakAmplitude;
+        // Apply pre-gain reduction first if needed
+        const adjustedPeak = peakAmplitude * preGainReduction;
+        normalizationFactor = MAX_SAFE_AMPLITUDE / adjustedPeak;
         
         // Only log warnings when amplitude is >95% of max (31128) or normalization factor is <0.9 (severe clipping)
         const shouldLogWarning = peakAmplitude > 31128 || normalizationFactor < 0.9;
@@ -1358,22 +1500,30 @@ export default function VoiceInterviewWebSocket({
           console.warn(`[AUDIO-DIAG] Applying normalization factor: ${normalizationFactor.toFixed(4)} to prevent clipping`);
         }
         
-        // Apply smoother normalization curve to prevent sudden amplitude changes
-        // Use a soft-knee compression-like approach for smoother transitions
+        // Apply smoother normalization curve with improved compression algorithm
+        // Use a soft-knee compression with smoother transitions to prevent artifacts
         normalizedPcm16Data = new Int16Array(pcm16Data.length);
         for (let i = 0; i < pcm16Data.length; i++) {
           const sample = pcm16Data[i];
           const absSample = Math.abs(sample);
           
-          // Apply smooth normalization: more aggressive for samples closer to peak
-          if (absSample > MAX_SAFE_AMPLITUDE) {
+          // Apply pre-gain reduction first
+          let processedSample = sample * preGainReduction;
+          let processedAbs = Math.abs(processedSample);
+          
+          // Apply smooth normalization with improved compression curve
+          if (processedAbs > MAX_SAFE_AMPLITUDE) {
             // Linear normalization for samples above threshold
-            normalizedPcm16Data[i] = Math.round(sample * normalizationFactor);
-          } else {
-            // Gradual compression for samples near threshold (smoother transition)
-            const compressionRatio = 1.0 - ((MAX_SAFE_AMPLITUDE - absSample) / MAX_SAFE_AMPLITUDE) * 0.1;
-            normalizedPcm16Data[i] = Math.round(sample * Math.min(1.0, compressionRatio));
+            processedSample = processedSample * normalizationFactor;
+          } else if (processedAbs > MAX_SAFE_AMPLITUDE * 0.8) {
+            // Soft-knee compression for samples near threshold (smoother transition)
+            // Use exponential curve for smoother compression
+            const ratio = (processedAbs - MAX_SAFE_AMPLITUDE * 0.8) / (MAX_SAFE_AMPLITUDE * 0.2);
+            const compressionAmount = ratio * 0.15; // Gradually compress up to 15%
+            processedSample = processedSample * (1.0 - compressionAmount);
           }
+          
+          normalizedPcm16Data[i] = Math.round(processedSample);
         }
         normalizationApplied = true;
         
@@ -1382,6 +1532,13 @@ export default function VoiceInterviewWebSocket({
           const normalizedMin = Math.min(...Array.from(normalizedPcm16Data));
           console.log(`[AUDIO-DIAG] After normalization: max=${normalizedMax}, min=${normalizedMin}`);
         }
+      } else if (preGainReduction < 1.0) {
+        // Apply pre-gain reduction even if not normalizing
+        normalizedPcm16Data = new Int16Array(pcm16Data.length);
+        for (let i = 0; i < pcm16Data.length; i++) {
+          normalizedPcm16Data[i] = Math.round(pcm16Data[i] * preGainReduction);
+        }
+        normalizationApplied = true;
       }
       
       console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
@@ -1552,9 +1709,10 @@ export default function VoiceInterviewWebSocket({
         
         // Use a gain node to prevent clipping and ensure smooth playback
         // CRITICAL: Gain should be <= 1.0 to avoid introducing distortion
-        // Reduced further to 0.75 to provide more headroom for high-amplitude audio
+        // Reduced to 0.65 to provide more headroom for high-amplitude audio from ElevenLabs
+        // This helps prevent static/distortion from loud audio
         gainNode = audioContext.createGain();
-        gainNode.gain.value = 0.75; // Reduced from 0.85 to prevent clipping with high-amplitude audio
+        gainNode.gain.value = 0.65; // Reduced from 0.75 to prevent clipping with very loud ElevenLabs audio
         
         console.log(`[AUDIO-DIAG] Stage 5 - Playback Setup:`, {
           chunkId,
@@ -2036,6 +2194,9 @@ export default function VoiceInterviewWebSocket({
         const wsUrl = getWebSocketUrl();
         console.log(`Connecting to WebSocket (attempt ${retryCountRef.current + 1}/${maxRetries}):`, wsUrl);
         const ws = new WebSocket(wsUrl);
+        // CRITICAL: Set binaryType to 'arraybuffer' to receive raw binary PCM16 data
+        // This ensures we get Int16Array directly, not Base64 strings or Blobs
+        ws.binaryType = 'arraybuffer';
         wsRef.current = ws;
 
         ws.onopen = () => {
@@ -2052,9 +2213,18 @@ export default function VoiceInterviewWebSocket({
             // Check if it's binary (audio) or text (JSON)
             if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
               // Binary audio data from AI
+              // CRITICAL: With binaryType='arraybuffer', we should receive ArrayBuffer directly
+              // But handle Blob case for compatibility
               const arrayBuffer = event.data instanceof Blob 
                 ? await event.data.arrayBuffer() 
                 : event.data;
+              
+              // CRITICAL: Verify we have raw binary data, not Base64 string
+              // ArrayBuffer.byteLength should match the actual data size
+              if (!(arrayBuffer instanceof ArrayBuffer)) {
+                console.error('[AUDIO-DIAG] ❌ CRITICAL: Received non-ArrayBuffer data:', typeof event.data);
+                return;
+              }
               
               // Track chunk receive timing
               const now = Date.now();
