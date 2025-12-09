@@ -201,6 +201,50 @@ export default function VoiceInterviewWebSocket({
     }
   }, [logStateTransition]);
 
+  // Helper function to check if data is JSON (even if it arrives as ArrayBuffer/Blob)
+  const isJSONData = useCallback(async (data: ArrayBuffer | Blob | string): Promise<boolean> => {
+    if (typeof data === 'string') {
+      // Already a string, check if it starts with JSON markers
+      const trimmed = data.trim();
+      return trimmed.startsWith('{') || trimmed.startsWith('[');
+    }
+    
+    // For ArrayBuffer/Blob, peek at first few bytes
+    let buffer: ArrayBuffer;
+    if (data instanceof Blob) {
+      buffer = await data.slice(0, 10).arrayBuffer();
+    } else {
+      buffer = data.slice(0, 10);
+    }
+    
+    // Check first byte for JSON markers: { (0x7B) or [ (0x5B)
+    const firstByte = new Uint8Array(buffer)[0];
+    return firstByte === 0x7B || firstByte === 0x5B; // { or [
+  }, []);
+
+  // Convert ArrayBuffer to text string
+  const arrayBufferToText = useCallback((buffer: ArrayBuffer): string => {
+    const decoder = new TextDecoder('utf-8');
+    return decoder.decode(buffer);
+  }, []);
+
+  // Decode base64 string to ArrayBuffer for audio playback
+  const decodeBase64Audio = useCallback((base64: string): ArrayBuffer => {
+    // Remove data URL prefix if present (e.g., "data:audio/pcm;base64,")
+    const base64Data = base64.includes(',') ? base64.split(',')[1] : base64;
+    
+    // Decode base64 to binary string
+    const binaryString = atob(base64Data);
+    
+    // Convert binary string to ArrayBuffer
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    
+    return bytes.buffer;
+  }, []);
+
   // Handle WebSocket messages (defined before useEffect to avoid hoisting issues)
   const handleWebSocketMessage = useCallback((message: any) => {
     // Reduced logging - only log important message types
@@ -209,6 +253,10 @@ export default function VoiceInterviewWebSocket({
     }
 
     switch (message.type) {
+      case 'ping':
+      case 'pong':
+        // Control messages - ignore (no action needed)
+        return;
       case 'connected':
         // Reduced logging - only log connection confirmation
         console.log('✓ Server connection confirmed');
@@ -1942,7 +1990,45 @@ export default function VoiceInterviewWebSocket({
 
         ws.onmessage = async (event) => {
           try {
-            // Check if it's binary (audio) or text (JSON)
+            // CRITICAL: Check if data is JSON BEFORE treating as binary audio
+            // JSON messages can arrive as ArrayBuffer/Blob, so check content, not just type
+            const isJSON = await isJSONData(event.data);
+            
+            if (isJSON) {
+              // This is a JSON message (control message or audio_event with base64)
+              let textData: string;
+              
+              if (typeof event.data === 'string') {
+                textData = event.data;
+              } else {
+                // Convert ArrayBuffer/Blob to text
+                const buffer = event.data instanceof Blob 
+                  ? await event.data.arrayBuffer() 
+                  : event.data;
+                textData = arrayBufferToText(buffer);
+              }
+              
+              try {
+                const message = JSON.parse(textData);
+                
+                // Handle audio_event messages with base64 audio payloads
+                if (message.type === 'audio_event' && message.audio) {
+                  console.log('[AUDIO-DEBUG] Received audio_event with base64 audio, decoding...');
+                  const audioBuffer = decodeBase64Audio(message.audio);
+                  // Queue the decoded audio for playback
+                  queueAudioChunk(audioBuffer);
+                } else {
+                  // Control message - handle via handleWebSocketMessage
+                  handleWebSocketMessage(message);
+                }
+              } catch (parseError) {
+                console.error('[AUDIO-DEBUG] Failed to parse JSON message:', parseError);
+                console.error('[AUDIO-DEBUG] Raw text data:', textData.substring(0, 200));
+              }
+              return; // Don't process as binary audio
+            }
+            
+            // Not JSON - treat as binary audio data
             if (event.data instanceof Blob || event.data instanceof ArrayBuffer) {
               // Binary audio data from AI
               // CRITICAL: With binaryType='arraybuffer', we should receive ArrayBuffer directly
@@ -1967,6 +2053,8 @@ export default function VoiceInterviewWebSocket({
                 console.log('[AUDIO-DEBUG] First 10 bytes:', hexDump, 
                   arrayBuffer.byteLength >= 2 && firstBytes[0] === 0xFF && (firstBytes[1] === 0xFB || firstBytes[1] === 0xF3 || firstBytes[1] === 0xF2) 
                     ? '← MP3 detected!' 
+                    : arrayBuffer.byteLength >= 2 && firstBytes[0] === 0x7B
+                    ? '← JSON detected (should have been caught earlier!)'
                     : '← PCM/ulaw (or other format)');
               }
               
@@ -2026,15 +2114,19 @@ export default function VoiceInterviewWebSocket({
               
               // Queue audio chunk for sequential playback (buffering happens inside)
               queueAudioChunk(arrayBuffer);
-            } else {
-              // JSON message
-              const rawData = event.data.toString();
-              // Reduced logging - only log important messages in development
-              if (import.meta.env.DEV && Math.random() < 0.05) {
-                console.log('📨 Received WebSocket message:', rawData.substring(0, 100));
+            } else if (typeof event.data === 'string') {
+              // Text message (should have been caught by JSON check, but handle as fallback)
+              // This is a fallback for edge cases where string data wasn't detected as JSON
+              try {
+                const message = JSON.parse(event.data);
+                handleWebSocketMessage(message);
+              } catch (parseError) {
+                console.error('[AUDIO-DEBUG] Failed to parse text message as JSON:', parseError);
+                console.error('[AUDIO-DEBUG] Raw text:', event.data.substring(0, 200));
               }
-              const message = JSON.parse(rawData);
-              handleWebSocketMessage(message);
+            } else {
+              // Unknown data type
+              console.warn('[AUDIO-DEBUG] Received unknown data type:', typeof event.data, event.data);
             }
           } catch (error) {
             console.error('❌ Error handling WebSocket message:', error);
