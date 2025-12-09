@@ -1032,211 +1032,8 @@ export default function VoiceInterviewWebSocket({
     return { valid: true };
   }, []);
 
-  // μ-law to linear PCM conversion
-  // μ-law is 8-bit logarithmic encoding used in telephony (G.711)
-  // ElevenLabs WebSocket agents may send μ-law encoded audio
-  const ulawToLinear = useCallback((ulawByte: number): number => {
-    // Invert all bits (μ-law uses inverted encoding)
-    ulawByte = ~ulawByte;
-    
-    // Extract sign bit (bit 7)
-    const sign = (ulawByte & 0x80) ? -1 : 1;
-    
-    // Extract exponent (bits 4-6)
-    const exponent = (ulawByte & 0x70) >> 4;
-    
-    // Extract mantissa (bits 0-3)
-    const mantissa = (ulawByte & 0x0F) | 0x10; // Add implicit leading 1
-    
-    // Calculate linear value: (mantissa << (exponent + 2)) - 33
-    const linear = ((mantissa << (exponent + 2)) - 33) * sign;
-    
-    // Normalize to 16-bit range (-32768 to 32767)
-    // μ-law encodes 14-bit linear PCM, so we scale appropriately
-    return Math.max(-32768, Math.min(32767, linear * 2));
-  }, []);
-
-  // Detect audio format: MP3, μ-law (8-bit), or PCM16 (16-bit)
-  // ElevenLabs WebSocket agents default to mp3_44100 format
-  const detectAudioFormat = useCallback((arrayBuffer: ArrayBuffer): 'mp3' | 'ulaw' | 'pcm16' => {
-    const byteLength = arrayBuffer.byteLength;
-    const dataView = new DataView(arrayBuffer);
-    
-    // Check 1: MP3 Sync Word detection
-    // MP3 files start with sync word: 0xFF followed by 0xF? (where ? is 0-9, A-F)
-    // Common patterns: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2, 0xFF 0xFA
-    if (byteLength >= 2) {
-      const firstByte = dataView.getUint8(0);
-      const secondByte = dataView.getUint8(1);
-      
-      // MP3 sync word: first byte is 0xFF, second byte starts with 0xF (bits 4-7 are 1111)
-      if (firstByte === 0xFF && (secondByte & 0xF0) === 0xF0) {
-        console.log('[AUDIO-DIAG] MP3 sync word detected (0xFF 0x' + secondByte.toString(16).toUpperCase() + ') - detected as MP3');
-        return 'mp3';
-      }
-      
-      // Also check for ID3 tag (MP3 files often start with "ID3")
-      if (byteLength >= 3) {
-        const id3Check = String.fromCharCode(
-          dataView.getUint8(0),
-          dataView.getUint8(1),
-          dataView.getUint8(2)
-        );
-        if (id3Check === 'ID3') {
-          console.log('[AUDIO-DIAG] ID3 tag detected - detected as MP3');
-          return 'mp3';
-        }
-      }
-    }
-    
-    // Check 2: If buffer size is odd, it's likely 8-bit μ-law
-    if (byteLength % 2 !== 0) {
-      console.log('[AUDIO-DIAG] Buffer size is odd - likely μ-law (8-bit)');
-      return 'ulaw';
-    }
-    
-    // Check 2: Sample first 100 bytes as PCM16 and check for suspicious patterns
-    // If interpreted as PCM16, μ-law data will show high-amplitude noise
-    const sampleCount = Math.min(50, Math.floor(byteLength / 2));
-    
-    // Guard against division by zero
-    if (sampleCount === 0) {
-      console.log('[AUDIO-DIAG] Buffer too small for analysis - defaulting to PCM16');
-      return 'pcm16';
-    }
-    
-    let highAmplitudeCount = 0;
-    let totalAmplitude = 0;
-    
-    for (let i = 0; i < sampleCount; i++) {
-      const sample = dataView.getInt16(i * 2, true); // Read as little-endian PCM16
-      const amplitude = Math.abs(sample);
-      totalAmplitude += amplitude;
-      
-      // μ-law decoded as PCM16 will show amplitudes > 20000
-      if (amplitude > 20000) {
-        highAmplitudeCount++;
-      }
-    }
-    
-    const avgAmplitude = totalAmplitude / sampleCount;
-    
-    // If average amplitude is very high (> 15000), it's likely μ-law being misinterpreted as PCM16
-    if (avgAmplitude > 15000 || highAmplitudeCount > sampleCount * 0.3) {
-      console.log(`[AUDIO-DIAG] High amplitude detected (avg: ${avgAmplitude.toFixed(0)}, high samples: ${highAmplitudeCount}/${sampleCount}) - likely μ-law`);
-      return 'ulaw';
-    }
-    
-    // Check 3: Try interpreting as μ-law and see if values are more reasonable
-    const ulawSampleCount = Math.min(50, byteLength);
-    
-    // Guard against division by zero
-    if (ulawSampleCount === 0) {
-      console.log('[AUDIO-DIAG] Buffer too small for μ-law analysis - defaulting to PCM16');
-      return 'pcm16';
-    }
-    
-    let ulawTotalAmplitude = 0;
-    let ulawReasonableCount = 0;
-    
-    for (let i = 0; i < ulawSampleCount; i++) {
-      const ulawByte = dataView.getUint8(i);
-      const linear = ulawToLinear(ulawByte);
-      const amplitude = Math.abs(linear);
-      ulawTotalAmplitude += amplitude;
-      
-      // Reasonable audio amplitude for μ-law decoded samples
-      if (amplitude < 20000) {
-        ulawReasonableCount++;
-      }
-    }
-    
-    const ulawAvgAmplitude = ulawTotalAmplitude / ulawSampleCount;
-    
-    // If μ-law interpretation gives more reasonable values, it's likely μ-law
-    if (ulawAvgAmplitude < avgAmplitude * 0.5 && ulawReasonableCount > ulawSampleCount * 0.7) {
-      console.log(`[AUDIO-DIAG] μ-law interpretation more reasonable (avg: ${ulawAvgAmplitude.toFixed(0)}) - detected as μ-law`);
-      return 'ulaw';
-    }
-    
-    // Default to PCM16
-    console.log(`[AUDIO-DIAG] Detected as PCM16 (avg amplitude: ${avgAmplitude.toFixed(0)})`);
-    return 'pcm16';
-  }, [ulawToLinear]);
-
-  // Decode MP3 audio using AudioContext.decodeAudioData()
-  // MP3 is a compressed format that requires decoding before playback
-  // Note: decodeAudioData can handle partial MP3 frames, but may fail on very small chunks
-  const decodeMP3ToFloat32 = useCallback(async (arrayBuffer: ArrayBuffer, audioContext: AudioContext): Promise<Float32Array<ArrayBuffer>> => {
-    try {
-      // Validate minimum buffer size (MP3 frames are typically at least 4 bytes)
-      if (arrayBuffer.byteLength < 4) {
-        throw new Error(`MP3 buffer too small: ${arrayBuffer.byteLength} bytes (minimum 4 bytes)`);
-      }
-      
-      // decodeAudioData requires a copy of the buffer (it may modify it)
-      const bufferCopy = arrayBuffer.slice(0);
-      
-      // Decode MP3 to AudioBuffer
-      // decodeAudioData can handle partial frames, but may throw if the chunk is too small or corrupted
-      const audioBuffer = await audioContext.decodeAudioData(bufferCopy);
-      
-      // Extract Float32Array from the first channel (mono audio)
-      // If stereo, we'll use the first channel and mix down
-      const channelData = audioBuffer.getChannelData(0);
-      
-      // If stereo, mix down to mono by averaging channels
-      if (audioBuffer.numberOfChannels > 1) {
-        const channel2 = audioBuffer.getChannelData(1);
-        for (let i = 0; i < channelData.length; i++) {
-          channelData[i] = (channelData[i] + channel2[i]) / 2;
-        }
-      }
-      
-      // Create a new Float32Array with explicit ArrayBuffer type
-      const buffer = new ArrayBuffer(channelData.length * 4);
-      const float32Array = new Float32Array(buffer);
-      float32Array.set(channelData);
-      
-      console.log(`[AUDIO-DIAG] MP3 decoded successfully:`, {
-        sampleCount: float32Array.length,
-        sampleRate: audioBuffer.sampleRate,
-        duration: audioBuffer.duration.toFixed(3) + 's',
-        channels: audioBuffer.numberOfChannels,
-        inputSize: arrayBuffer.byteLength + ' bytes'
-      });
-      
-      return float32Array;
-    } catch (error: any) {
-      console.error('[AUDIO-DIAG] ❌ MP3 decode error:', error);
-      console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
-      console.error(`   Error message: ${error.message || error}`);
-      
-      // If decodeAudioData fails, it might be an incomplete MP3 frame
-      // In that case, we should skip this chunk rather than crashing
-      throw new Error(`Failed to decode MP3: ${error.message || error}. This may be an incomplete MP3 frame.`);
-    }
-  }, []);
-
-  // Decode μ-law bytes to Float32Array
-  const decodeUlawToFloat32 = useCallback((arrayBuffer: ArrayBuffer): Float32Array<ArrayBuffer> => {
-    const dataView = new DataView(arrayBuffer);
-    const sampleCount = arrayBuffer.byteLength; // μ-law is 1 byte per sample
-    const buffer = new ArrayBuffer(sampleCount * 4); // 4 bytes per float32
-    const float32Array = new Float32Array(buffer);
-    
-    // Decode each μ-law byte to linear PCM, then normalize to [-1.0, 1.0]
-    for (let i = 0; i < sampleCount; i++) {
-      const ulawByte = dataView.getUint8(i);
-      const linear = ulawToLinear(ulawByte);
-      
-      // Normalize to Float32 range [-1.0, 1.0]
-      // μ-law encodes 14-bit linear PCM, so divide by 32768.0
-      float32Array[i] = Math.max(-1.0, Math.min(1.0, linear / 32768.0));
-    }
-    
-    return float32Array;
-  }, [ulawToLinear]);
+  // Simple PCM16 audio processing
+  // Backend is now forced to send PCM16 16000Hz, so we can simplify the pipeline
 
   // Convert PCM16 to Float32 with proper handling and normalization
   // CRITICAL: This conversion must be exact to avoid introducing artifacts
@@ -1566,126 +1363,57 @@ export default function VoiceInterviewWebSocket({
       }
 
       // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 2: Buffer Processing and Format Detection
+      // Stage 2: Buffer Processing - Simple PCM16 pipeline
+      // Backend is forced to send PCM16 16000Hz, so we can simplify
       const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
-      
-      // CRITICAL: Detect audio format (MP3, μ-law, or PCM16)
-      // ElevenLabs WebSocket agents default to mp3_44100 format
-      const audioFormat = detectAudioFormat(arrayBuffer);
       
       let float32Data: Float32Array<ArrayBuffer>;
       let sourceSampleRate: number;
       
       try {
-        if (audioFormat === 'mp3') {
-          // Decode MP3 using AudioContext.decodeAudioData()
-          console.log(`[AUDIO-DIAG] Stage 2 - MP3 Decoding:`, {
-            chunkId,
-            bufferSize: arrayBuffer.byteLength,
-            format: 'MP3 (compressed)',
-            note: 'ElevenLabs WebSocket agent detected as MP3 - using decodeAudioData'
-          });
-          
-          // MP3 decoding requires AudioContext and is async
-          float32Data = await decodeMP3ToFloat32(arrayBuffer, audioContext);
-          // MP3 from ElevenLabs is typically 44100Hz (mp3_44100)
-          sourceSampleRate = 44100;
-          
-          // Log decoded sample info
-          if (float32Data.length > 0) {
-            const sampleRange = {
-              min: Math.min(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length)))),
-              max: Math.max(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length))))
-            };
-            console.log(`[AUDIO-DIAG] MP3 decoded sample range:`, sampleRange);
+        // PCM16 (16-bit) processing
+        // Validate buffer size is multiple of 2 before creating Int16Array
+        if (arrayBuffer.byteLength % 2 !== 0) {
+          console.error(`❌ RangeError prevented: Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
+          isProcessingQueueRef.current = false;
+          if (audioQueueRef.current.length > 0) {
+            requestAnimationFrame(() => processAudioQueue());
           }
-        } else if (audioFormat === 'ulaw') {
-          // Decode μ-law (8-bit) to Float32
-          console.log(`[AUDIO-DIAG] Stage 2 - μ-law Decoding:`, {
-            chunkId,
-            bufferSize: arrayBuffer.byteLength,
-            sampleCount: arrayBuffer.byteLength, // μ-law is 1 byte per sample
-            format: 'μ-law (8-bit)',
-            note: 'ElevenLabs WebSocket agent detected as μ-law'
-          });
-          
-          float32Data = decodeUlawToFloat32(arrayBuffer);
-          // μ-law is typically 8000Hz or 16000Hz, try 16000Hz first (ElevenLabs common)
-          sourceSampleRate = 16000;
-          
-          // Log first few decoded samples for verification
-          if (float32Data.length > 0) {
-            const sampleRange = {
-              min: Math.min(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length)))),
-              max: Math.max(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length))))
-            };
-            console.log(`[AUDIO-DIAG] μ-law decoded sample range:`, sampleRange);
-          }
-        } else {
-          // PCM16 (16-bit) processing
-          // Validate buffer size is multiple of 2 before creating Int16Array
-          if (arrayBuffer.byteLength % 2 !== 0) {
-            console.error(`❌ RangeError prevented: Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
-            isProcessingQueueRef.current = false;
-            if (audioQueueRef.current.length > 0) {
-              requestAnimationFrame(() => processAudioQueue());
-            }
-            return;
-          }
-          
-          // CRITICAL FIX: Use DataView to explicitly read Int16 values as little-endian
-          // This prevents endianness mismatch that causes high-amplitude noise (~32000)
-          const dataView = new DataView(arrayBuffer);
-          const sampleCount = arrayBuffer.byteLength / 2;
-          const pcm16Data = new Int16Array(sampleCount);
-          
-          // Read each Int16 sample as little-endian (true = little-endian)
-          // ElevenLabs sends PCM16 in little-endian format
-          for (let i = 0; i < sampleCount; i++) {
-            pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
-          }
-          
-          // Verify the data is valid PCM16 (samples should be in range -32768 to 32767)
-          // Check for suspicious high-amplitude values that indicate endianness issues
-          if (pcm16Data.length > 0) {
-            const firstSample = pcm16Data[0];
-            const maxSample = Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))));
-            const minSample = Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))));
-            const hasHighAmplitudeNoise = Math.abs(maxSample) > 30000 || Math.abs(minSample) < -30000;
-            
-            if (hasHighAmplitudeNoise) {
-              console.warn(`[AUDIO-DIAG] ⚠️ HIGH AMPLITUDE NOISE DETECTED in PCM16:`, {
-                chunkId,
-                firstSample,
-                maxSample,
-                minSample,
-                note: 'Consider checking if audio is actually μ-law encoded'
-              });
-            }
-          }
-          
-          console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation (DataView little-endian):`, {
-            chunkId,
-            bufferSize: arrayBuffer.byteLength,
-            sampleCount: pcm16Data.length,
-            expectedSamples: arrayBuffer.byteLength / 2,
-            matches: pcm16Data.length === arrayBuffer.byteLength / 2,
-            firstSample: pcm16Data.length > 0 ? pcm16Data[0] : null,
-            sampleRange: pcm16Data.length > 0 ? {
-              min: Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length)))),
-              max: Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))))
-            } : null,
-            endianness: 'little-endian (explicit via DataView)'
-          });
-          
-          // Convert PCM16 to Float32
-          float32Data = convertPCM16ToFloat32(pcm16Data);
-          sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz for PCM16
+          return;
         }
+        
+        // Use DataView to explicitly read Int16 values as little-endian
+        // This ensures correct endianness handling
+        const dataView = new DataView(arrayBuffer);
+        const sampleCount = arrayBuffer.byteLength / 2;
+        const pcm16Data = new Int16Array(sampleCount);
+        
+        // Read each Int16 sample as little-endian (true = little-endian)
+        // ElevenLabs sends PCM16 in little-endian format
+        for (let i = 0; i < sampleCount; i++) {
+          pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
+        }
+        
+        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation (DataView little-endian):`, {
+          chunkId,
+          bufferSize: arrayBuffer.byteLength,
+          sampleCount: pcm16Data.length,
+          expectedSamples: arrayBuffer.byteLength / 2,
+          matches: pcm16Data.length === arrayBuffer.byteLength / 2,
+          firstSample: pcm16Data.length > 0 ? pcm16Data[0] : null,
+          sampleRange: pcm16Data.length > 0 ? {
+            min: Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length)))),
+            max: Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))))
+          } : null,
+          endianness: 'little-endian (explicit via DataView)'
+        });
+        
+        // Convert PCM16 to Float32
+        float32Data = convertPCM16ToFloat32(pcm16Data);
+        sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz for PCM16
       } catch (error) {
         console.error('❌ Error processing audio data:', error);
         console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
-        console.error(`   Format: ${audioFormat}`);
         isProcessingQueueRef.current = false;
         // Try next chunk - don't stop playback
         if (audioQueueRef.current.length > 0) {
@@ -1696,7 +1424,7 @@ export default function VoiceInterviewWebSocket({
       
       // Validate Float32 data
       if (float32Data.length === 0) {
-        console.warn(`[AUDIO-DIAG] Empty audio data:`, { chunkId, format: audioFormat });
+        console.warn(`[AUDIO-DIAG] Empty audio data:`, { chunkId });
         isProcessingQueueRef.current = false;
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
@@ -1704,17 +1432,14 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // For μ-law, skip PCM16-specific analysis (already converted to Float32)
-      // For PCM16, we can still do some validation on the Float32 data
-      if (audioFormat === 'pcm16') {
-        // Log Float32 sample range for debugging
-        const float32Min = Math.min(...Array.from(float32Data));
-        const float32Max = Math.max(...Array.from(float32Data));
-        const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
-        
-        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
-          chunkId,
-          sampleCount: float32Data.length,
+      // Log Float32 sample range for debugging
+      const float32Min = Math.min(...Array.from(float32Data));
+      const float32Max = Math.max(...Array.from(float32Data));
+      const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
+      
+      console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
+        chunkId,
+        sampleCount: float32Data.length,
           minValue: float32Min.toFixed(6),
           maxValue: float32Max.toFixed(6),
           avgAmplitude: float32Avg.toFixed(6),
