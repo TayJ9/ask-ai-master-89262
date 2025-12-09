@@ -1958,6 +1958,18 @@ export default function VoiceInterviewWebSocket({
                 return;
               }
               
+              // Hex dump logger: Check first 10 bytes to definitively identify format
+              // MP3 files start with FF FB (ID3 header) or FF F3/F2 (MPEG frame sync)
+              // PCM/ulaw data looks random
+              if (arrayBuffer.byteLength >= 10) {
+                const firstBytes = new Uint8Array(arrayBuffer.slice(0, 10));
+                const hexDump = Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+                console.log('[AUDIO-DEBUG] First 10 bytes:', hexDump, 
+                  arrayBuffer.byteLength >= 2 && firstBytes[0] === 0xFF && (firstBytes[1] === 0xFB || firstBytes[1] === 0xF3 || firstBytes[1] === 0xF2) 
+                    ? '← MP3 detected!' 
+                    : '← PCM/ulaw (or other format)');
+              }
+              
               // Track chunk receive timing
               const now = Date.now();
               lastChunkReceiveTimeRef.current = now;
