@@ -371,7 +371,14 @@ function createElevenLabsConnection(apiKey, candidateContext) {
     // CRITICAL: Explicitly set output_format=pcm_16000 to prevent MP3 default
     const wsUrl = `${ELEVENLABS_API_URL}?agent_id=${ELEVENLABS_AGENT_ID}&output_format=pcm_16000`;
     
-    console.log('🔗 ElevenLabs WebSocket URL:', wsUrl.replace(apiKey.substring(0, 7), '***'));
+    // Log the complete URL configuration (masking API key for security)
+    const maskedUrl = wsUrl.replace(apiKey.substring(0, 7), '***');
+    console.log('🔗 ElevenLabs WebSocket URL Configuration:');
+    console.log('   Full URL:', maskedUrl);
+    console.log('   Base URL:', ELEVENLABS_API_URL);
+    console.log('   Agent ID:', ELEVENLABS_AGENT_ID);
+    console.log('   Output Format Parameter: output_format=pcm_16000');
+    console.log('   ⚠️  CRITICAL: This forces PCM16 output (not MP3)');
     
     const ws = new WebSocket(wsUrl, {
       headers: {
@@ -387,7 +394,8 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       clearTimeout(connectionTimeout);
       
       // Initialize conversation with context variables
-      // CRITICAL: Explicitly set output_audio_format to pcm_16000 to prevent MP3 default
+      // CRITICAL: Explicitly set output format to pcm_16000 to prevent MP3 default
+      // Format is specified in both URL parameter AND conversation_init message for maximum compatibility
       const initMessage = {
         type: 'conversation_init',
         agent_id: ELEVENLABS_AGENT_ID,
@@ -398,6 +406,9 @@ function createElevenLabsConnection(apiKey, candidateContext) {
           encoding: 'pcm16',
           channels: 1 // Mono
         },
+        // CRITICAL: Specify output format as string "pcm_16000" to force PCM16 (not MP3)
+        // This works in conjunction with the URL parameter output_format=pcm_16000
+        output_format: 'pcm_16000',
         output_audio_format: {
           sample_rate: ELEVENLABS_SAMPLE_RATE, // Force 16kHz output
           encoding: 'pcm16', // Force PCM16 (not MP3)
@@ -411,16 +422,22 @@ function createElevenLabsConnection(apiKey, candidateContext) {
         }
       };
       
-      ws.send(JSON.stringify(initMessage));
-      console.log('✓ Conversation initialization sent to ElevenLabs');
+      // Log the exact message being sent for verification
+      const initMessageJson = JSON.stringify(initMessage, null, 2);
+      console.log('✓ Conversation initialization message prepared');
       console.log('📋 ElevenLabs Configuration:');
       console.log('   Agent ID:', ELEVENLABS_AGENT_ID);
       console.log('   Voice ID:', ELEVENLABS_VOICE_ID);
       console.log('   LLM:', ELEVENLABS_LLM);
+      console.log('   WebSocket URL parameter: &output_format=pcm_16000');
       console.log('   Input Audio Format: 16kHz PCM16 mono');
-      console.log('   Output Audio Format: 16kHz PCM16 mono (FORCED - not MP3)');
-      console.log('   WebSocket URL includes: &output_format=pcm_16000');
-      console.log('   Context Variables:', JSON.stringify(elevenLabsContext, null, 2));
+      console.log('   Output Format (string): pcm_16000');
+      console.log('   Output Audio Format (object): 16kHz PCM16 mono');
+      console.log('   Full conversation_init message:');
+      console.log(initMessageJson);
+      
+      ws.send(initMessageJson);
+      console.log('✅ Conversation initialization sent to ElevenLabs');
       console.log('');
       console.log('💡 ElevenLabs Settings to Check (if experiencing static/audio issues):');
       console.log('   1. Voice Settings (in ElevenLabs dashboard):');
