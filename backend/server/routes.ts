@@ -1,16 +1,17 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema } from "../shared/schema";
+import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews } from "../shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { textToSpeech, speechToText, analyzeInterviewResponse, chatWithCoach } from "./openai";
 import { analyzeInterviewSession } from "./scoring";
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import { Readable } from "stream";
 import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
+import rateLimit from "express-rate-limit";
+import { db } from "./db";
 
 // Lazy-load JWT_SECRET to avoid build-time errors
 // CRITICAL: This function NEVER throws errors - Railway may validate during build
@@ -81,6 +82,16 @@ function authenticateToken(req: any, res: any, next: any) {
   }
 }
 
+/**
+ * Register all API routes
+ * 
+ * This application uses ElevenLabs ConvAI API for voice interview functionality.
+ * All OpenAI endpoints have been removed as part of the migration to ElevenLabs.
+ * 
+ * Active ElevenLabs endpoints:
+ * - GET /api/conversation-token - Get conversation token for voice interviews
+ * - POST /webhooks/elevenlabs - Receive conversation completion webhooks
+ */
 export function registerRoutes(app: Express) {
   // Favicon handler - prevent 404 errors
   app.get('/favicon.ico', (_req, res) => {
@@ -347,115 +358,6 @@ export function registerRoutes(app: Express) {
     } catch (error) {
       console.error("Create response error:", error);
       res.status(500).json({ error: "Failed to create response" });
-    }
-  });
-
-  // AI endpoints (using OpenAI)
-  app.post("/api/ai/text-to-speech", authenticateToken, async (req: any, res) => {
-    try {
-      const { text } = req.body;
-
-      if (!text) {
-        return res.status(400).json({ error: 'No text provided' });
-      }
-
-      // Support both OPENAI_API_KEY and OPEN_API_KEY
-      if (!process.env.OPENAI_API_KEY && !process.env.OPEN_API_KEY) {
-        console.error('OpenAI API key is missing in environment');
-        return res.status(500).json({ 
-          error: 'Text-to-speech failed', 
-          details: 'Please set either OPENAI_API_KEY or OPEN_API_KEY in Railway Variables'
-        });
-      }
-
-      const audioBuffer = await textToSpeech(text);
-      const base64Audio = audioBuffer.toString('base64');
-
-      res.json({ audioContent: base64Audio });
-    } catch (error: any) {
-      console.error("Text-to-speech error:", error);
-      console.error("Error stack:", error.stack);
-      res.status(500).json({ 
-        error: 'Text-to-speech failed', 
-        details: error.message || String(error)
-      });
-    }
-  });
-
-  app.post("/api/ai/speech-to-text", authenticateToken, async (req: any, res) => {
-    try {
-      const { audio } = req.body;
-
-      if (!audio) {
-        return res.status(400).json({ error: 'No audio provided' });
-      }
-
-      const audioBuffer = Buffer.from(audio, 'base64');
-      const text = await speechToText(audioBuffer);
-
-      res.json({ text });
-    } catch (error: any) {
-      console.error("Speech-to-text error:", error);
-      res.status(500).json({ 
-        error: 'Speech-to-text failed',
-        details: error.message || String(error)
-      });
-    }
-  });
-
-  app.post("/api/ai/analyze-response", authenticateToken, async (req: any, res) => {
-    try {
-      const { question, answer, role } = req.body;
-
-      if (!question || !answer || !role) {
-        return res.status(400).json({ error: 'Missing required fields' });
-      }
-
-      const feedback = await analyzeInterviewResponse(question, answer, role);
-      res.json(feedback);
-    } catch (error: any) {
-      console.error("Analysis error:", error);
-      res.status(500).json({ 
-        error: 'Analysis failed',
-        details: error.message || String(error)
-      });
-    }
-  });
-
-  // AI Coach endpoint with enhanced validation
-  app.post("/api/ai/coach", authenticateToken, async (req: any, res) => {
-    try {
-      const { message, role } = req.body;
-
-      // Validate message
-      if (!message || typeof message !== 'string') {
-        return res.status(400).json({ error: 'Message is required' });
-      }
-
-      if (message.length > 500) {
-        return res.status(400).json({ error: 'Message is too long (max 500 characters)' });
-      }
-
-      if (message.trim().length === 0) {
-        return res.status(400).json({ error: 'Message cannot be empty' });
-      }
-
-      // Sanitize message - remove potentially harmful content
-      const sanitizedMessage = message.trim().substring(0, 500);
-
-      // Validate role
-      const validRoles = ['software-engineer', 'product-manager', 'marketing', 'general'];
-      const sanitizedRole = validRoles.includes(role) ? role : 'general';
-
-      const coachResponse = await chatWithCoach(sanitizedMessage, { role: sanitizedRole });
-      
-      res.json({ response: coachResponse });
-    } catch (error: any) {
-      console.error("Coach error:", error);
-      res.status(500).json({ 
-        error: 'Failed to get coach response',
-        details: error.message || String(error)
-      });
     }
   });
 
@@ -884,6 +786,203 @@ export function registerRoutes(app: Express) {
       }
       
       res.status(500).json({ error: error.message || "Failed to score interview" });
+    }
+  });
+
+  // ============================================================================
+  // ElevenLabs Voice Interview Endpoints
+  // ============================================================================
+  // These endpoints use ElevenLabs ConvAI API for voice interview functionality.
+  // All OpenAI endpoints have been removed as part of the migration.
+  // ============================================================================
+
+  // Rate limiter for ElevenLabs token endpoint: 5 requests per hour per user
+  const tokenRateLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000, // 1 hour
+    max: 5, // 5 requests per hour
+    message: { error: 'Rate limit exceeded. Maximum 5 tokens per hour.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    // Use userId from request if available (after auth middleware)
+    keyGenerator: (req: any) => {
+      return req.userId || req.ip || 'unknown';
+    },
+  });
+
+  // Get ElevenLabs conversation token for voice interview sessions
+  // Requires authentication and is rate-limited to 5 requests per hour per user
+  app.get("/api/conversation-token", authenticateToken, tokenRateLimiter, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const agentId = process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+      const apiKey = process.env.ELEVENLABS_API_KEY;
+
+      console.log(`[CONVERSATION-TOKEN] Request from user: ${userId}`);
+
+      if (!apiKey) {
+        console.error('[CONVERSATION-TOKEN] ELEVENLABS_API_KEY not configured');
+        return res.status(500).json({ error: 'ElevenLabs API key not configured' });
+      }
+
+      // Call ElevenLabs API to get conversation token
+      const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${agentId}`;
+      
+      console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl}`);
+
+      const response = await fetch(elevenLabsUrl, {
+        method: 'GET',
+        headers: {
+          'xi-api-key': apiKey,
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`[CONVERSATION-TOKEN] ElevenLabs API error: ${response.status} - ${errorText}`);
+        return res.status(500).json({ 
+          error: 'Failed to get conversation token from ElevenLabs',
+          details: process.env.NODE_ENV === 'development' ? errorText : undefined
+        });
+      }
+
+      const data = await response.json();
+      const { token, expires_in } = data;
+
+      console.log(`[CONVERSATION-TOKEN] Token obtained successfully for user: ${userId}, expires in: ${expires_in}s`);
+
+      // Return token with clientId (userId) and other metadata
+      res.json({
+        token,
+        clientId: userId,
+        expiresIn: expires_in || 900, // Default to 15 minutes if not provided
+        agentId,
+      });
+    } catch (error: any) {
+      console.error('[CONVERSATION-TOKEN] Error:', error);
+      res.status(500).json({ 
+        error: 'Failed to get conversation token',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // ElevenLabs webhook endpoint - receives conversation completion events
+  // No authentication required as this is called by ElevenLabs servers
+  app.post("/webhooks/elevenlabs", async (req, res) => {
+    try {
+      console.log('[WEBHOOK] Received ElevenLabs webhook');
+      console.log('[WEBHOOK] Body:', JSON.stringify(req.body, null, 2));
+
+      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status } = req.body;
+
+      // Validate required fields
+      if (!conversation_id) {
+        console.error('[WEBHOOK] Missing conversation_id');
+        return res.status(400).json({ error: 'Missing conversation_id' });
+      }
+
+      if (!user_id) {
+        console.error('[WEBHOOK] Missing user_id');
+        return res.status(400).json({ error: 'Missing user_id' });
+      }
+
+      // Check if interview already exists (prevent duplicates)
+      const existingInterview = await db.query.interviews.findFirst({
+        where: (interviews, { eq }) => eq(interviews.conversationId, conversation_id),
+      });
+
+      if (existingInterview) {
+        console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists, skipping`);
+        return res.json({ success: true, message: 'Interview already exists' });
+      }
+
+      // Parse timestamps if provided as strings
+      const startedAt = started_at ? new Date(started_at) : null;
+      const endedAt = ended_at ? new Date(ended_at) : null;
+
+      // Insert interview record
+      const interviewData = insertInterviewSchema.parse({
+        userId: user_id,
+        conversationId: conversation_id,
+        agentId: agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e",
+        transcript: transcript || null,
+        durationSeconds: duration ? Math.round(duration) : null,
+        startedAt: startedAt,
+        endedAt: endedAt,
+        status: status || "completed",
+      });
+
+      const [interview] = await db.insert(interviews).values(interviewData).returning();
+
+      console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
+
+      res.json({ success: true, interviewId: interview.id });
+    } catch (error: any) {
+      console.error('[WEBHOOK] Error processing webhook:', error);
+      
+      // Handle validation errors
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ 
+          error: 'Invalid webhook data', 
+          details: error.errors 
+        });
+      }
+
+      // Handle duplicate key errors (if database enforces uniqueness)
+      if (error.message && error.message.includes('duplicate')) {
+        console.log('[WEBHOOK] Duplicate conversation_id detected');
+        return res.json({ success: true, message: 'Interview already exists' });
+      }
+
+      res.status(500).json({ 
+        error: 'Failed to process webhook',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // ElevenLabs custom webhook endpoint for interview completion
+  // This endpoint is called by ElevenLabs when an interview is completed
+  // Requires x-api-secret header for security
+  app.post("/api/save-interview", async (req, res) => {
+    try {
+      // Security check: Verify x-api-secret header
+      const apiSecret = req.headers['x-api-secret'];
+      const expectedSecret = 'my_secret_interview_key_123';
+      
+      if (!apiSecret || apiSecret !== expectedSecret) {
+        console.error('[SAVE-INTERVIEW] Invalid or missing x-api-secret header');
+        return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+      }
+
+      // Extract query parameters
+      const conversation_id = req.query.conversation_id as string;
+      const candidate_id = req.query.candidate_id as string;
+
+      // Validate required query parameters
+      if (!conversation_id) {
+        console.error('[SAVE-INTERVIEW] Missing conversation_id in query parameters');
+        return res.status(400).json({ error: 'Missing conversation_id query parameter' });
+      }
+
+      if (!candidate_id) {
+        console.error('[SAVE-INTERVIEW] Missing candidate_id in query parameters');
+        return res.status(400).json({ error: 'Missing candidate_id query parameter' });
+      }
+
+      // Log the interview completion
+      console.log(`Received interview completion for Candidate ID: ${candidate_id}, Conversation ID: ${conversation_id}`);
+
+      // TODO: Fetch transcript from ElevenLabs using conversation_id and save to database
+
+      // Return success response
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error('[SAVE-INTERVIEW] Error processing webhook:', error);
+      res.status(500).json({ 
+        error: 'Failed to process interview completion webhook',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
   });
 
