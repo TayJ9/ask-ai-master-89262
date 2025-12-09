@@ -1056,12 +1056,40 @@ export default function VoiceInterviewWebSocket({
     return Math.max(-32768, Math.min(32767, linear * 2));
   }, []);
 
-  // Detect if audio data is likely μ-law (8-bit) vs PCM16 (16-bit)
-  const detectAudioFormat = useCallback((arrayBuffer: ArrayBuffer): 'ulaw' | 'pcm16' => {
+  // Detect audio format: MP3, μ-law (8-bit), or PCM16 (16-bit)
+  // ElevenLabs WebSocket agents default to mp3_44100 format
+  const detectAudioFormat = useCallback((arrayBuffer: ArrayBuffer): 'mp3' | 'ulaw' | 'pcm16' => {
     const byteLength = arrayBuffer.byteLength;
     const dataView = new DataView(arrayBuffer);
     
-    // Check 1: If buffer size is odd, it's likely 8-bit μ-law
+    // Check 1: MP3 Sync Word detection
+    // MP3 files start with sync word: 0xFF followed by 0xF? (where ? is 0-9, A-F)
+    // Common patterns: 0xFF 0xFB, 0xFF 0xF3, 0xFF 0xF2, 0xFF 0xFA
+    if (byteLength >= 2) {
+      const firstByte = dataView.getUint8(0);
+      const secondByte = dataView.getUint8(1);
+      
+      // MP3 sync word: first byte is 0xFF, second byte starts with 0xF (bits 4-7 are 1111)
+      if (firstByte === 0xFF && (secondByte & 0xF0) === 0xF0) {
+        console.log('[AUDIO-DIAG] MP3 sync word detected (0xFF 0x' + secondByte.toString(16).toUpperCase() + ') - detected as MP3');
+        return 'mp3';
+      }
+      
+      // Also check for ID3 tag (MP3 files often start with "ID3")
+      if (byteLength >= 3) {
+        const id3Check = String.fromCharCode(
+          dataView.getUint8(0),
+          dataView.getUint8(1),
+          dataView.getUint8(2)
+        );
+        if (id3Check === 'ID3') {
+          console.log('[AUDIO-DIAG] ID3 tag detected - detected as MP3');
+          return 'mp3';
+        }
+      }
+    }
+    
+    // Check 2: If buffer size is odd, it's likely 8-bit μ-law
     if (byteLength % 2 !== 0) {
       console.log('[AUDIO-DIAG] Buffer size is odd - likely μ-law (8-bit)');
       return 'ulaw';
@@ -1135,6 +1163,60 @@ export default function VoiceInterviewWebSocket({
     console.log(`[AUDIO-DIAG] Detected as PCM16 (avg amplitude: ${avgAmplitude.toFixed(0)})`);
     return 'pcm16';
   }, [ulawToLinear]);
+
+  // Decode MP3 audio using AudioContext.decodeAudioData()
+  // MP3 is a compressed format that requires decoding before playback
+  // Note: decodeAudioData can handle partial MP3 frames, but may fail on very small chunks
+  const decodeMP3ToFloat32 = useCallback(async (arrayBuffer: ArrayBuffer, audioContext: AudioContext): Promise<Float32Array<ArrayBuffer>> => {
+    try {
+      // Validate minimum buffer size (MP3 frames are typically at least 4 bytes)
+      if (arrayBuffer.byteLength < 4) {
+        throw new Error(`MP3 buffer too small: ${arrayBuffer.byteLength} bytes (minimum 4 bytes)`);
+      }
+      
+      // decodeAudioData requires a copy of the buffer (it may modify it)
+      const bufferCopy = arrayBuffer.slice(0);
+      
+      // Decode MP3 to AudioBuffer
+      // decodeAudioData can handle partial frames, but may throw if the chunk is too small or corrupted
+      const audioBuffer = await audioContext.decodeAudioData(bufferCopy);
+      
+      // Extract Float32Array from the first channel (mono audio)
+      // If stereo, we'll use the first channel and mix down
+      const channelData = audioBuffer.getChannelData(0);
+      
+      // If stereo, mix down to mono by averaging channels
+      if (audioBuffer.numberOfChannels > 1) {
+        const channel2 = audioBuffer.getChannelData(1);
+        for (let i = 0; i < channelData.length; i++) {
+          channelData[i] = (channelData[i] + channel2[i]) / 2;
+        }
+      }
+      
+      // Create a new Float32Array with explicit ArrayBuffer type
+      const buffer = new ArrayBuffer(channelData.length * 4);
+      const float32Array = new Float32Array(buffer);
+      float32Array.set(channelData);
+      
+      console.log(`[AUDIO-DIAG] MP3 decoded successfully:`, {
+        sampleCount: float32Array.length,
+        sampleRate: audioBuffer.sampleRate,
+        duration: audioBuffer.duration.toFixed(3) + 's',
+        channels: audioBuffer.numberOfChannels,
+        inputSize: arrayBuffer.byteLength + ' bytes'
+      });
+      
+      return float32Array;
+    } catch (error: any) {
+      console.error('[AUDIO-DIAG] ❌ MP3 decode error:', error);
+      console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
+      console.error(`   Error message: ${error.message || error}`);
+      
+      // If decodeAudioData fails, it might be an incomplete MP3 frame
+      // In that case, we should skip this chunk rather than crashing
+      throw new Error(`Failed to decode MP3: ${error.message || error}. This may be an incomplete MP3 frame.`);
+    }
+  }, []);
 
   // Decode μ-law bytes to Float32Array
   const decodeUlawToFloat32 = useCallback((arrayBuffer: ArrayBuffer): Float32Array<ArrayBuffer> => {
@@ -1487,15 +1569,37 @@ export default function VoiceInterviewWebSocket({
       // Stage 2: Buffer Processing and Format Detection
       const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
       
-      // CRITICAL: Detect audio format (μ-law vs PCM16)
-      // ElevenLabs WebSocket agents may send μ-law (8-bit) instead of PCM16 (16-bit)
+      // CRITICAL: Detect audio format (MP3, μ-law, or PCM16)
+      // ElevenLabs WebSocket agents default to mp3_44100 format
       const audioFormat = detectAudioFormat(arrayBuffer);
       
       let float32Data: Float32Array<ArrayBuffer>;
       let sourceSampleRate: number;
       
       try {
-        if (audioFormat === 'ulaw') {
+        if (audioFormat === 'mp3') {
+          // Decode MP3 using AudioContext.decodeAudioData()
+          console.log(`[AUDIO-DIAG] Stage 2 - MP3 Decoding:`, {
+            chunkId,
+            bufferSize: arrayBuffer.byteLength,
+            format: 'MP3 (compressed)',
+            note: 'ElevenLabs WebSocket agent detected as MP3 - using decodeAudioData'
+          });
+          
+          // MP3 decoding requires AudioContext and is async
+          float32Data = await decodeMP3ToFloat32(arrayBuffer, audioContext);
+          // MP3 from ElevenLabs is typically 44100Hz (mp3_44100)
+          sourceSampleRate = 44100;
+          
+          // Log decoded sample info
+          if (float32Data.length > 0) {
+            const sampleRange = {
+              min: Math.min(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length)))),
+              max: Math.max(...Array.from(float32Data.slice(0, Math.min(100, float32Data.length))))
+            };
+            console.log(`[AUDIO-DIAG] MP3 decoded sample range:`, sampleRange);
+          }
+        } else if (audioFormat === 'ulaw') {
           // Decode μ-law (8-bit) to Float32
           console.log(`[AUDIO-DIAG] Stage 2 - μ-law Decoding:`, {
             chunkId,
