@@ -245,6 +245,53 @@ export default function VoiceInterviewWebSocket({
     return bytes.buffer;
   }, []);
 
+  // Split concatenated JSON strings (e.g., {"ping":1}{"audio":2}) into individual JSON objects
+  const splitConcatenatedJSON = useCallback((text: string): string[] => {
+    const jsonObjects: string[] = [];
+    let depth = 0;
+    let start = 0;
+    let inString = false;
+    let escapeNext = false;
+    
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      
+      if (escapeNext) {
+        escapeNext = false;
+        continue;
+      }
+      
+      if (char === '\\') {
+        escapeNext = true;
+        continue;
+      }
+      
+      if (char === '"') {
+        inString = !inString;
+        continue;
+      }
+      
+      if (inString) {
+        continue;
+      }
+      
+      if (char === '{') {
+        if (depth === 0) {
+          start = i;
+        }
+        depth++;
+      } else if (char === '}') {
+        depth--;
+        if (depth === 0) {
+          // Found a complete JSON object
+          jsonObjects.push(text.substring(start, i + 1));
+        }
+      }
+    }
+    
+    return jsonObjects;
+  }, []);
+
   // Handle WebSocket messages (defined before useEffect to avoid hoisting issues)
   const handleWebSocketMessage = useCallback((message: any) => {
     // Reduced logging - only log important message types
@@ -1996,6 +2043,7 @@ export default function VoiceInterviewWebSocket({
             
             if (isJSON) {
               // This is a JSON message (control message or audio_event with base64)
+              // May contain multiple concatenated JSON objects (e.g., {"ping":1}{"audio":2})
               let textData: string;
               
               if (typeof event.data === 'string') {
@@ -2008,22 +2056,33 @@ export default function VoiceInterviewWebSocket({
                 textData = arrayBufferToText(buffer);
               }
               
-              try {
-                const message = JSON.parse(textData);
-                
-                // Handle audio_event messages with base64 audio payloads
-                if (message.type === 'audio_event' && message.audio) {
-                  console.log('[AUDIO-DEBUG] Received audio_event with base64 audio, decoding...');
-                  const audioBuffer = decodeBase64Audio(message.audio);
-                  // Queue the decoded audio for playback
-                  queueAudioChunk(audioBuffer);
-                } else {
-                  // Control message - handle via handleWebSocketMessage
-                  handleWebSocketMessage(message);
+              // Split concatenated JSON strings into individual objects
+              const jsonObjects = splitConcatenatedJSON(textData);
+              
+              if (jsonObjects.length === 0) {
+                console.warn('[AUDIO-DEBUG] No valid JSON objects found in:', textData.substring(0, 200));
+                return;
+              }
+              
+              // Process each JSON object individually
+              for (const jsonString of jsonObjects) {
+                try {
+                  const message = JSON.parse(jsonString);
+                  
+                  // Handle audio_event messages with base64 audio payloads
+                  if (message.type === 'audio_event' && message.audio) {
+                    console.log('[AUDIO-DEBUG] Received audio_event with base64 audio, decoding...');
+                    const audioBuffer = decodeBase64Audio(message.audio);
+                    // Queue the decoded audio for playback
+                    queueAudioChunk(audioBuffer);
+                  } else {
+                    // Control message - handle via handleWebSocketMessage
+                    handleWebSocketMessage(message);
+                  }
+                } catch (parseError) {
+                  console.error('[AUDIO-DEBUG] Failed to parse JSON object:', parseError);
+                  console.error('[AUDIO-DEBUG] JSON string:', jsonString.substring(0, 200));
                 }
-              } catch (parseError) {
-                console.error('[AUDIO-DEBUG] Failed to parse JSON message:', parseError);
-                console.error('[AUDIO-DEBUG] Raw text data:', textData.substring(0, 200));
               }
               return; // Don't process as binary audio
             }
