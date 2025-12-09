@@ -789,11 +789,24 @@ export default function VoiceInterviewWebSocket({
           variant: "destructive",
         });
         break;
+      case 'audio':
+        // Audio messages are handled in ws.onmessage handler before reaching here
+        // This case is kept for logging/debugging purposes
+        console.log('[AUDIO-DEBUG] Audio message type received (should be handled in ws.onmessage):', message);
+        break;
+      case 'agent_chat_response_part':
+        // Handle agent chat response parts (may contain transcript or other data)
+        // Log it but don't process as audio
+        if (import.meta.env.DEV) {
+          console.log('[AUDIO-DEBUG] Received agent_chat_response_part:', message);
+        }
+        // If it contains transcript, we could handle it here, but for now just log
+        break;
       default:
         // Log all unknown message types for testing (removed throttling)
         console.log('⚠️ Unknown message type:', message.type, 'Full message:', message);
     }
-  }, [toast]);
+  }, [toast, conversationState, setConversationStateWithLogging, setIsInterviewActive, setStatusMessage, setIsConnected, candidateContextRef, wsRef, interviewStartTimeoutRef, stateTimeoutRef, pendingTranscriptRef, pendingTranscriptTimeoutRef, setTranscripts, audioQueueRef]);
 
   // Check if chunk is silence/keepalive packet
   // Note: Size check is now done earlier in bufferAndValidateChunk for performance
@@ -2069,12 +2082,16 @@ export default function VoiceInterviewWebSocket({
                 try {
                   const message = JSON.parse(jsonString);
                   
-                  // Handle audio_event messages with base64 audio payloads
-                  if (message.type === 'audio_event' && message.audio) {
-                    console.log('[AUDIO-DEBUG] Received audio_event with base64 audio, decoding...');
-                    const audioBuffer = decodeBase64Audio(message.audio);
-                    // Queue the decoded audio for playback
-                    queueAudioChunk(audioBuffer);
+                  // Handle audio messages with base64 audio payloads (audio_event or audio type)
+                  if ((message.type === 'audio_event' && message.audio) || (message.type === 'audio' && (message.audio || message.audio_base_64 || message.audio_event?.audio_base_64 || message.audio_event?.audio))) {
+                    console.log('[AUDIO-DEBUG] Received audio message, decoding base64...');
+                    // Extract base64 audio from various possible locations
+                    const base64Audio = message.audio || message.audio_base_64 || message.audio_event?.audio_base_64 || message.audio_event?.audio;
+                    if (base64Audio) {
+                      const audioBuffer = decodeBase64Audio(base64Audio);
+                      // Queue the decoded audio for playback
+                      queueAudioChunk(audioBuffer);
+                    }
                   } else {
                     // Control message - handle via handleWebSocketMessage
                     handleWebSocketMessage(message);
