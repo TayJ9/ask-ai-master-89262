@@ -1436,33 +1436,15 @@ export default function VoiceInterviewWebSocket({
       const float32Min = Math.min(...Array.from(float32Data));
       const float32Max = Math.max(...Array.from(float32Data));
       const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
+      const outOfRange = Array.from(float32Data).filter(v => v < -1.0 || v > 1.0).length;
       
       console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
         chunkId,
         sampleCount: float32Data.length,
-          minValue: float32Min.toFixed(6),
-          maxValue: float32Max.toFixed(6),
-          avgAmplitude: float32Avg.toFixed(6),
-          durationMs: (float32Data.length / sourceSampleRate) * 1000
-        });
-      }
-
-      // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 3: Float32 data ready (already converted from μ-law or PCM16)
-      // Verify Float32 data correctness
-      const float32Min = Math.min(...Array.from(float32Data));
-      const float32Max = Math.max(...Array.from(float32Data));
-      const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
-      const outOfRange = Array.from(float32Data).filter(v => v < -1.0 || v > 1.0).length;
-      
-      console.log(`[AUDIO-DIAG] Stage 3 - Float32 Data Ready:`, {
-        chunkId,
-        format: audioFormat,
-        sampleCount: float32Data.length,
-        sourceSampleRate,
         minValue: float32Min.toFixed(6),
         maxValue: float32Max.toFixed(6),
         avgAmplitude: float32Avg.toFixed(6),
+        durationMs: (float32Data.length / sourceSampleRate) * 1000,
         outOfRangeSamples: outOfRange,
         hasClipping: outOfRange > 0
       });
@@ -1472,8 +1454,8 @@ export default function VoiceInterviewWebSocket({
       }
       
       // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 4: Resample to AudioContext's native rate (eliminates browser-side resampling)
-      // sourceSampleRate is already set based on detected format (16000Hz for μ-law or PCM16)
+      // Stage 3: Resample to AudioContext's native rate (eliminates browser-side resampling)
+      // sourceSampleRate is 16000Hz for PCM16 (backend forces PCM16 output)
       // AudioContext is at NATIVE_SAMPLE_RATE
       // Resample on frontend to avoid browser-side resampling artifacts
       const audioContextSampleRate = audioContext.sampleRate;
