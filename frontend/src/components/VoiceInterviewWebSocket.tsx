@@ -87,7 +87,7 @@ export default function VoiceInterviewWebSocket({
   
   // Minimum buffer threshold before starting playback
   const audioBufferAccumulatorRef = useRef<number>(0);
-  const MIN_BUFFER_BEFORE_PLAYBACK = 3200; // 100ms at 16kHz (16000 samples/s * 0.1s * 2 bytes)
+  const MIN_BUFFER_BEFORE_PLAYBACK = 16000; // 0.5s at 16kHz (16000 samples/s * 0.5s * 2 bytes)
   
   // ElevenLabs requires 16kHz PCM16 mono audio
   const ELEVENLABS_SAMPLE_RATE = 16000;
@@ -1246,18 +1246,19 @@ export default function VoiceInterviewWebSocket({
     }
     
     // Check minimum buffer threshold before starting playback
-    // Accumulate at least 100ms of audio (3200 bytes at 16kHz) before first playback
+    // Accumulate at least 0.5s of audio (16000 bytes at 16kHz) before first playback
+    // This prevents buffer underrun and stuttering when large chunks arrive after delays
     const totalBufferedBytes = audioQueueRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     if (totalBufferedBytes < MIN_BUFFER_BEFORE_PLAYBACK && audioBufferAccumulatorRef.current < MIN_BUFFER_BEFORE_PLAYBACK) {
       audioBufferAccumulatorRef.current = totalBufferedBytes;
-      console.log(`📦 Buffering audio: ${totalBufferedBytes} bytes (need ${MIN_BUFFER_BEFORE_PLAYBACK} for playback start)`);
+      console.log(`📦 Buffering audio: ${totalBufferedBytes} bytes (need ${MIN_BUFFER_BEFORE_PLAYBACK} for playback start, ~${(MIN_BUFFER_BEFORE_PLAYBACK / 32000).toFixed(1)}s)`);
       return; // Wait for more audio before starting playback
     }
     
     // Reset accumulator once we've started playing
     if (audioBufferAccumulatorRef.current < MIN_BUFFER_BEFORE_PLAYBACK) {
       audioBufferAccumulatorRef.current = MIN_BUFFER_BEFORE_PLAYBACK;
-      console.log(`✅ Audio buffer ready: ${totalBufferedBytes} bytes, starting playback`);
+      console.log(`✅ Audio buffer ready: ${totalBufferedBytes} bytes (~${(totalBufferedBytes / 32000).toFixed(1)}s), starting playback`);
     }
     
     // Set processing lock
@@ -1355,11 +1356,13 @@ export default function VoiceInterviewWebSocket({
         return;
       }
 
-      // Validate buffer size is reasonable (not too large)
-      // PCM16 is 2 bytes per sample, so 64000 bytes = 32000 samples = 2 seconds at 16kHz
-      const maxBufferSize = 64000; // 2 seconds at 16kHz (32000 samples * 2 bytes)
-      if (arrayBuffer.byteLength > maxBufferSize) {
-        console.warn('⚠️ Received unusually large audio buffer:', arrayBuffer.byteLength, 'bytes. Processing anyway.');
+      // Handle large chunks gracefully - calculate duration and schedule seamlessly
+      // Large chunks (e.g., 76kb) arriving after delays should be scheduled at the end
+      // of current playback time, not resetting the context
+      const chunkSizeBytes = arrayBuffer.byteLength;
+      const chunkDurationSeconds = chunkSizeBytes / (ELEVENLABS_SAMPLE_RATE * 2); // PCM16 = 2 bytes/sample
+      if (chunkDurationSeconds > 2.0) {
+        console.log(`📦 Large chunk received: ${chunkSizeBytes} bytes (~${chunkDurationSeconds.toFixed(2)}s). Will schedule seamlessly.`);
       }
 
       // Simple PCM16 processing pipeline
@@ -1496,36 +1499,24 @@ export default function VoiceInterviewWebSocket({
       // Schedule playback with precise timing
       const currentTime = audioContext.currentTime;
       
-      // Handle timing drift: if nextPlayTime is significantly behind (>100ms), reset it aggressively
-      // Increased threshold from 50ms to 100ms to reduce false positives from normal timing variations
-      const timeDrift = currentTime - nextPlayTimeRef.current;
-      if (timeDrift > 0.1) {
-        // If drift is significant (>100ms), reset scheduling and drop old chunks
-        const driftMs = timeDrift * 1000;
-        if (driftMs > 200) {
-          // Severe drift (>200ms) - drop old chunks to catch up, but more gracefully
-          const chunksToDrop = Math.min(Math.floor(driftMs / 100), Math.floor(audioQueueRef.current.length * 0.3));
-          if (chunksToDrop > 0) {
-            audioQueueRef.current.splice(0, chunksToDrop);
-            console.warn('⏱️ Severe timing drift:', driftMs.toFixed(0), 'ms. Dropped', chunksToDrop, 'old chunks.');
-          }
-          // Reset schedule more aggressively for severe drift
-          nextPlayTimeRef.current = currentTime + 0.02; // Larger buffer for reset
-        } else {
-          // Moderate drift (100-200ms) - adjust schedule without dropping chunks
-          // Only log timing drift warnings occasionally to reduce noise
-          if (Math.random() < 0.2) {
-            console.warn('⏱️ Timing drift detected:', driftMs.toFixed(0), 'ms. Adjusting schedule.');
-          }
-          // Adjust schedule forward to catch up gradually
-          nextPlayTimeRef.current = currentTime + 0.01; // Small buffer for reset
-        }
+      // Smooth playback scheduling: For large chunks arriving after delays, schedule seamlessly
+      // at the end of current playback time instead of resetting the context
+      // This prevents stuttering when huge chunks (e.g., 76kb) arrive after long delays
+      
+      // If nextPlayTime is in the past or very close, schedule from current time
+      // Otherwise, schedule seamlessly at the end of the current playback queue
+      if (nextPlayTimeRef.current < currentTime - 0.05) {
+        // Playback has fallen behind by >50ms - reset to current time for seamless playback
+        // This handles cases where large chunks arrive after delays without aggressive resets
+        nextPlayTimeRef.current = currentTime + 0.01; // Small buffer to prevent scheduling in the past
       }
       
-      const scheduledTime = Math.max(currentTime, nextPlayTimeRef.current);
+      // Schedule this chunk at the end of the current playback queue
+      // This ensures seamless playback even when large chunks arrive
+      const scheduledTime = Math.max(currentTime + 0.01, nextPlayTimeRef.current);
       
       // Add a small buffer (10ms) to prevent scheduling in the past and ensure smooth playback
-      const safeStartTime = Math.max(currentTime + 0.01, scheduledTime);
+      const safeStartTime = scheduledTime;
       
       try {
         source.start(safeStartTime);
@@ -1831,15 +1822,20 @@ export default function VoiceInterviewWebSocket({
 
   // Periodic cleanup to prevent memory leaks
   // Watchdog timer to monitor queue processing health
+  // RELAXED: Increased timeout to 3-5s to prevent aggressive resets that cause stuttering
   useEffect(() => {
+    const WATCHDOG_CHECK_INTERVAL = 3000; // Check every 3 seconds (was 1 second)
+    const WATCHDOG_TRIGGER_THRESHOLD = 3000; // Trigger if processing stopped for >3 seconds (was >0ms)
+    
     const watchdogInterval = setInterval(() => {
       // Check if queue processing has stopped unexpectedly
       const timeSinceLastProcess = Date.now() - lastProcessTimeRef.current;
       const queueHasItems = audioQueueRef.current.length > 0;
       const shouldBeProcessing = queueHasItems && !isProcessingQueueRef.current && !isPlayingRef.current && conversationState !== 'user_speaking';
       
-      // If queue has items but hasn't been processed in >2 seconds, restart processing
-      if (shouldBeProcessing && timeSinceLastProcess > 0) {
+      // Only trigger if processing has stopped for >3 seconds (relaxed from immediate trigger)
+      // This prevents aggressive resets that cause stuttering when large chunks arrive after delays
+      if (shouldBeProcessing && timeSinceLastProcess > WATCHDOG_TRIGGER_THRESHOLD) {
         console.warn('⚠️ Queue processing watchdog: Processing stopped unexpectedly. Restarting...', {
           queueLength: audioQueueRef.current.length,
           timeSinceLastProcess: timeSinceLastProcess + 'ms',
@@ -1857,7 +1853,7 @@ export default function VoiceInterviewWebSocket({
           }
         }, 0);
       }
-    }, 1000); // Check every second
+    }, WATCHDOG_CHECK_INTERVAL); // Check every 3 seconds (relaxed from 1 second)
     
     return () => clearInterval(watchdogInterval);
   }, [conversationState]);
