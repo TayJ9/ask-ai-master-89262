@@ -367,8 +367,11 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       reject(new Error('ElevenLabs connection timeout - server did not respond'));
     }, 10000);
     
-    // Build WebSocket URL with agent ID
-    const wsUrl = `${ELEVENLABS_API_URL}?agent_id=${ELEVENLABS_AGENT_ID}`;
+    // Build WebSocket URL with agent ID and FORCE PCM16 output format
+    // CRITICAL: Explicitly set output_format=pcm_16000 to prevent MP3 default
+    const wsUrl = `${ELEVENLABS_API_URL}?agent_id=${ELEVENLABS_AGENT_ID}&output_format=pcm_16000`;
+    
+    console.log('🔗 ElevenLabs WebSocket URL:', wsUrl.replace(apiKey.substring(0, 7), '***'));
     
     const ws = new WebSocket(wsUrl, {
       headers: {
@@ -384,6 +387,7 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       clearTimeout(connectionTimeout);
       
       // Initialize conversation with context variables
+      // CRITICAL: Explicitly set output_audio_format to pcm_16000 to prevent MP3 default
       const initMessage = {
         type: 'conversation_init',
         agent_id: ELEVENLABS_AGENT_ID,
@@ -392,6 +396,11 @@ function createElevenLabsConnection(apiKey, candidateContext) {
         input_audio_format: {
           sample_rate: ELEVENLABS_SAMPLE_RATE, // ElevenLabs requires 16kHz PCM16 mono
           encoding: 'pcm16',
+          channels: 1 // Mono
+        },
+        output_audio_format: {
+          sample_rate: ELEVENLABS_SAMPLE_RATE, // Force 16kHz output
+          encoding: 'pcm16', // Force PCM16 (not MP3)
           channels: 1 // Mono
         },
         context: {
@@ -409,6 +418,8 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       console.log('   Voice ID:', ELEVENLABS_VOICE_ID);
       console.log('   LLM:', ELEVENLABS_LLM);
       console.log('   Input Audio Format: 16kHz PCM16 mono');
+      console.log('   Output Audio Format: 16kHz PCM16 mono (FORCED - not MP3)');
+      console.log('   WebSocket URL includes: &output_format=pcm_16000');
       console.log('   Context Variables:', JSON.stringify(elevenLabsContext, null, 2));
       console.log('');
       console.log('💡 ElevenLabs Settings to Check (if experiencing static/audio issues):');
