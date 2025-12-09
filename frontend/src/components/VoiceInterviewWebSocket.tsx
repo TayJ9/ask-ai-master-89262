@@ -1362,19 +1362,15 @@ export default function VoiceInterviewWebSocket({
         console.warn('⚠️ Received unusually large audio buffer:', arrayBuffer.byteLength, 'bytes. Processing anyway.');
       }
 
-      // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 2: Buffer Processing - Simple PCM16 pipeline
-      // Backend is forced to send PCM16 16000Hz, so we can simplify
-      const chunkId = (arrayBuffer as any).__chunkId || 'unknown';
-      
+      // Simple PCM16 processing pipeline
+      // Backend is forced to send PCM16 16000Hz, so we just read Int16 Little Endian -> Float32 -> Play
       let float32Data: Float32Array<ArrayBuffer>;
-      let sourceSampleRate: number;
+      const sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz for PCM16
       
       try {
-        // PCM16 (16-bit) processing
-        // Validate buffer size is multiple of 2 before creating Int16Array
+        // Validate buffer size is multiple of 2 (PCM16 is 2 bytes per sample)
         if (arrayBuffer.byteLength % 2 !== 0) {
-          console.error(`❌ RangeError prevented: Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
+          console.error(`❌ Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
           isProcessingQueueRef.current = false;
           if (audioQueueRef.current.length > 0) {
             requestAnimationFrame(() => processAudioQueue());
@@ -1382,40 +1378,20 @@ export default function VoiceInterviewWebSocket({
           return;
         }
         
-        // Use DataView to explicitly read Int16 values as little-endian
-        // This ensures correct endianness handling
+        // Read Int16 Little Endian using DataView
         const dataView = new DataView(arrayBuffer);
         const sampleCount = arrayBuffer.byteLength / 2;
         const pcm16Data = new Int16Array(sampleCount);
         
-        // Read each Int16 sample as little-endian (true = little-endian)
-        // ElevenLabs sends PCM16 in little-endian format
         for (let i = 0; i < sampleCount; i++) {
           pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
         }
         
-        console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Array Creation (DataView little-endian):`, {
-          chunkId,
-          bufferSize: arrayBuffer.byteLength,
-          sampleCount: pcm16Data.length,
-          expectedSamples: arrayBuffer.byteLength / 2,
-          matches: pcm16Data.length === arrayBuffer.byteLength / 2,
-          firstSample: pcm16Data.length > 0 ? pcm16Data[0] : null,
-          sampleRange: pcm16Data.length > 0 ? {
-            min: Math.min(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length)))),
-            max: Math.max(...Array.from(pcm16Data.slice(0, Math.min(100, pcm16Data.length))))
-          } : null,
-          endianness: 'little-endian (explicit via DataView)'
-        });
-        
         // Convert PCM16 to Float32
         float32Data = convertPCM16ToFloat32(pcm16Data);
-        sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz for PCM16
       } catch (error) {
         console.error('❌ Error processing audio data:', error);
-        console.error(`   Buffer size: ${arrayBuffer.byteLength} bytes`);
         isProcessingQueueRef.current = false;
-        // Try next chunk - don't stop playback
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
         }
@@ -1423,8 +1399,7 @@ export default function VoiceInterviewWebSocket({
       }
       
       // Validate Float32 data
-      if (float32Data.length === 0) {
-        console.warn(`[AUDIO-DIAG] Empty audio data:`, { chunkId });
+      if (!float32Data || float32Data.length === 0) {
         isProcessingQueueRef.current = false;
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
@@ -1432,56 +1407,15 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // Log Float32 sample range for debugging
-      const float32Min = Math.min(...Array.from(float32Data));
-      const float32Max = Math.max(...Array.from(float32Data));
-      const float32Avg = Array.from(float32Data).reduce((a, b) => a + Math.abs(b), 0) / float32Data.length;
-      const outOfRange = Array.from(float32Data).filter(v => v < -1.0 || v > 1.0).length;
-      
-      console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
-        chunkId,
-        sampleCount: float32Data.length,
-        minValue: float32Min.toFixed(6),
-        maxValue: float32Max.toFixed(6),
-        avgAmplitude: float32Avg.toFixed(6),
-        durationMs: (float32Data.length / sourceSampleRate) * 1000,
-        outOfRangeSamples: outOfRange,
-        hasClipping: outOfRange > 0
-      });
-      
-      if (outOfRange > 0) {
-        console.warn(`[AUDIO-DIAG] ⚠️ CLIPPING DETECTED: ${outOfRange} samples out of [-1.0, 1.0] range`);
-      }
-      
-      // ===== AUDIO DATA PATH DIAGNOSTICS =====
-      // Stage 3: Resample to AudioContext's native rate (eliminates browser-side resampling)
-      // sourceSampleRate is 16000Hz for PCM16 (backend forces PCM16 output)
-      // AudioContext is at NATIVE_SAMPLE_RATE
-      // Resample on frontend to avoid browser-side resampling artifacts
+      // Resample to AudioContext's native rate if needed
       const audioContextSampleRate = audioContext.sampleRate;
-      const needsResampling = audioContextSampleRate !== sourceSampleRate;
-      
-      // Resample Float32 data to match AudioContext's native sample rate
-      let resampledFloat32Data = float32Data;
-      if (needsResampling) {
-        console.log(`[AUDIO-DIAG] Resampling audio from ${sourceSampleRate}Hz to ${audioContextSampleRate}Hz to match AudioContext`);
-        const startTime = Date.now();
-        resampledFloat32Data = resampleFloat32(float32Data, sourceSampleRate, audioContextSampleRate);
-        const resampleTime = Date.now() - startTime;
-        console.log(`[AUDIO-DIAG] Resampling complete: ${float32Data.length} samples → ${resampledFloat32Data.length} samples (${resampleTime}ms)`);
+      let finalFloat32Data = float32Data;
+      if (audioContextSampleRate !== sourceSampleRate) {
+        finalFloat32Data = resampleFloat32(float32Data, sourceSampleRate, audioContextSampleRate);
       }
       
-      // Validate buffer size is reasonable (max 10 seconds at target rate)
-      const maxSamples = audioContextSampleRate * 10;
-      let finalFloat32Data = resampledFloat32Data;
-      if (finalFloat32Data.length > maxSamples) {
-        console.warn('⚠️ Audio buffer unusually large:', finalFloat32Data.length, 'samples (', (finalFloat32Data.length / audioContextSampleRate).toFixed(2), 'seconds). Truncating to', maxSamples, 'samples.');
-        finalFloat32Data = finalFloat32Data.slice(0, maxSamples);
-      }
-      
-      // Validate buffer length before creating AudioBuffer
+      // Validate buffer length
       if (finalFloat32Data.length === 0) {
-        console.warn(`[AUDIO-DIAG] Empty float32 data after resampling:`, { chunkId });
         isProcessingQueueRef.current = false;
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
@@ -1489,34 +1423,14 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
+      // Create AudioBuffer
       let audioBuffer: AudioBuffer;
       try {
-        // Create AudioBuffer at AudioContext's native sample rate (no browser resampling needed)
         audioBuffer = audioContext.createBuffer(1, finalFloat32Data.length, audioContextSampleRate);
         audioBuffer.copyToChannel(finalFloat32Data, 0);
-        
-        console.log(`[AUDIO-DIAG] Stage 4 - AudioBuffer Creation:`, {
-          chunkId,
-          bufferSampleRate: audioBuffer.sampleRate,
-          audioContextSampleRate,
-          sourceSampleRate,
-          resampled: needsResampling,
-          bufferLength: audioBuffer.length,
-          bufferDuration: audioBuffer.duration.toFixed(3) + 's',
-          numberOfChannels: audioBuffer.numberOfChannels,
-          matchesFloat32: audioBuffer.length === finalFloat32Data.length,
-          note: needsResampling ? 'Resampled on frontend - no browser resampling' : 'No resampling needed'
-        });
       } catch (error) {
         console.error('❌ Failed to create audio buffer:', error);
-        console.error(`[AUDIO-DIAG] Buffer creation failed:`, {
-          chunkId,
-          float32Length: finalFloat32Data.length,
-          sourceSampleRate,
-          audioContextSampleRate
-        });
         isProcessingQueueRef.current = false;
-        // Try next chunk
         if (audioQueueRef.current.length > 0) {
           requestAnimationFrame(() => processAudioQueue());
         }
@@ -1564,23 +1478,10 @@ export default function VoiceInterviewWebSocket({
         gainNode = audioContext.createGain();
         gainNode.gain.value = 0.65; // Reduced from 0.75 to prevent clipping with very loud ElevenLabs audio
         
-        console.log(`[AUDIO-DIAG] Stage 5 - Playback Setup:`, {
-          chunkId,
-          gainValue: gainNode.gain.value,
-          bufferSampleRate: audioBuffer.sampleRate,
-          audioContextSampleRate: audioContext.sampleRate,
-          bufferDuration: audioBuffer.duration.toFixed(3) + 's',
-          playbackRate: source.playbackRate.value
-        });
-        
         source.connect(gainNode);
         gainNode.connect(audioContext.destination);
       } catch (error) {
         console.error('❌ Failed to create audio source or gain node:', error);
-        console.error(`[AUDIO-DIAG] Playback setup failed:`, {
-          chunkId,
-          error
-        });
         isProcessingQueueRef.current = false;
         // Try next chunk
         if (audioQueueRef.current.length > 0) {
@@ -1628,23 +1529,8 @@ export default function VoiceInterviewWebSocket({
       
       try {
         source.start(safeStartTime);
-        
-        console.log(`[AUDIO-DIAG] Stage 6 - Playback Started:`, {
-          chunkId,
-          scheduledTime: safeStartTime.toFixed(3),
-          currentTime: currentTime.toFixed(3),
-          delay: (safeStartTime - currentTime).toFixed(3) + 's',
-          duration: duration.toFixed(3) + 's',
-          nextPlayTime: nextPlayTimeRef.current.toFixed(3)
-        });
       } catch (error) {
         console.error('❌ Failed to start audio source:', error);
-        console.error(`[AUDIO-DIAG] Playback start failed:`, {
-          chunkId,
-          error,
-          scheduledTime: safeStartTime,
-          currentTime
-        });
         // Cleanup on failure
         try {
           source.disconnect();

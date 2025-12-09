@@ -406,9 +406,12 @@ function createElevenLabsConnection(apiKey, candidateContext) {
           encoding: 'pcm16',
           channels: 1 // Mono
         },
-        // CRITICAL: Specify output format as string "pcm_16000" to force PCM16 (not MP3)
-        // This works in conjunction with the URL parameter output_format=pcm_16000
-        output_format: 'pcm_16000',
+        // CRITICAL: Force PCM16 output format (not MP3)
+        // Using string format "pcm_16000" as specified in ElevenLabs documentation
+        // This MUST be set explicitly to prevent SDK defaulting to MP3
+        // Format is specified in both URL parameter AND conversation_init message for maximum compatibility
+        output_format: 'pcm_16000', // Explicitly request PCM16 16000Hz output (prevents MP3 default)
+        // Also specify output_audio_format object for compatibility
         output_audio_format: {
           sample_rate: ELEVENLABS_SAMPLE_RATE, // Force 16kHz output
           encoding: 'pcm16', // Force PCM16 (not MP3)
