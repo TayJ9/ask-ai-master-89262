@@ -1070,6 +1070,13 @@ export default function VoiceInterviewWebSocket({
     // Check 2: Sample first 100 bytes as PCM16 and check for suspicious patterns
     // If interpreted as PCM16, μ-law data will show high-amplitude noise
     const sampleCount = Math.min(50, Math.floor(byteLength / 2));
+    
+    // Guard against division by zero
+    if (sampleCount === 0) {
+      console.log('[AUDIO-DIAG] Buffer too small for analysis - defaulting to PCM16');
+      return 'pcm16';
+    }
+    
     let highAmplitudeCount = 0;
     let totalAmplitude = 0;
     
@@ -1094,6 +1101,13 @@ export default function VoiceInterviewWebSocket({
     
     // Check 3: Try interpreting as μ-law and see if values are more reasonable
     const ulawSampleCount = Math.min(50, byteLength);
+    
+    // Guard against division by zero
+    if (ulawSampleCount === 0) {
+      console.log('[AUDIO-DIAG] Buffer too small for μ-law analysis - defaulting to PCM16');
+      return 'pcm16';
+    }
+    
     let ulawTotalAmplitude = 0;
     let ulawReasonableCount = 0;
     
@@ -1603,60 +1617,6 @@ export default function VoiceInterviewWebSocket({
           durationMs: (float32Data.length / sourceSampleRate) * 1000
         });
       }
-        
-        // Apply smoother normalization curve with improved compression algorithm
-        // Use a soft-knee compression with smoother transitions to prevent artifacts
-        normalizedPcm16Data = new Int16Array(pcm16Data.length);
-        for (let i = 0; i < pcm16Data.length; i++) {
-          const sample = pcm16Data[i];
-          const absSample = Math.abs(sample);
-          
-          // Apply pre-gain reduction first
-          let processedSample = sample * preGainReduction;
-          let processedAbs = Math.abs(processedSample);
-          
-          // Apply smooth normalization with improved compression curve
-          if (processedAbs > MAX_SAFE_AMPLITUDE) {
-            // Linear normalization for samples above threshold
-            processedSample = processedSample * normalizationFactor;
-          } else if (processedAbs > MAX_SAFE_AMPLITUDE * 0.8) {
-            // Soft-knee compression for samples near threshold (smoother transition)
-            // Use exponential curve for smoother compression
-            const ratio = (processedAbs - MAX_SAFE_AMPLITUDE * 0.8) / (MAX_SAFE_AMPLITUDE * 0.2);
-            const compressionAmount = ratio * 0.15; // Gradually compress up to 15%
-            processedSample = processedSample * (1.0 - compressionAmount);
-          }
-          
-          normalizedPcm16Data[i] = Math.round(processedSample);
-        }
-        normalizationApplied = true;
-        
-        if (shouldLogWarning) {
-          const normalizedMax = Math.max(...Array.from(normalizedPcm16Data));
-          const normalizedMin = Math.min(...Array.from(normalizedPcm16Data));
-          console.log(`[AUDIO-DIAG] After normalization: max=${normalizedMax}, min=${normalizedMin}`);
-        }
-      } else if (preGainReduction < 1.0) {
-        // Apply pre-gain reduction even if not normalizing
-        normalizedPcm16Data = new Int16Array(pcm16Data.length);
-        for (let i = 0; i < pcm16Data.length; i++) {
-          normalizedPcm16Data[i] = Math.round(pcm16Data[i] * preGainReduction);
-        }
-        normalizationApplied = true;
-      }
-      
-      console.log(`[AUDIO-DIAG] Stage 2 - PCM16 Analysis:`, {
-        chunkId,
-        sampleCount: pcm16Data.length,
-        minSample,
-        maxSample,
-        avgAmplitude: avgSample.toFixed(2),
-        range: maxSample - minSample,
-        durationMs: (pcm16Data.length / ELEVENLABS_SAMPLE_RATE) * 1000,
-        normalizationApplied,
-        normalizationFactor: normalizationApplied ? normalizationFactor.toFixed(4) : 1.0,
-        peakAmplitude: Math.max(Math.abs(maxSample), Math.abs(minSample))
-      });
 
       // ===== AUDIO DATA PATH DIAGNOSTICS =====
       // Stage 3: Float32 data ready (already converted from μ-law or PCM16)
