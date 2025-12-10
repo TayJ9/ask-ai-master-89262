@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Mic, MicOff, Volume2, Loader2, CheckCircle2, X, User, Headphones } from "lucide-react";
 import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import AudioVisualizer from "@/components/ui/AudioVisualizer";
 
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
@@ -57,6 +58,8 @@ export default function VoiceInterviewWebSocket({
   const nextPlayTimeRef = useRef(0);
   const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
   const audioBufferQueueRef = useRef<Float32Array[]>([]);
+  const inputAnalyserRef = useRef<AnalyserNode | null>(null);
+  const outputAnalyserRef = useRef<AnalyserNode | null>(null);
   const isConnectingRef = useRef(false);
   const retryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const retryCountRef = useRef(0);
@@ -295,7 +298,7 @@ export default function VoiceInterviewWebSocket({
   // Handle WebSocket messages (defined before useEffect to avoid hoisting issues)
   const handleWebSocketMessage = useCallback((message: any) => {
     // Reduced logging - only log important message types
-    if (['error', 'interview_started', 'student_speech_started'].includes(message.type)) {
+    if (['error', 'interview_started', 'student_speech_started', 'user_started_speaking', 'interruption'].includes(message.type)) {
       console.log('Received message:', message.type);
     }
 
@@ -560,6 +563,54 @@ export default function VoiceInterviewWebSocket({
           }];
         });
         break;
+      case 'interruption': {
+        // Explicit interruption event - immediately stop AI audio
+        console.log('🛑 Interruption detected - stopping AI audio immediately');
+        
+        // Immediately stop all playing audio sources
+        activeSourcesRef.current.forEach(source => {
+          try {
+            source.onended = null; // Prevent callbacks
+            source.stop();
+          } catch (e) {
+            // Ignore errors - source may already be stopped
+          }
+          try {
+            source.disconnect();
+          } catch (e) {
+            // Ignore disconnect errors
+          }
+        });
+        activeSourcesRef.current = [];
+        isProcessingQueueRef.current = false;
+        
+        // Clear audio queue (scheduledAudioQueue) immediately
+        const queueSizeBeforeClear = audioQueueRef.current.length;
+        audioQueueRef.current = [];
+        pendingAudioBufferRef.current = null; // Clear pending buffer on interruption
+        audioBufferAccumulatorRef.current = 0; // Reset buffer accumulator on interruption
+        if (queueSizeBeforeClear > 0) {
+          console.log('🔊 Cleared audio queue:', queueSizeBeforeClear, 'chunks');
+        }
+        
+        // Suspend or stop AudioContext to cut off audio instantly
+        if (audioContextRef.current && audioContextRef.current.state === 'running') {
+          audioContextRef.current.suspend().catch((error) => {
+            console.error('❌ Failed to suspend AudioContext:', error);
+          });
+        }
+        
+        // Reset playback state
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        nextPlayTimeRef.current = 0;
+        
+        // Set state to listening
+        setConversationStateWithLogging('listening', 'interruption');
+        setStatusMessage("Listening... Please speak your answer.");
+        break;
+      }
+      case 'user_started_speaking':
       case 'student_speech_started': {
         // Keep this log as it's important for debugging interruptions
         console.log('🎤 User started speaking - stopping AI audio');
@@ -572,7 +623,7 @@ export default function VoiceInterviewWebSocket({
           console.log(`⏱️ Turn-taking timing: ${timeSinceAiDone}ms from AI response done to user speech start`);
         }
         
-        setConversationStateWithLogging('user_speaking', 'student_speech_started');
+        setConversationStateWithLogging('user_speaking', message.type === 'user_started_speaking' ? 'user_started_speaking' : 'student_speech_started');
         setStatusMessage("You're speaking...");
         
         // Preserve any pending non-final transcript before clearing state
@@ -638,6 +689,13 @@ export default function VoiceInterviewWebSocket({
         audioBufferAccumulatorRef.current = 0; // Reset buffer accumulator on interruption
         if (queueSizeBeforeClear > 0) {
           console.log('🔊 Cleared audio queue:', queueSizeBeforeClear, 'chunks');
+        }
+        
+        // Suspend AudioContext to cut off audio instantly
+        if (audioContextRef.current && audioContextRef.current.state === 'running') {
+          audioContextRef.current.suspend().catch((error) => {
+            console.error('❌ Failed to suspend AudioContext:', error);
+          });
         }
         
         // Reset playback state
@@ -1415,6 +1473,14 @@ export default function VoiceInterviewWebSocket({
             console.log(`[AUDIO-DIAG] AudioContext resumed from suspended state`);
           }
           
+          // Create analyser node for output visualization (AI audio) if not exists
+          if (!outputAnalyserRef.current) {
+            const outputAnalyser = audioContextRef.current.createAnalyser();
+            outputAnalyser.fftSize = 2048;
+            outputAnalyser.smoothingTimeConstant = 0.8;
+            outputAnalyserRef.current = outputAnalyser;
+          }
+          
           // Add initial buffer delay (100ms) - optimized for responsiveness
           const currentTime = audioContextRef.current.currentTime;
           nextPlayTimeRef.current = currentTime + 0.1;
@@ -1429,10 +1495,12 @@ export default function VoiceInterviewWebSocket({
 
       const audioContext = audioContextRef.current;
       
-      // Resume context if suspended
+      // Resume context if suspended (e.g., after an interruption)
+      // This ensures audio can play immediately when new chunks arrive
       if (audioContext.state === 'suspended') {
         try {
           await audioContext.resume();
+          console.log('✅ AudioContext resumed from suspended state (ready for playback)');
         } catch (error) {
           console.error('❌ Failed to resume AudioContext:', error);
           isProcessingQueueRef.current = false;
@@ -1589,8 +1657,18 @@ export default function VoiceInterviewWebSocket({
         gainNode = audioContext.createGain();
         gainNode.gain.value = 0.65; // Reduced from 0.75 to prevent clipping with very loud ElevenLabs audio
         
+        // Ensure output analyser exists
+        if (!outputAnalyserRef.current) {
+          const outputAnalyser = audioContext.createAnalyser();
+          outputAnalyser.fftSize = 2048;
+          outputAnalyser.smoothingTimeConstant = 0.8;
+          outputAnalyserRef.current = outputAnalyser;
+        }
+        
+        // Connect source -> gain -> analyser -> destination for visualization
         source.connect(gainNode);
-        gainNode.connect(audioContext.destination);
+        gainNode.connect(outputAnalyserRef.current);
+        outputAnalyserRef.current.connect(audioContext.destination);
       } catch (error) {
         console.error('❌ Failed to create audio source or gain node:', error);
         isProcessingQueueRef.current = false;
@@ -2353,6 +2431,12 @@ export default function VoiceInterviewWebSocket({
       const audioContext = audioContextRef.current;
       const source = audioContext.createMediaStreamSource(stream);
       
+      // Create analyser node for input visualization
+      const inputAnalyser = audioContext.createAnalyser();
+      inputAnalyser.fftSize = 2048;
+      inputAnalyser.smoothingTimeConstant = 0.8;
+      inputAnalyserRef.current = inputAnalyser;
+      
       const recordingStateRef = { isRecording: true };
       let processor: ScriptProcessorNode | AudioWorkletNode | null = null;
       let workletNode: AudioWorkletNode | null = null;
@@ -2366,6 +2450,8 @@ export default function VoiceInterviewWebSocket({
         workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
         
         // Handle messages from the worklet
+        // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
+        // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
         workletNode.port.onmessage = (e) => {
           if (e.data.type === 'audioData') {
             if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
@@ -2378,6 +2464,7 @@ export default function VoiceInterviewWebSocket({
             const pcm16 = convertToPCM16(inputData);
             
             // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
+            // Streaming continuous silence is okay - backend VAD will detect speech boundaries
             const base64 = encodePCM16ToBase64(pcm16);
             
             wsRef.current.send(JSON.stringify({
@@ -2390,7 +2477,9 @@ export default function VoiceInterviewWebSocket({
         };
         
         processor = workletNode;
-        source.connect(workletNode);
+        // Connect source -> analyser -> worklet -> destination
+        source.connect(inputAnalyser);
+        inputAnalyser.connect(workletNode);
         workletNode.connect(audioContext.destination);
         
       } catch (workletError) {
@@ -2398,6 +2487,8 @@ export default function VoiceInterviewWebSocket({
         console.warn('AudioWorklet not available, falling back to ScriptProcessorNode:', workletError);
         processor = audioContext.createScriptProcessor(4096, 1, 1);
         
+        // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
+        // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
         (processor as ScriptProcessorNode).onaudioprocess = (e) => {
           if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
             return;
@@ -2409,6 +2500,7 @@ export default function VoiceInterviewWebSocket({
           const pcm16 = convertToPCM16(inputData);
           
           // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
+          // Streaming continuous silence is okay - backend VAD will detect speech boundaries
           const base64 = encodePCM16ToBase64(pcm16);
           
           wsRef.current.send(JSON.stringify({
@@ -2419,7 +2511,9 @@ export default function VoiceInterviewWebSocket({
           }));
         };
         
-        source.connect(processor);
+        // Connect source -> analyser -> processor -> destination
+        source.connect(inputAnalyser);
+        inputAnalyser.connect(processor);
         processor.connect(audioContext.destination);
       }
 
@@ -2561,6 +2655,18 @@ export default function VoiceInterviewWebSocket({
                   <span className="font-medium">{statusMessage}</span>
                 </div>
               )}
+            </div>
+
+            {/* Audio Visualizer */}
+            <div className="mb-6 flex justify-center">
+              <AudioVisualizer
+                inputAnalyser={inputAnalyserRef.current}
+                outputAnalyser={outputAnalyserRef.current}
+                mode={conversationState}
+                width={600}
+                height={120}
+                barCount={60}
+              />
             </div>
 
             {/* Microphone Button */}

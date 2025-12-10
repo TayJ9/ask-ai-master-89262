@@ -1,3 +1,20 @@
+/**
+ * @deprecated This module is deprecated. The application has migrated to ElevenLabs for voice interview features.
+ * This file is kept for reference only and should not be used in new code.
+ * 
+ * All OpenAI endpoints have been removed:
+ * - /api/ai/text-to-speech (removed)
+ * - /api/ai/speech-to-text (removed)
+ * - /api/ai/analyze-response (removed)
+ * - /api/ai/coach (removed)
+ * 
+ * Voice interview functionality now uses ElevenLabs ConvAI API via:
+ * - /api/conversation-token (ElevenLabs)
+ * - /webhooks/elevenlabs (ElevenLabs webhook)
+ * 
+ * See ELEVENLABS_ENV_VARIABLES.md for required environment variables.
+ */
+
 import OpenAI, { toFile } from "openai";
 
 // This integration uses OpenAI's API, which points to OpenAI's API servers and requires your own API key.

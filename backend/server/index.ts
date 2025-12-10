@@ -179,7 +179,8 @@ app.use((req, res, next) => {
       
       // Log environment variable status
       log(`Environment Variables Status:`);
-      log(`  OPENAI_API_KEY: ${process.env.OPENAI_API_KEY ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
+      log(`  ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? '✅ Set' : '❌ Missing (CRITICAL for voice interviews)'}`);
+      log(`  ELEVENLABS_AGENT_ID: ${process.env.ELEVENLABS_AGENT_ID ? '✅ Set' : '⚠️  Missing (will use default)'}`);
       log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '⚠️  Missing (recommended for auth)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);

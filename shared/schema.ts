@@ -90,3 +90,24 @@ export const insertInterviewTurnSchema = createInsertSchema(interviewTurns).omit
 });
 export type InsertInterviewTurn = z.infer<typeof insertInterviewTurnSchema>;
 export type InterviewTurn = typeof interviewTurns.$inferSelect;
+
+// ElevenLabs voice interviews table
+export const interviews = pgTable("interviews", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id"),
+  agentId: text("agent_id").notNull(),
+  transcript: text("transcript"),
+  durationSeconds: integer("duration_seconds"),
+  startedAt: timestamp("started_at"),
+  endedAt: timestamp("ended_at"),
+  status: text("status").notNull().default("completed"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertInterviewSchema = createInsertSchema(interviews).omit({ 
+  id: true, 
+  createdAt: true 
+});
+export type InsertInterview = z.infer<typeof insertInterviewSchema>;
+export type Interview = typeof interviews.$inferSelect;

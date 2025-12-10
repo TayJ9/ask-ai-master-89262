@@ -1,7 +1,12 @@
 import { storage } from "./storage";
-import { analyzeInterviewResponse } from "./openai";
 
 /**
+ * @deprecated This function uses OpenAI API which has been deprecated.
+ * The application has migrated to ElevenLabs for voice interview features.
+ * 
+ * This function is kept for backward compatibility but requires OPENAI_API_KEY.
+ * Consider migrating to ElevenLabs-based analysis or removing this functionality.
+ * 
  * Analyze entire interview session at the end
  * Collects all Q&A pairs and generates comprehensive feedback
  */
@@ -121,7 +126,11 @@ IMPORTANT GUIDELINES:
 - Ensure strengths and improvements are balanced (neither overly harsh nor overly generous)
 - The feedback summary should be comprehensive but concise (2-3 paragraphs)`;
 
-  // Use OpenAI to analyze (you can switch to Vertex AI if preferred)
+  // DEPRECATED: This function uses OpenAI API
+  // Note: OpenAI endpoints have been removed from the application.
+  // This function is kept for backward compatibility only.
+  // Consider migrating to ElevenLabs-based analysis or removing this functionality.
+  
   const { default: OpenAI } = await import("openai");
   
   // Support both OPENAI_API_KEY and OPEN_API_KEY (user's naming convention)
@@ -129,8 +138,10 @@ IMPORTANT GUIDELINES:
   if (!apiKey) {
     throw new Error(
       "OpenAI API key not configured. " +
-      "Please set either OPENAI_API_KEY or OPEN_API_KEY in Railway Variables. " +
-      "Get your API key from https://platform.openai.com/api-keys"
+      "This function requires OPENAI_API_KEY but OpenAI endpoints have been deprecated. " +
+      "The application has migrated to ElevenLabs. " +
+      "Please set OPENAI_API_KEY in Railway Variables if you need this legacy functionality, " +
+      "or consider removing this feature."
     );
   }
 
