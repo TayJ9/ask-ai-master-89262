@@ -88,10 +88,17 @@ export default function AudioVisualizer({
       const average = sum / dataArray.length;
 
       // Draw bars based on frequency data
+      const isActive = mode === 'user_speaking' || mode === 'ai_speaking';
+      
       for (let i = 0; i < barCount; i++) {
         // Map frequency bin index to data array
         const dataIndex = Math.floor((i / barCount) * bufferLength);
-        const barHeight = (dataArray[dataIndex] / 255) * height * 0.8;
+        let barHeight = (dataArray[dataIndex] / 255) * height * 0.8;
+        
+        // For listening/processing states, show minimal bars even when silent
+        if (!isActive && barHeight < 2) {
+          barHeight = 2; // Minimum bar height for visibility
+        }
 
         // Add some smoothing and visual appeal
         const x = i * barWidth;
@@ -106,16 +113,18 @@ export default function AudioVisualizer({
         ctx.fillRect(x + barWidth * 0.1, y, barWidth * 0.8, barHeight);
 
         // Add glow effect for active modes
-        if (mode === 'user_speaking' || mode === 'ai_speaking') {
+        if (isActive) {
           ctx.shadowBlur = 10;
           ctx.shadowColor = color;
         }
       }
 
-      // Draw waveform overlay (optional - shows overall volume)
-      if (mode === 'user_speaking' || mode === 'ai_speaking') {
+      // Draw waveform overlay (shows overall volume) - only for active speaking modes
+      if (isActive) {
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = color;
         ctx.beginPath();
         
         const sliceWidth = width / bufferLength;
@@ -169,19 +178,31 @@ export default function AudioVisualizer({
         className="rounded-lg border border-border bg-background"
         style={{ width, height }}
       />
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <div className={`flex items-center gap-2 text-xs font-medium ${
+        mode === 'user_speaking'
+          ? 'text-green-600'
+          : mode === 'ai_speaking'
+          ? 'text-blue-600'
+          : mode === 'processing'
+          ? 'text-purple-600'
+          : 'text-amber-600'
+      }`}>
         <div
-          className="h-2 w-2 rounded-full"
+          className={`h-2 w-2 rounded-full ${
+            mode === 'user_speaking' || mode === 'ai_speaking'
+              ? 'animate-pulse'
+              : ''
+          }`}
           style={{ backgroundColor: getColor() }}
         />
         <span className="capitalize">
           {mode === 'user_speaking'
-            ? 'You are speaking'
+            ? '🎤 You are speaking'
             : mode === 'ai_speaking'
-            ? 'AI is speaking'
+            ? '🤖 AI is speaking'
             : mode === 'processing'
-            ? 'Processing...'
-            : 'Listening...'}
+            ? '⚙️ Processing...'
+            : '👂 Listening...'}
         </span>
       </div>
     </div>

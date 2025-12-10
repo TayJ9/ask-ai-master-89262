@@ -392,6 +392,17 @@ export default function VoiceInterviewWebSocket({
         setConversationStateWithLogging('ai_speaking', 'interview_started');
         setStatusMessage("Interview started. AI is speaking...");
         
+        // Start continuous microphone stream for VAD (keep it open)
+        // The stream will remain open and continuously send chunks
+        if (!mediaStreamRef.current) {
+          startRecording().catch((error) => {
+            console.error('❌ Failed to start continuous recording:', error);
+          });
+        } else {
+          // If already recording, ensure we're sending chunks
+          resumeRecording();
+        }
+        
         // Set timeout to prevent stuck state (30 seconds max for AI response)
         if (stateTimeoutRef.current) {
           clearTimeout(stateTimeoutRef.current);
@@ -431,6 +442,10 @@ export default function VoiceInterviewWebSocket({
         // Update conversation state when AI starts speaking
         if (conversationState === 'listening' || conversationState === 'user_speaking') {
           setConversationStateWithLogging('ai_speaking', 'ai_transcription_received');
+          // Pause sending audio chunks when AI starts speaking (but keep stream open)
+          if (isRecording) {
+            pauseRecording();
+          }
         }
         setTranscripts(prev => {
           const isFinal = message.is_final || false;
@@ -703,9 +718,9 @@ export default function VoiceInterviewWebSocket({
         setIsPlaying(false);
         nextPlayTimeRef.current = 0;
         
-        // Stop recording if it was active (shouldn't be, but safety check)
-        if (isRecording) {
-          stopRecording();
+        // Resume sending audio chunks (microphone stream stays open for continuous VAD)
+        if (mediaStreamRef.current && !isRecording) {
+          resumeRecording();
         }
         break;
       }
@@ -748,6 +763,10 @@ export default function VoiceInterviewWebSocket({
         if (conversationState === 'ai_speaking') {
           setConversationStateWithLogging('listening', 'ai_response_done');
           setStatusMessage("Listening... Please speak your answer.");
+          // Resume sending audio chunks (microphone stream stays open for continuous VAD)
+          if (mediaStreamRef.current && !isRecording) {
+            resumeRecording();
+          }
         }
         break;
       case 'ai_audio_done':
@@ -762,6 +781,10 @@ export default function VoiceInterviewWebSocket({
         if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0) {
           setConversationStateWithLogging('listening', 'ai_audio_done');
           setStatusMessage("Listening... Please speak your answer.");
+          // Resume sending audio chunks (microphone stream stays open for continuous VAD)
+          if (mediaStreamRef.current && !isRecording) {
+            resumeRecording();
+          }
         }
         break;
       case 'student_transcription':
@@ -1932,6 +1955,33 @@ export default function VoiceInterviewWebSocket({
   }, [processAudioQueue, bufferAndValidateChunk]);
 
   // Stop recording
+  // Pause sending audio chunks (but keep stream open for continuous VAD)
+  const pauseRecording = useCallback(() => {
+    if (mediaStreamRef.current) {
+      // Update recording state ref to pause sending chunks
+      const recordingState = (mediaStreamRef.current as any).__recordingState;
+      if (recordingState) {
+        recordingState.isRecording = false;
+      }
+    }
+    
+    setIsRecording(false);
+  }, []);
+
+  // Resume sending audio chunks
+  const resumeRecording = useCallback(() => {
+    if (mediaStreamRef.current) {
+      // Update recording state ref to resume sending chunks
+      const recordingState = (mediaStreamRef.current as any).__recordingState;
+      if (recordingState) {
+        recordingState.isRecording = true;
+      }
+      setIsRecording(true);
+      setStatusMessage("Microphone active - speak naturally");
+    }
+  }, []);
+
+  // Stop recording completely (only used when ending interview)
   const stopRecording = useCallback(() => {
     if (mediaStreamRef.current) {
       // Update recording state ref
@@ -1951,7 +2001,7 @@ export default function VoiceInterviewWebSocket({
         }
       }
       
-      // Stop all tracks
+      // Stop all tracks (only when ending interview)
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
       
       // Disconnect processor if exists (ScriptProcessorNode fallback)
@@ -1968,7 +2018,6 @@ export default function VoiceInterviewWebSocket({
     }
     
     setIsRecording(false);
-    setStatusMessage("Processing...");
   }, []);
 
   // Cleanup audio resources with memory leak prevention
@@ -2452,8 +2501,11 @@ export default function VoiceInterviewWebSocket({
         // Handle messages from the worklet
         // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
         // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
+        // Microphone stream stays open continuously for VAD - we only control whether we send chunks
         workletNode.port.onmessage = (e) => {
           if (e.data.type === 'audioData') {
+            // Only send chunks if recording state is active AND WebSocket is open
+            // This allows us to pause sending when AI is speaking, but keep stream open
             if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
               return;
             }
@@ -2465,6 +2517,7 @@ export default function VoiceInterviewWebSocket({
             
             // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
             // Streaming continuous silence is okay - backend VAD will detect speech boundaries
+            // Chunks are sent continuously (~every 100-250ms) without waiting for stop button
             const base64 = encodePCM16ToBase64(pcm16);
             
             wsRef.current.send(JSON.stringify({
@@ -2489,7 +2542,10 @@ export default function VoiceInterviewWebSocket({
         
         // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
         // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
+        // Microphone stream stays open continuously for VAD - we only control whether we send chunks
         (processor as ScriptProcessorNode).onaudioprocess = (e) => {
+          // Only send chunks if recording state is active AND WebSocket is open
+          // This allows us to pause sending when AI is speaking, but keep stream open
           if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
             return;
           }
@@ -2501,6 +2557,7 @@ export default function VoiceInterviewWebSocket({
           
           // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
           // Streaming continuous silence is okay - backend VAD will detect speech boundaries
+          // Chunks are sent continuously (~every 100-250ms) without waiting for stop button
           const base64 = encodePCM16ToBase64(pcm16);
           
           wsRef.current.send(JSON.stringify({
@@ -2518,7 +2575,7 @@ export default function VoiceInterviewWebSocket({
       }
 
       setIsRecording(true);
-      setStatusMessage("Recording... Speak now.");
+      setStatusMessage("Microphone active - speak naturally");
       
       // Store references for cleanup
       (mediaStreamRef.current as any).__processor = processor;
@@ -2546,7 +2603,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Microphone error. Please check permissions.");
       }
     }
-  }, [toast, stopRecording, convertToPCM16]);
+  }, [toast, convertToPCM16]);
 
   // End interview
   const handleEndInterview = useCallback(() => {
@@ -2580,19 +2637,20 @@ export default function VoiceInterviewWebSocket({
     }
   }, [stopRecording, cleanupAudio, onComplete]);
 
-  // Auto-start recording when AI finishes speaking
+  // Auto-resume sending audio chunks when AI finishes speaking
+  // Note: Microphone stream stays open continuously for VAD
   useEffect(() => {
-    if (!isPlaying && isInterviewActive && !isRecording && !isProcessing) {
-      // Small delay before auto-starting recording
+    if (!isPlaying && isInterviewActive && !isRecording && !isProcessing && mediaStreamRef.current) {
+      // Small delay before resuming to send chunks
       const timer = setTimeout(() => {
-        if (!isPlayingRef.current) {
-          startRecording();
+        if (!isPlayingRef.current && mediaStreamRef.current) {
+          resumeRecording();
         }
-      }, 500);
+      }, 300);
       
       return () => clearTimeout(timer);
     }
-  }, [isPlaying, isInterviewActive, isRecording, isProcessing, startRecording]);
+  }, [isPlaying, isInterviewActive, isRecording, isProcessing, resumeRecording]);
 
   return (
     <AnimatedBackground className="p-6 flex items-center justify-center">
@@ -2617,41 +2675,36 @@ export default function VoiceInterviewWebSocket({
               </Button>
             </div>
 
-            {/* Status Indicator */}
+            {/* Status Indicator - Clear visual feedback for each state */}
             <div className="text-center mb-6">
-              {isPlaying ? (
-                <div className="flex items-center justify-center gap-2 text-primary">
-                  <AISpeakingIndicator size="md" />
-                  <span className="font-medium">AI is speaking...</span>
-                </div>
-              ) : isRecording ? (
-                <div className="flex items-center justify-center gap-2 text-red-500">
-                  <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                  <span className="font-medium">Recording... Speak now</span>
-                </div>
-              ) : isProcessing ? (
-                <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span className="font-medium">Processing...</span>
-                </div>
-              ) : !isConnected ? (
+              {!isConnected ? (
                 <div className="flex items-center justify-center gap-2 text-yellow-600">
                   <Loader2 className="w-5 h-5 animate-spin" />
                   <span className="font-medium">{statusMessage}</span>
                 </div>
-              ) : conversationState === 'user_speaking' ? (
+              ) : conversationState === 'ai_speaking' || isPlaying ? (
                 <div className="flex items-center justify-center gap-2 text-blue-600">
-                  <User className="w-5 h-5" />
-                  <span className="font-medium">{statusMessage}</span>
+                  <AISpeakingIndicator size="md" />
+                  <span className="font-medium text-lg">🤖 AI is speaking...</span>
+                </div>
+              ) : conversationState === 'user_speaking' ? (
+                <div className="flex items-center justify-center gap-2 text-green-600">
+                  <User className="w-5 h-5 animate-pulse" />
+                  <span className="font-medium text-lg">🎤 You are speaking...</span>
+                </div>
+              ) : conversationState === 'processing' ? (
+                <div className="flex items-center justify-center gap-2 text-purple-600">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="font-medium text-lg">⚙️ Processing your response...</span>
                 </div>
               ) : conversationState === 'listening' ? (
                 <div className="flex items-center justify-center gap-2 text-amber-600">
                   <Headphones className="w-5 h-5" />
-                  <span className="font-medium">{statusMessage}</span>
+                  <span className="font-medium text-lg">👂 Listening... Speak when ready</span>
                 </div>
               ) : (
-                <div className="flex items-center justify-center gap-2 text-green-600">
-                  <div className="w-3 h-3 bg-green-500 rounded-full" />
+                <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                  <div className="w-3 h-3 bg-muted-foreground rounded-full" />
                   <span className="font-medium">{statusMessage}</span>
                 </div>
               )}
@@ -2669,25 +2722,66 @@ export default function VoiceInterviewWebSocket({
               />
             </div>
 
-            {/* Microphone Button */}
-            <div className="flex justify-center mb-6">
-              <button
-                onClick={() => isRecording ? stopRecording() : startRecording()}
-                disabled={!isConnected || !isInterviewActive || isPlaying || isProcessing}
-                className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl ${
-                  isRecording
-                    ? "bg-red-500 text-white animate-pulse hover:bg-red-600 scale-110"
-                    : isPlaying || !isConnected || !isInterviewActive
+            {/* Microphone Status Indicator - Clear visual feedback */}
+            {/* Note: Microphone is always on for continuous VAD - automatic, no manual controls */}
+            <div className="flex flex-col items-center justify-center mb-6">
+              <div
+                className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
+                  conversationState === 'ai_speaking' || isPlaying
+                    ? "bg-blue-500 text-white animate-pulse shadow-blue-500/50"
+                    : conversationState === 'user_speaking'
+                    ? "bg-green-500 text-white animate-pulse shadow-green-500/50"
+                    : conversationState === 'processing'
+                    ? "bg-purple-500 text-white shadow-purple-500/50"
+                    : conversationState === 'listening'
+                    ? "bg-amber-500 text-white shadow-amber-500/50"
+                    : !isConnected || !isInterviewActive
                     ? "bg-muted text-muted-foreground opacity-50"
-                    : "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground hover:scale-110"
-                } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100`}
+                    : "bg-gradient-to-br from-primary to-primary/80 text-primary-foreground"
+                }`}
+                title={
+                  conversationState === 'ai_speaking'
+                    ? "AI is speaking - microphone active (VAD listening)"
+                    : conversationState === 'user_speaking'
+                    ? "You are speaking - microphone active"
+                    : conversationState === 'listening'
+                    ? "Listening - microphone ready, speak when ready"
+                    : conversationState === 'processing'
+                    ? "Processing your response..."
+                    : "Microphone ready"
+                }
               >
-                {isRecording ? (
-                  <Mic className="w-16 h-16" />
+                {conversationState === 'ai_speaking' || isPlaying ? (
+                  <Volume2 className="w-16 h-16" />
+                ) : conversationState === 'user_speaking' ? (
+                  <Mic className="w-16 h-16 animate-pulse" />
+                ) : conversationState === 'processing' ? (
+                  <Loader2 className="w-16 h-16 animate-spin" />
                 ) : (
-                  <MicOff className="w-16 h-16" />
+                  <Headphones className="w-16 h-16" />
                 )}
-              </button>
+              </div>
+              <p className={`text-xs mt-2 text-center max-w-xs font-medium ${
+                conversationState === 'ai_speaking'
+                  ? "text-blue-600"
+                  : conversationState === 'user_speaking'
+                  ? "text-green-600"
+                  : conversationState === 'processing'
+                  ? "text-purple-600"
+                  : conversationState === 'listening'
+                  ? "text-amber-600"
+                  : "text-muted-foreground"
+              }`}>
+                {conversationState === 'ai_speaking'
+                  ? "AI is speaking - microphone listening"
+                  : conversationState === 'user_speaking'
+                  ? "You are speaking - microphone active"
+                  : conversationState === 'processing'
+                  ? "Processing your response..."
+                  : conversationState === 'listening'
+                  ? "Listening - speak naturally"
+                  : "Microphone is always active"}
+              </p>
             </div>
           </CardContent>
         </Card>
