@@ -93,6 +93,11 @@ export default function VoiceInterviewWebSocket({
   const audioBufferAccumulatorRef = useRef<number>(0);
   const MIN_BUFFER_BEFORE_PLAYBACK = 16000; // 0.5s at 16kHz (16000 samples/s * 0.5s * 2 bytes)
   
+  // Jitter buffer: Accumulate small chunks to prevent micro-stuttering
+  const jitterBufferRef = useRef<ArrayBuffer[]>([]);
+  const JITTER_BUFFER_MIN_SIZE = 3200; // ~100ms at 16kHz PCM16 (3200 bytes)
+  const JITTER_BUFFER_TARGET_SIZE = 6400; // ~200ms at 16kHz PCM16 (6400 bytes)
+  
   // ElevenLabs requires 16kHz PCM16 mono audio
   const ELEVENLABS_SAMPLE_RATE = 16000;
   
@@ -875,6 +880,23 @@ export default function VoiceInterviewWebSocket({
         // Audio messages are handled in ws.onmessage handler before reaching here
         // This case is kept for logging/debugging purposes
         console.log('[AUDIO-DEBUG] Audio message type received (should be handled in ws.onmessage):', message);
+        break;
+      case 'agent_response':
+      case 'agent_response_event':
+        // Handle agent response event explicitly
+        // Check if this is the end of agent response
+        if (message.agent_response_end || message.agent_response_event?.agent_response_end) {
+          console.log('✅ Agent response ended (backup signal)');
+          // Backup signal to switch to listening - trust audio queue first, but use this as fallback
+          if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0 && activeSourcesRef.current.length === 0) {
+            setConversationStateWithLogging('listening', 'agent_response_end');
+            setStatusMessage("Listening... Please speak your answer.");
+            // Resume sending audio chunks (microphone stream stays open for continuous VAD)
+            if (mediaStreamRef.current && !isRecording) {
+              resumeRecording();
+            }
+          }
+        }
         break;
       case 'agent_chat_response_part':
         // Handle agent chat response parts (may contain transcript or other data)
@@ -1809,15 +1831,22 @@ export default function VoiceInterviewWebSocket({
           } else {
             // Check if any other sources are still playing
             if (activeSourcesRef.current.length === 0) {
-              // Reduced logging - only log state transitions
+              // CRITICAL FIX: Immediately switch to listening when last chunk finishes
               setIsPlaying(false);
               isPlayingRef.current = false;
               nextPlayTimeRef.current = 0;
               
-              // Transition to listening state when AI finishes speaking
-              if (conversationState === 'ai_speaking') {
-                setConversationStateWithLogging('listening', 'audio_queue_empty');
-                setStatusMessage("Listening... Please speak your answer.");
+              // Trust audio queue length - if empty and no sources playing, AI is done
+              if (audioQueueRef.current.length === 0) {
+                // Transition to listening state immediately when AI finishes speaking
+                if (conversationState === 'ai_speaking') {
+                  setConversationStateWithLogging('listening', 'last_audio_chunk_finished');
+                  setStatusMessage("Listening... Please speak your answer.");
+                  // Resume sending audio chunks (microphone stream stays open for continuous VAD)
+                  if (mediaStreamRef.current && !isRecording) {
+                    resumeRecording();
+                  }
+                }
               }
             }
           }
@@ -1890,34 +1919,70 @@ export default function VoiceInterviewWebSocket({
     }
   }, [convertPCM16ToFloat32, conversationState, validateAudioContent, audioContextRef, setConversationStateWithLogging, setIsPlaying, setStatusMessage, resampleFloat32, analyzeForStatic, exportPCM16ForAnalysis]);
 
-  // Queue audio chunk for playback with aggressive size limits and validation
+  // Queue audio chunk for playback with jitter buffer to prevent micro-stuttering
   const queueAudioChunk = useCallback((arrayBuffer: ArrayBuffer) => {
     const MAX_QUEUE_SIZE = 30; // Reduced from 50 - more aggressive limit
     const WARN_QUEUE_SIZE = 20; // Warn when queue exceeds this
     
-    // Buffer and validate chunk - ensures complete PCM frames
-    const completeFrames = bufferAndValidateChunk(arrayBuffer);
+    // JITTER BUFFER FIX: Accumulate small chunks to prevent clicks/stuttering
+    // Small chunks (< 3200 bytes) are buffered until we have enough data
+    const chunkSize = arrayBuffer.byteLength;
     
-    // If no complete frames yet (buffering), return early
-    if (completeFrames.length === 0) {
-      return; // Chunk is being buffered, will be processed when complete
-    }
-    
-    // Process each complete frame
-    for (const frame of completeFrames) {
-      // Track audio chunk metrics
-      const now = Date.now();
-      audioChunkSizesRef.current.push(frame.byteLength);
-      audioChunkReceiveTimesRef.current.push(now);
+    if (chunkSize < JITTER_BUFFER_MIN_SIZE) {
+      // Small chunk - add to jitter buffer
+      jitterBufferRef.current.push(arrayBuffer);
+      const totalBuffered = jitterBufferRef.current.reduce((sum, buf) => sum + buf.byteLength, 0);
       
-      // Keep only last 100 chunk timestamps for rate calculation
-      if (audioChunkReceiveTimesRef.current.length > 100) {
-        audioChunkReceiveTimesRef.current.shift();
-        audioChunkSizesRef.current.shift();
+      // If we've accumulated enough, combine and queue
+      if (totalBuffered >= JITTER_BUFFER_TARGET_SIZE) {
+        // Combine all buffered chunks
+        const combinedLength = jitterBufferRef.current.reduce((sum, buf) => sum + buf.byteLength, 0);
+        const combinedBuffer = new Uint8Array(combinedLength);
+        let offset = 0;
+        jitterBufferRef.current.forEach(buf => {
+          combinedBuffer.set(new Uint8Array(buf), offset);
+          offset += buf.byteLength;
+        });
+        jitterBufferRef.current = []; // Clear jitter buffer
+        
+        // Queue the combined chunk
+        const completeFrames = bufferAndValidateChunk(combinedBuffer.buffer);
+        completeFrames.forEach(frame => {
+          if (audioQueueRef.current.length < MAX_QUEUE_SIZE) {
+            audioQueueRef.current.push(frame);
+          }
+        });
+        console.log(`📦 Jitter buffer flushed: ${combinedLength} bytes (${jitterBufferRef.current.length} small chunks combined)`);
+      } else {
+        // Still accumulating - don't queue yet
+        return;
+      }
+    } else {
+      // Large chunk - queue directly (no jitter buffer needed)
+      // Buffer and validate chunk - ensures complete PCM frames
+      const completeFrames = bufferAndValidateChunk(arrayBuffer);
+      
+      // If no complete frames yet (buffering), return early
+      if (completeFrames.length === 0) {
+        return; // Chunk is being buffered, will be processed when complete
       }
       
-      // Add complete frame to queue
-      audioQueueRef.current.push(frame);
+      // Process each complete frame
+      for (const frame of completeFrames) {
+        // Track audio chunk metrics
+        const now = Date.now();
+        audioChunkSizesRef.current.push(frame.byteLength);
+        audioChunkReceiveTimesRef.current.push(now);
+        
+        // Keep only last 100 chunk timestamps for rate calculation
+        if (audioChunkReceiveTimesRef.current.length > 100) {
+          audioChunkReceiveTimesRef.current.shift();
+          audioChunkSizesRef.current.shift();
+        }
+        
+        // Add complete frame to queue
+        audioQueueRef.current.push(frame);
+      }
     }
     
     // Calculate receive rate if we have enough data (after adding all frames)
@@ -2490,14 +2555,23 @@ export default function VoiceInterviewWebSocket({
       mediaRecorderRef.current = mediaRecorder;
 
       // Handle data availability - send chunks immediately as binary
+      // CRITICAL: MediaRecorder stays ON - we only control whether we send chunks
       const recordingStateRef = { isRecording: true };
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
-          // Only send if WebSocket is open and we're in active recording state
-          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && recordingStateRef.isRecording) {
-            // Send blob directly as binary - backend handles binary audio
-            wsRef.current.send(event.data);
-            console.log(`📤 Sent audio chunk: ${event.data.size} bytes (binary)`);
+          // Always keep MediaRecorder running - only control sending
+          // If paused, discard data (ElevenLabs handles interruption)
+          // If active, send chunks
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+            if (recordingStateRef.isRecording) {
+              // Send blob directly as binary - backend handles binary audio
+              wsRef.current.send(event.data);
+              console.log(`📤 Sent audio chunk: ${event.data.size} bytes (binary)`);
+            } else {
+              // Discard chunk when paused (but MediaRecorder keeps running)
+              // This ensures mic stays hot and we don't lose first few seconds of reply
+              console.log(`🔇 Discarded audio chunk (paused): ${event.data.size} bytes`);
+            }
           }
         }
       };
