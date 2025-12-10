@@ -711,7 +711,8 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       console.warn(`⚠️ Invalid chunk size from ElevenLabs: ${chunkSize} bytes (not multiple of 2). Buffering.`);
                     }
                     
-                    // Combine with pending buffer if exists
+                    // CRITICAL FIX: Forward audio immediately - no buffering threshold
+                    // Combine with pending buffer if exists, but forward immediately regardless of size
                     let combinedBuffer;
                     if (pendingAudioBuffer) {
                       const pending = pendingAudioBuffer;
@@ -722,12 +723,13 @@ function handleFrontendConnection(frontendWs, httpServer) {
                       combinedBuffer = elevenLabsData;
                     }
                     
-                    // Check if combined buffer is still incomplete (not multiple of 2)
+                    // Forward immediately even if incomplete (not multiple of 2)
+                    // This prevents audio hostage situation and 30-second delays
+                    // If incomplete, pad with zero to make it even length
                     if (combinedBuffer.length % 2 !== 0) {
-                      // Save incomplete chunk for next iteration
-                      pendingAudioBuffer = combinedBuffer;
-                      console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes (waiting for more data)`);
-                      return; // Don't forward incomplete chunk
+                      // Pad with single zero byte to make it even
+                      combinedBuffer = Buffer.concat([combinedBuffer, Buffer.from([0])]);
+                      console.log(`⚠️ Padded incomplete chunk to even length: ${combinedBuffer.length} bytes`);
                     }
                     
                     // Check audio quality: verify PCM16 format and detect potential issues
@@ -826,17 +828,18 @@ function handleFrontendConnection(frontendWs, httpServer) {
                             combinedBuffer = audioBuffer;
                           }
                           
-                          // Check if combined buffer is still incomplete
+                          // CRITICAL FIX: Forward audio immediately - no buffering threshold
+                          // Pad if incomplete to make it even length
                           if (combinedBuffer.length % 2 !== 0) {
-                            pendingAudioBuffer = combinedBuffer;
-                            console.log(`📦 Buffering incomplete chunk: ${combinedBuffer.length} bytes`);
-                            break; // Don't forward incomplete chunk
+                            // Pad with single zero byte to make it even length
+                            combinedBuffer = Buffer.concat([combinedBuffer, Buffer.from([0])]);
+                            console.log(`⚠️ Padded incomplete chunk to even length: ${combinedBuffer.length} bytes`);
                           }
                           
-                          // Forward complete PCM frame
+                          // Forward immediately - no threshold check
                           if (combinedBuffer.length > 0) {
                             frontendWs.send(combinedBuffer);
-                            console.log(`✅ Forwarded complete PCM frame (base64): ${combinedBuffer.length} bytes`);
+                            console.log(`✅ Forwarded PCM frame immediately (base64): ${combinedBuffer.length} bytes`);
                           }
                         } catch (error) {
                           console.error('❌ Error processing ElevenLabs base64 audio:', error);

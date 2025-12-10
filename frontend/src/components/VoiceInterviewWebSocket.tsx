@@ -2435,11 +2435,12 @@ export default function VoiceInterviewWebSocket({
   // Start continuous microphone recording using MediaRecorder (Full Duplex)
   const startRecording = useCallback(async () => {
     try {
-      // Request microphone access
+      // Request microphone access with aggressive noise suppression
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
           noiseSuppression: true,
+          autoGainControl: true,
           sampleRate: NATIVE_SAMPLE_RATE,
           channelCount: 1,
         }
@@ -2461,12 +2462,14 @@ export default function VoiceInterviewWebSocket({
       const source = audioContext.createMediaStreamSource(stream);
       
       // Create analyser node for input visualization
+      // CRITICAL: Do NOT connect to audioContext.destination - this causes echo!
+      // We only want to visualize, not hear our own voice
       const inputAnalyser = audioContext.createAnalyser();
       inputAnalyser.fftSize = 2048;
       inputAnalyser.smoothingTimeConstant = 0.8;
       inputAnalyserRef.current = inputAnalyser;
       source.connect(inputAnalyser);
-      inputAnalyser.connect(audioContext.destination);
+      // DO NOT connect analyser to destination - prevents echo/feedback loop
 
       // Create MediaRecorder for continuous streaming
       // Use WebM Opus codec for better compatibility and smaller file sizes
