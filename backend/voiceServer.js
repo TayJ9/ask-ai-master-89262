@@ -706,30 +706,40 @@ function handleFrontendConnection(frontendWs, httpServer) {
                     const chunkSize = elevenLabsData.length;
                     console.log(`🔊 ElevenLabs audio chunk received: ${chunkSize} bytes${timeSinceLastChunk ? `, ${timeSinceLastChunk}ms since last chunk` : ''}`);
                     
-                    // Check if chunk size is multiple of 2 (required for PCM16)
+                    // CRITICAL FIX: Filter out small keepalive chunks (< 100 bytes)
+                    // These are likely keepalive headers, not actual audio data
+                    if (chunkSize < 100) {
+                      console.log(`🔇 Filtered out small keepalive chunk: ${chunkSize} bytes (likely keepalive header)`);
+                      return; // Discard small chunks completely
+                    }
+                    
+                    // CRITICAL FIX: Handle odd-byte chunks properly
+                    // PCM16 requires even bytes (2 bytes per sample). Padding corrupts stream alignment.
+                    // If odd, discard the last byte or buffer it for next chunk
+                    let processedChunk = elevenLabsData;
                     if (chunkSize % 2 !== 0) {
-                      console.warn(`⚠️ Invalid chunk size from ElevenLabs: ${chunkSize} bytes (not multiple of 2). Buffering.`);
+                      // Odd number of bytes - discard last byte to maintain alignment
+                      processedChunk = elevenLabsData.slice(0, -1);
+                      console.warn(`⚠️ Odd-byte chunk detected (${chunkSize} bytes). Discarded last byte: ${processedChunk.length} bytes (aligned)`);
                     }
                     
                     // CRITICAL FIX: Forward audio immediately - no buffering threshold
-                    // Combine with pending buffer if exists, but forward immediately regardless of size
+                    // Combine with pending buffer if exists, but forward immediately
                     let combinedBuffer;
                     if (pendingAudioBuffer) {
                       const pending = pendingAudioBuffer;
-                      combinedBuffer = Buffer.concat([pending, elevenLabsData]);
-                      console.log(`📦 Combined with pending buffer: ${pending.length} + ${chunkSize} = ${combinedBuffer.length} bytes`);
+                      combinedBuffer = Buffer.concat([pending, processedChunk]);
+                      console.log(`📦 Combined with pending buffer: ${pending.length} + ${processedChunk.length} = ${combinedBuffer.length} bytes`);
                       pendingAudioBuffer = null; // Clear pending buffer
                     } else {
-                      combinedBuffer = elevenLabsData;
+                      combinedBuffer = processedChunk;
                     }
                     
-                    // Forward immediately even if incomplete (not multiple of 2)
-                    // This prevents audio hostage situation and 30-second delays
-                    // If incomplete, pad with zero to make it even length
+                    // Ensure combined buffer is even (should be after processing)
                     if (combinedBuffer.length % 2 !== 0) {
-                      // Pad with single zero byte to make it even
-                      combinedBuffer = Buffer.concat([combinedBuffer, Buffer.from([0])]);
-                      console.log(`⚠️ Padded incomplete chunk to even length: ${combinedBuffer.length} bytes`);
+                      // If still odd after combining, discard last byte
+                      combinedBuffer = combinedBuffer.slice(0, -1);
+                      console.warn(`⚠️ Combined buffer still odd. Discarded last byte: ${combinedBuffer.length} bytes`);
                     }
                     
                     // Check audio quality: verify PCM16 format and detect potential issues
@@ -828,12 +838,17 @@ function handleFrontendConnection(frontendWs, httpServer) {
                             combinedBuffer = audioBuffer;
                           }
                           
-                          // CRITICAL FIX: Forward audio immediately - no buffering threshold
-                          // Pad if incomplete to make it even length
+                          // CRITICAL FIX: Filter out small keepalive chunks (< 100 bytes)
+                          if (combinedBuffer.length < 100) {
+                            console.log(`🔇 Filtered out small keepalive chunk (base64): ${combinedBuffer.length} bytes`);
+                            break; // Skip this chunk
+                          }
+                          
+                          // CRITICAL FIX: Handle odd-byte chunks properly
+                          // Discard last byte instead of padding to maintain stream alignment
                           if (combinedBuffer.length % 2 !== 0) {
-                            // Pad with single zero byte to make it even length
-                            combinedBuffer = Buffer.concat([combinedBuffer, Buffer.from([0])]);
-                            console.log(`⚠️ Padded incomplete chunk to even length: ${combinedBuffer.length} bytes`);
+                            combinedBuffer = combinedBuffer.slice(0, -1);
+                            console.warn(`⚠️ Odd-byte chunk (base64). Discarded last byte: ${combinedBuffer.length} bytes (aligned)`);
                           }
                           
                           // Forward immediately - no threshold check
