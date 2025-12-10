@@ -51,6 +51,7 @@ export default function VoiceInterviewWebSocket({
   const wsRef = useRef<WebSocket | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Float32Array[]>([]);
   const audioQueueRef = useRef<ArrayBuffer[]>([]);
   const isPlayingRef = useRef(false);
@@ -393,12 +394,12 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Interview started. AI is speaking...");
         
         // Start continuous microphone stream for VAD (keep it open)
-        // The stream will remain open and continuously send chunks
-        if (!mediaStreamRef.current) {
+        // MediaRecorder will continuously stream chunks every 250ms
+        if (!mediaStreamRef.current && !mediaRecorderRef.current) {
           startRecording().catch((error) => {
             console.error('❌ Failed to start continuous recording:', error);
           });
-        } else {
+        } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
           // If already recording, ensure we're sending chunks
           resumeRecording();
         }
@@ -1954,66 +1955,47 @@ export default function VoiceInterviewWebSocket({
     processAudioQueue();
   }, [processAudioQueue, bufferAndValidateChunk]);
 
-  // Stop recording
-  // Pause sending audio chunks (but keep stream open for continuous VAD)
+  // Pause sending audio chunks (but keep MediaRecorder running for continuous VAD)
   const pauseRecording = useCallback(() => {
-    if (mediaStreamRef.current) {
-      // Update recording state ref to pause sending chunks
-      const recordingState = (mediaStreamRef.current as any).__recordingState;
+    // MediaRecorder continues recording, but we stop sending chunks
+    if (mediaRecorderRef.current) {
+      const recordingState = (mediaRecorderRef.current as any).__recordingState;
       if (recordingState) {
         recordingState.isRecording = false;
       }
     }
-    
     setIsRecording(false);
+    // Don't change status message - microphone is still active, just paused sending
   }, []);
 
-  // Resume sending audio chunks
+  // Resume sending audio chunks (MediaRecorder is already running)
   const resumeRecording = useCallback(() => {
-    if (mediaStreamRef.current) {
-      // Update recording state ref to resume sending chunks
-      const recordingState = (mediaStreamRef.current as any).__recordingState;
+    // MediaRecorder is already running, just resume sending chunks
+    if (mediaRecorderRef.current) {
+      const recordingState = (mediaRecorderRef.current as any).__recordingState;
       if (recordingState) {
         recordingState.isRecording = true;
       }
-      setIsRecording(true);
-      setStatusMessage("Microphone active - speak naturally");
     }
+    setIsRecording(true);
+    setStatusMessage("Microphone active - speak naturally");
   }, []);
 
   // Stop recording completely (only used when ending interview)
   const stopRecording = useCallback(() => {
+    // Stop MediaRecorder
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try {
+        mediaRecorderRef.current.stop();
+        mediaRecorderRef.current = null;
+      } catch (e) {
+        console.error('Error stopping MediaRecorder:', e);
+      }
+    }
+    
+    // Stop all tracks (only when ending interview)
     if (mediaStreamRef.current) {
-      // Update recording state ref
-      const recordingState = (mediaStreamRef.current as any).__recordingState;
-      if (recordingState) {
-        recordingState.isRecording = false;
-      }
-      
-      // Stop AudioWorkletNode if used
-      const workletNode = (mediaStreamRef.current as any).__workletNode;
-      if (workletNode) {
-        try {
-          workletNode.port.postMessage('stop');
-          workletNode.disconnect();
-        } catch (e) {
-          // Ignore errors
-        }
-      }
-      
-      // Stop all tracks (only when ending interview)
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
-      
-      // Disconnect processor if exists (ScriptProcessorNode fallback)
-      const processor = (mediaStreamRef.current as any).__processor;
-      if (processor && !workletNode) {
-        const source = (mediaStreamRef.current as any).__source;
-        if (source) {
-          source.disconnect();
-        }
-        processor.disconnect();
-      }
-      
       mediaStreamRef.current = null;
     }
     
@@ -2450,10 +2432,10 @@ export default function VoiceInterviewWebSocket({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Start recording microphone using AudioWorkletNode (replaces deprecated ScriptProcessorNode)
+  // Start continuous microphone recording using MediaRecorder (Full Duplex)
   const startRecording = useCallback(async () => {
     try {
-      // Request microphone access with native sample rate
+      // Request microphone access
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           echoCancellation: true,
@@ -2465,14 +2447,12 @@ export default function VoiceInterviewWebSocket({
 
       mediaStreamRef.current = stream;
 
-      // Create AudioContext for processing raw audio with native sample rate
-      // Note: AudioContext is shared between playback and recording to ensure consistency
+      // Create AudioContext for visualization (analyser node)
       if (!audioContextRef.current) {
         audioContextRef.current = new AudioContext({ sampleRate: NATIVE_SAMPLE_RATE });
-        currentSampleRateRef.current = audioContextRef.current.sampleRate; // Store actual rate
+        currentSampleRateRef.current = audioContextRef.current.sampleRate;
         console.log(`[AUDIO] AudioContext created with sample rate: ${currentSampleRateRef.current}Hz`);
       } else {
-        // Update sample rate ref if AudioContext already exists (from playback initialization)
         currentSampleRateRef.current = audioContextRef.current.sampleRate;
         console.log(`[AUDIO] Using existing AudioContext with sample rate: ${currentSampleRateRef.current}Hz`);
       }
@@ -2485,103 +2465,60 @@ export default function VoiceInterviewWebSocket({
       inputAnalyser.fftSize = 2048;
       inputAnalyser.smoothingTimeConstant = 0.8;
       inputAnalyserRef.current = inputAnalyser;
-      
-      const recordingStateRef = { isRecording: true };
-      let processor: ScriptProcessorNode | AudioWorkletNode | null = null;
-      let workletNode: AudioWorkletNode | null = null;
-      
-      // Try to use AudioWorkletNode (modern approach, no deprecation warning)
-      try {
-        // Load the audio worklet processor from public folder
-        await audioContext.audioWorklet.addModule('/audio-processor.worklet.js');
-        
-        // Create AudioWorkletNode
-        workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-        
-        // Handle messages from the worklet
-        // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
-        // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
-        // Microphone stream stays open continuously for VAD - we only control whether we send chunks
-        workletNode.port.onmessage = (e) => {
-          if (e.data.type === 'audioData') {
-            // Only send chunks if recording state is active AND WebSocket is open
-            // This allows us to pause sending when AI is speaking, but keep stream open
-            if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-              return;
-            }
+      source.connect(inputAnalyser);
+      inputAnalyser.connect(audioContext.destination);
 
-            const inputData = e.data.data;
-            
-            // Convert to PCM16
-            const pcm16 = convertToPCM16(inputData);
-            
-            // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
-            // Streaming continuous silence is okay - backend VAD will detect speech boundaries
-            // Chunks are sent continuously (~every 100-250ms) without waiting for stop button
-            const base64 = encodePCM16ToBase64(pcm16);
-            
-            wsRef.current.send(JSON.stringify({
-              type: 'audio_chunk',
-              audio: base64,
-              sampleRate: currentSampleRateRef.current, // Include sample rate for backend resampling
-              channels: 1 // Mono audio
-            }));
-          }
-        };
-        
-        processor = workletNode;
-        // Connect source -> analyser -> worklet -> destination
-        source.connect(inputAnalyser);
-        inputAnalyser.connect(workletNode);
-        workletNode.connect(audioContext.destination);
-        
-      } catch (workletError) {
-        // Fallback to ScriptProcessorNode if AudioWorklet is not supported
-        console.warn('AudioWorklet not available, falling back to ScriptProcessorNode:', workletError);
-        processor = audioContext.createScriptProcessor(4096, 1, 1);
-        
-        // NOTE: We send audio continuously (including silence) - Server-Side VAD (ElevenLabs default)
-        // handles detecting when user starts/stops speaking. No manual stop_speaking signal needed.
-        // Microphone stream stays open continuously for VAD - we only control whether we send chunks
-        (processor as ScriptProcessorNode).onaudioprocess = (e) => {
-          // Only send chunks if recording state is active AND WebSocket is open
-          // This allows us to pause sending when AI is speaking, but keep stream open
-          if (!recordingStateRef.isRecording || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-            return;
-          }
+      // Create MediaRecorder for continuous streaming
+      // Use WebM Opus codec for better compatibility and smaller file sizes
+      const options = {
+        mimeType: 'audio/webm;codecs=opus',
+        audioBitsPerSecond: 64000
+      };
 
-          const inputData = e.inputBuffer.getChannelData(0);
-          
-          // Convert to PCM16
-          const pcm16 = convertToPCM16(inputData);
-          
-          // Send as base64 encoded audio chunk with sample rate (using chunked encoding to prevent stack overflow)
-          // Streaming continuous silence is okay - backend VAD will detect speech boundaries
-          // Chunks are sent continuously (~every 100-250ms) without waiting for stop button
-          const base64 = encodePCM16ToBase64(pcm16);
-          
-          wsRef.current.send(JSON.stringify({
-            type: 'audio_chunk',
-            audio: base64,
-            sampleRate: currentSampleRateRef.current, // Include sample rate for backend resampling
-            channels: 1 // Mono audio
-          }));
-        };
-        
-        // Connect source -> analyser -> processor -> destination
-        source.connect(inputAnalyser);
-        inputAnalyser.connect(processor);
-        processor.connect(audioContext.destination);
+      // Fallback to default if WebM Opus not supported
+      let mediaRecorder: MediaRecorder;
+      if (MediaRecorder.isTypeSupported(options.mimeType)) {
+        mediaRecorder = new MediaRecorder(stream, options);
+      } else {
+        console.warn('WebM Opus not supported, using default codec');
+        mediaRecorder = new MediaRecorder(stream);
       }
+
+      mediaRecorderRef.current = mediaRecorder;
+
+      // Handle data availability - send chunks immediately as binary
+      const recordingStateRef = { isRecording: true };
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          // Only send if WebSocket is open and we're in active recording state
+          if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && recordingStateRef.isRecording) {
+            // Send blob directly as binary - backend handles binary audio
+            wsRef.current.send(event.data);
+            console.log(`📤 Sent audio chunk: ${event.data.size} bytes (binary)`);
+          }
+        }
+      };
+      
+      // Store recording state ref for pause/resume control
+      (mediaRecorderRef.current as any).__recordingState = recordingStateRef;
+
+      // Handle errors
+      mediaRecorder.onerror = (event) => {
+        console.error('MediaRecorder error:', event);
+        toast({
+          title: "Recording Error",
+          description: "An error occurred while recording audio.",
+          variant: "destructive",
+        });
+      };
+
+      // Start recording with 250ms timeslice for continuous streaming
+      // This sends chunks every 250ms automatically
+      mediaRecorder.start(250);
+      console.log('🎤 MediaRecorder started with 250ms timeslice - continuous streaming enabled');
 
       setIsRecording(true);
       setStatusMessage("Microphone active - speak naturally");
-      
-      // Store references for cleanup
-      (mediaStreamRef.current as any).__processor = processor;
-      (mediaStreamRef.current as any).__workletNode = workletNode;
-      (mediaStreamRef.current as any).__source = source;
-      (mediaStreamRef.current as any).__recordingState = recordingStateRef;
 
     } catch (error: any) {
       console.error('Microphone error:', error);
@@ -2603,7 +2540,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Microphone error. Please check permissions.");
       }
     }
-  }, [toast, convertToPCM16]);
+  }, [toast]);
 
   // End interview
   const handleEndInterview = useCallback(() => {
