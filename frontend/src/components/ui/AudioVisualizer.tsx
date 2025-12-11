@@ -1,13 +1,13 @@
 /**
  * Audio Visualizer Component
- * Displays real-time audio waveform visualization using HTML Canvas
+ * Displays real-time audio visualization using volume levels
  */
 
 import { useEffect, useRef } from 'react';
 
 interface AudioVisualizerProps {
-  inputAnalyser?: AnalyserNode | null;
-  outputAnalyser?: AnalyserNode | null;
+  inputVolume: number;   // 0-1 from user microphone
+  outputVolume: number;  // 0-1 from AI audio output
   mode: 'user_speaking' | 'ai_speaking' | 'listening' | 'processing';
   width?: number;
   height?: number;
@@ -15,8 +15,8 @@ interface AudioVisualizerProps {
 }
 
 export default function AudioVisualizer({
-  inputAnalyser,
-  outputAnalyser,
+  inputVolume,
+  outputVolume,
   mode,
   width = 400,
   height = 100,
@@ -24,12 +24,13 @@ export default function AudioVisualizer({
 }: AudioVisualizerProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animationFrameRef = useRef<number | null>(null);
-  const dataArrayRef = useRef<Uint8Array | null>(null);
+  const barsRef = useRef<number[]>(new Array(barCount).fill(0));
+  const targetBarsRef = useRef<number[]>(new Array(barCount).fill(0));
 
-  // Determine which analyser to use based on mode
-  // Use input analyser for user speaking, output analyser for AI speaking
-  // For listening/processing, prefer output analyser (may show AI audio if any)
-  const activeAnalyser = mode === 'user_speaking' ? inputAnalyser : outputAnalyser;
+  // Determine which volume to use based on mode
+  const activeVolume = mode === 'user_speaking' ? inputVolume : 
+                       mode === 'ai_speaking' ? outputVolume : 
+                       Math.max(inputVolume, outputVolume) * 0.3;
 
   // Determine color based on mode
   const getColor = () => {
@@ -39,112 +40,89 @@ export default function AudioVisualizer({
       case 'ai_speaking':
         return '#3b82f6'; // Blue - AI Speaking
       case 'listening':
+        return '#f59e0b'; // Amber - Listening
       case 'processing':
       default:
-        return '#6b7280'; // Gray - Inactive/Listening
+        return '#6b7280'; // Gray - Processing
     }
   };
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !activeAnalyser) {
-      return;
-    }
+    if (!canvas) return;
 
     const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      return;
-    }
+    if (!ctx) return;
 
-    // Set canvas size
-    canvas.width = width;
-    canvas.height = height;
-
-    // Create data array for frequency data
-    const bufferLength = activeAnalyser.frequencyBinCount;
-    const dataArray = new Uint8Array(bufferLength);
-    dataArrayRef.current = dataArray;
+    // Set canvas size with device pixel ratio for crisp rendering
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
 
     // Animation function
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
-      // Get frequency data
-      activeAnalyser.getByteFrequencyData(dataArray);
+      // Generate target bar heights based on volume with some randomness
+      const isActive = mode === 'user_speaking' || mode === 'ai_speaking';
+      
+      for (let i = 0; i < barCount; i++) {
+        if (isActive && activeVolume > 0.01) {
+          // Create organic wave-like motion with volume influence
+          const wave = Math.sin(Date.now() * 0.003 + i * 0.3) * 0.3 + 0.7;
+          const noise = Math.random() * 0.3;
+          targetBarsRef.current[i] = activeVolume * wave * (0.7 + noise) * height * 0.8;
+        } else {
+          // Minimal idle animation
+          const idleWave = Math.sin(Date.now() * 0.001 + i * 0.2) * 0.5 + 0.5;
+          targetBarsRef.current[i] = 2 + idleWave * 4;
+        }
+      }
 
-      // Clear canvas
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+      // Smooth interpolation towards target values
+      const smoothing = 0.15;
+      for (let i = 0; i < barCount; i++) {
+        barsRef.current[i] += (targetBarsRef.current[i] - barsRef.current[i]) * smoothing;
+      }
+
+      // Clear canvas with slight fade for trail effect
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.2)'; // Dark background
       ctx.fillRect(0, 0, width, height);
 
       // Draw bars
       const barWidth = width / barCount;
       const color = getColor();
-      
-      // Calculate average volume for overall visualization
-      let sum = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        sum += dataArray[i];
-      }
-      const average = sum / dataArray.length;
+      const barGap = 2;
 
-      // Draw bars based on frequency data
-      const isActive = mode === 'user_speaking' || mode === 'ai_speaking';
-      
       for (let i = 0; i < barCount; i++) {
-        // Map frequency bin index to data array
-        const dataIndex = Math.floor((i / barCount) * bufferLength);
-        let barHeight = (dataArray[dataIndex] / 255) * height * 0.8;
-        
-        // For listening/processing states, show minimal bars even when silent
-        if (!isActive && barHeight < 2) {
-          barHeight = 2; // Minimum bar height for visibility
-        }
-
-        // Add some smoothing and visual appeal
+        const barHeight = Math.max(2, barsRef.current[i]);
         const x = i * barWidth;
-        const y = height - barHeight;
+        const y = (height - barHeight) / 2; // Center vertically
 
         // Create gradient for bars
-        const gradient = ctx.createLinearGradient(x, 0, x, height);
+        const gradient = ctx.createLinearGradient(x, y, x, y + barHeight);
         gradient.addColorStop(0, color);
-        gradient.addColorStop(1, `${color}80`);
+        gradient.addColorStop(0.5, color);
+        gradient.addColorStop(1, `${color}60`);
 
         ctx.fillStyle = gradient;
-        ctx.fillRect(x + barWidth * 0.1, y, barWidth * 0.8, barHeight);
+        
+        // Draw rounded bar
+        const radius = Math.min(barWidth * 0.3, 3);
+        const actualBarWidth = barWidth - barGap;
+        
+        ctx.beginPath();
+        ctx.roundRect(x + barGap / 2, y, actualBarWidth, barHeight, radius);
+        ctx.fill();
 
         // Add glow effect for active modes
-        if (isActive) {
-          ctx.shadowBlur = 10;
+        if (isActive && activeVolume > 0.1) {
+          ctx.shadowBlur = 8;
           ctx.shadowColor = color;
+          ctx.fill();
+          ctx.shadowBlur = 0;
         }
-      }
-
-      // Draw waveform overlay (shows overall volume) - only for active speaking modes
-      if (isActive) {
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 2;
-        ctx.shadowBlur = 5;
-        ctx.shadowColor = color;
-        ctx.beginPath();
-        
-        const sliceWidth = width / bufferLength;
-        let x = 0;
-
-        for (let i = 0; i < bufferLength; i++) {
-          const v = dataArray[i] / 255.0;
-          const y = (v * height) / 2;
-
-          if (i === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-
-          x += sliceWidth;
-        }
-
-        ctx.stroke();
-        ctx.shadowBlur = 0;
       }
     };
 
@@ -157,26 +135,14 @@ export default function AudioVisualizer({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [activeAnalyser, mode, width, height, barCount]);
-
-  // Show placeholder when no analyser is available
-  if (!activeAnalyser) {
-    return (
-      <div
-        className="flex items-center justify-center rounded-lg bg-muted"
-        style={{ width, height }}
-      >
-        <span className="text-sm text-muted-foreground">No audio data</span>
-      </div>
-    );
-  }
+  }, [activeVolume, mode, width, height, barCount]);
 
   return (
     <div className="flex flex-col items-center gap-2">
       <canvas
         ref={canvasRef}
-        className="rounded-lg border border-border bg-background"
-        style={{ width, height }}
+        className="rounded-lg border border-border"
+        style={{ width, height, background: 'rgb(15, 23, 42)' }}
       />
       <div className={`flex items-center gap-2 text-xs font-medium ${
         mode === 'user_speaking'
@@ -184,7 +150,7 @@ export default function AudioVisualizer({
           : mode === 'ai_speaking'
           ? 'text-blue-600'
           : mode === 'processing'
-          ? 'text-purple-600'
+          ? 'text-gray-500'
           : 'text-amber-600'
       }`}>
         <div
@@ -197,15 +163,14 @@ export default function AudioVisualizer({
         />
         <span className="capitalize">
           {mode === 'user_speaking'
-            ? '🎤 You are speaking'
+            ? 'You are speaking'
             : mode === 'ai_speaking'
-            ? '🤖 AI is speaking'
+            ? 'AI is speaking'
             : mode === 'processing'
-            ? '⚙️ Processing...'
-            : '👂 Listening...'}
+            ? 'Processing...'
+            : 'Listening...'}
         </span>
       </div>
     </div>
   );
 }
-
