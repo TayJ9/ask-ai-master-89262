@@ -141,7 +141,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Interview ended");
         saveInterview(conversationIdRef.current);
         onComplete();
-      } else {
+        } else {
         // Disconnect during connection attempt - return to idle state
         console.log('Disconnect during connection - returning to idle state');
         setIsIdle(true);
@@ -162,18 +162,18 @@ export default function VoiceInterviewWebSocket({
           const lastMessage = prev[prev.length - 1];
           if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
             // Update the last message
-            return [
-              ...prev.slice(0, -1),
+              return [
+                ...prev.slice(0, -1),
               { ...lastMessage, text, isFinal: true }
             ];
           }
           // Add new message
-          return [
+              return [
             ...prev,
             {
               type: isAI ? 'ai' : 'student',
               text,
-              isFinal: true,
+                  isFinal: true,
               timestamp: Date.now(),
             }
           ];
@@ -353,9 +353,9 @@ export default function VoiceInterviewWebSocket({
       // ============================================
       if (!isMountedRef.current) {
         console.log('Component unmounted before token fetch - aborting');
-        return;
-      }
-      
+          return;
+        }
+        
       setStatusMessage("Connecting to interview service...");
       console.log('Step 2: Fetching conversation token...');
       
@@ -371,7 +371,7 @@ export default function VoiceInterviewWebSocket({
         console.log('Component unmounted during token fetch - aborting');
         return;
       }
-      
+
       if (!tokenResponse.ok) {
         throw new Error(`Failed to get conversation token: ${tokenResponse.statusText}`);
       }
@@ -480,8 +480,11 @@ export default function VoiceInterviewWebSocket({
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      console.log('VoiceInterviewWebSocket unmounting, cleaning up...');
-      isMountedRef.current = false;
+      // NOTE: Do NOT set isMountedRef.current = false here.
+      // That should only happen in the mount/unmount effect above.
+      // This effect runs whenever 'conversation' changes, which might happen during operation.
+      
+      console.log('Conversation cleanup (dependency change or unmount)...');
       
       if (volumeIntervalRef.current) {
         clearInterval(volumeIntervalRef.current);
@@ -490,7 +493,7 @@ export default function VoiceInterviewWebSocket({
       
       // Only end session if connected
       if (conversation.status === 'connected') {
-        console.log('Ending active session on unmount');
+        console.log('Ending active session');
         conversation.endSession().catch(console.error);
       }
     };
@@ -585,76 +588,76 @@ export default function VoiceInterviewWebSocket({
               </div>
             ) : (
               <>
-                {/* Status Indicator - Clear visual feedback for each state */}
-                <div className="text-center mb-6">
+            {/* Status Indicator - Clear visual feedback for each state */}
+            <div className="text-center mb-6">
                   {!isConnected && isStarting ? (
-                    <div className="flex items-center justify-center gap-2 text-yellow-600">
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                      <span className="font-medium">{statusMessage}</span>
-                    </div>
+                <div className="flex items-center justify-center gap-2 text-yellow-600">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span className="font-medium">{statusMessage}</span>
+                </div>
                   ) : !isConnected ? (
                     <div className="flex items-center justify-center gap-2 text-muted-foreground">
                       <div className="w-3 h-3 bg-muted-foreground rounded-full" />
                       <span className="font-medium">{statusMessage}</span>
                     </div>
                   ) : isAiSpeaking ? (
-                    <div className="flex items-center justify-center gap-2 text-blue-600">
-                      <AISpeakingIndicator size="md" />
+                <div className="flex items-center justify-center gap-2 text-blue-600">
+                  <AISpeakingIndicator size="md" />
                       <span className="font-medium text-lg">AI is speaking...</span>
-                    </div>
-                  ) : conversationMode === 'user_speaking' ? (
-                    <div className="flex items-center justify-center gap-2 text-green-600">
-                      <User className="w-5 h-5 animate-pulse" />
-                      <span className="font-medium text-lg">You are speaking...</span>
-                    </div>
-                  ) : (
-                    <div className="flex items-center justify-center gap-2 text-amber-600">
-                      <Headphones className="w-5 h-5" />
-                      <span className="font-medium text-lg">Listening... Speak when ready</span>
-                    </div>
-                  )}
                 </div>
+                  ) : conversationMode === 'user_speaking' ? (
+                <div className="flex items-center justify-center gap-2 text-green-600">
+                  <User className="w-5 h-5 animate-pulse" />
+                      <span className="font-medium text-lg">You are speaking...</span>
+                </div>
+                  ) : (
+                <div className="flex items-center justify-center gap-2 text-amber-600">
+                  <Headphones className="w-5 h-5" />
+                      <span className="font-medium text-lg">Listening... Speak when ready</span>
+                </div>
+              )}
+            </div>
 
-                {/* Audio Visualizer */}
-                <div className="mb-6 flex justify-center">
-                  <AudioVisualizer
+            {/* Audio Visualizer */}
+            <div className="mb-6 flex justify-center">
+              <AudioVisualizer
                     inputVolume={inputVolume}
                     outputVolume={outputVolume}
                     mode={conversationMode}
-                    width={600}
-                    height={120}
-                    barCount={60}
-                  />
-                </div>
+                width={600}
+                height={120}
+                barCount={60}
+              />
+            </div>
 
                 {/* Microphone Status Indicator */}
-                <div className="flex flex-col items-center justify-center mb-6">
-                  <div
-                    className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
+            <div className="flex flex-col items-center justify-center mb-6">
+              <div
+                className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
                       isAiSpeaking
-                        ? "bg-blue-500 text-white animate-pulse shadow-blue-500/50"
+                    ? "bg-blue-500 text-white animate-pulse shadow-blue-500/50"
                         : conversationMode === 'user_speaking'
-                        ? "bg-green-500 text-white animate-pulse shadow-green-500/50"
+                    ? "bg-green-500 text-white animate-pulse shadow-green-500/50"
                         : conversationMode === 'processing' || !isConnected
-                        ? "bg-muted text-muted-foreground opacity-50"
+                    ? "bg-muted text-muted-foreground opacity-50"
                         : "bg-amber-500 text-white shadow-amber-500/50"
                     }`}
                   >
                     {isAiSpeaking ? (
-                      <Volume2 className="w-16 h-16" />
+                  <Volume2 className="w-16 h-16" />
                     ) : conversationMode === 'user_speaking' ? (
-                      <Mic className="w-16 h-16 animate-pulse" />
+                  <Mic className="w-16 h-16 animate-pulse" />
                     ) : !isConnected ? (
-                      <Loader2 className="w-16 h-16 animate-spin" />
-                    ) : (
-                      <Headphones className="w-16 h-16" />
-                    )}
-                  </div>
-                  <p className={`text-xs mt-2 text-center max-w-xs font-medium ${
+                  <Loader2 className="w-16 h-16 animate-spin" />
+                ) : (
+                  <Headphones className="w-16 h-16" />
+                )}
+              </div>
+              <p className={`text-xs mt-2 text-center max-w-xs font-medium ${
                     isAiSpeaking
-                      ? "text-blue-600"
+                  ? "text-blue-600"
                       : conversationMode === 'user_speaking'
-                      ? "text-green-600"
+                  ? "text-green-600"
                       : !isConnected
                       ? "text-muted-foreground"
                       : "text-amber-600"
@@ -666,8 +669,8 @@ export default function VoiceInterviewWebSocket({
                       : !isConnected
                       ? "Connecting..."
                       : "Listening - speak naturally"}
-                  </p>
-                </div>
+              </p>
+            </div>
               </>
             )}
           </CardContent>
