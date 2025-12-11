@@ -453,8 +453,14 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Ending interview...");
       
       try {
-        await conversation.endSession();
-          } catch (error) {
+        if (conversation.status === 'connected') {
+          await conversation.endSession();
+        } else {
+          // If not connected, just complete locally
+          saveInterview(conversationId);
+          onComplete();
+        }
+      } catch (error) {
         console.error('Error ending session:', error);
         // Still call onComplete even if endSession fails
         saveInterview(conversationId);
@@ -487,22 +493,15 @@ export default function VoiceInterviewWebSocket({
         volumeIntervalRef.current = null;
       }
       
-      // Only end session if connected (using ref to access latest state)
-      if (conversationRef.current.status === 'connected') {
-        console.log('Ending active session on unmount');
-        conversationRef.current.endSession().catch(console.error);
-      }
+      // NOTE: We do NOT automatically end the session here anymore.
+      // This prevents accidental disconnections during re-renders or Strict Mode cycles.
+      // The session should only end when the user clicks "End Interview" or the SDK disconnects naturally.
     };
   }, []);
 
-  // FIX #1: Cleanup when component becomes hidden (isActive = false)
-  // Disconnect SDK if user navigates away while connected
-  useEffect(() => {
-    if (!isActive && conversation.status === 'connected') {
-      console.log('Component hidden while connected - ending session');
-      conversation.endSession().catch(console.error);
-    }
-  }, [isActive, conversation]);
+  // Removed automatic cleanup on hidden state to prevent premature disconnection
+  // The component stays mounted even when hidden (isActive=false) so audio can continue
+
 
   const isConnected = conversation.status === 'connected';
   const isAiSpeaking = conversation.isSpeaking;
