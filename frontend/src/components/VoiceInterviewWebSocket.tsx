@@ -42,17 +42,17 @@ export default function VoiceInterviewWebSocket({
   candidateContext,
   onComplete,
 }: VoiceInterviewWebSocketProps) {
-  const [statusMessage, setStatusMessage] = useState("Initializing...");
+  const [statusMessage, setStatusMessage] = useState("Ready to begin");
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
   const [isStarting, setIsStarting] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
+  const [isIdle, setIsIdle] = useState(true); // Start in idle state - requires user click
   const [inputVolume, setInputVolume] = useState(0);
   const [outputVolume, setOutputVolume] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
   
-  // Connection guards to prevent race conditions and Strict Mode double-mounting
+  // Connection guards to prevent race conditions
   const isStartingRef = useRef(false);
-  const hasAttemptedStartRef = useRef(false);
   const conversationIdRef = useRef<string | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
@@ -106,6 +106,7 @@ export default function VoiceInterviewWebSocket({
       if (!isMountedRef.current) return;
       
       setStatusMessage("Connected - Interview starting...");
+      setIsIdle(false);
       setHasStarted(true);
       setIsStarting(false);
       isStartingRef.current = false;
@@ -266,6 +267,7 @@ export default function VoiceInterviewWebSocket({
     // Set both ref and state immediately
     isStartingRef.current = true;
     setIsStarting(true);
+    setIsIdle(false);
     setStatusMessage("Requesting microphone access...");
     
     try {
@@ -377,31 +379,19 @@ export default function VoiceInterviewWebSocket({
     }
   }, [conversation, conversationId, saveInterview, onComplete]);
 
-  // Auto-start interview on mount (with Strict Mode protection)
+  // Handle user click to start interview (requires user gesture for mic access)
+  const handleStartClick = useCallback(() => {
+    console.log('User clicked Start Interview button');
+    startInterview();
+  }, [startInterview]);
+
+  // Initialize mounted ref on mount
   useEffect(() => {
-    // Mark component as mounted
     isMountedRef.current = true;
-    
-    // Guard against Strict Mode double-mounting
-    if (hasAttemptedStartRef.current) {
-      console.log('Auto-start skipped: already attempted');
-      return;
-    }
-    hasAttemptedStartRef.current = true;
-    
-    // Delay start slightly to ensure SDK is ready
-    const timer = setTimeout(() => {
-      if (isMountedRef.current && !isStartingRef.current) {
-        console.log('Auto-starting interview...');
-        startInterview();
-      }
-    }, 500);
-    
     return () => {
-      clearTimeout(timer);
-      // Note: Don't reset hasAttemptedStartRef here - we want it to persist
+      isMountedRef.current = false;
     };
-  }, []); // Empty deps - only run once on mount
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -468,89 +458,119 @@ export default function VoiceInterviewWebSocket({
               </div>
             </div>
 
-            {/* Status Indicator - Clear visual feedback for each state */}
-            <div className="text-center mb-6">
-              {!isConnected && !isStarting ? (
-                <div className="flex items-center justify-center gap-2 text-muted-foreground">
-                  <div className="w-3 h-3 bg-muted-foreground rounded-full" />
-                  <span className="font-medium">{statusMessage}</span>
+            {/* Idle State - Show Start Interview Button */}
+            {isIdle && !isStarting ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <div className="text-center mb-8">
+                  <h3 className="text-xl font-semibold mb-2">Ready to Begin</h3>
+                  <p className="text-muted-foreground max-w-md">
+                    Click the button below to start your voice interview. 
+                    You'll be asked to allow microphone access.
+                  </p>
                 </div>
-              ) : !isConnected ? (
-                <div className="flex items-center justify-center gap-2 text-yellow-600">
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                  <span className="font-medium">{statusMessage}</span>
-                </div>
-              ) : isAiSpeaking ? (
-                <div className="flex items-center justify-center gap-2 text-blue-600">
-                  <AISpeakingIndicator size="md" />
-                  <span className="font-medium text-lg">AI is speaking...</span>
-                </div>
-              ) : conversationMode === 'user_speaking' ? (
-                <div className="flex items-center justify-center gap-2 text-green-600">
-                  <User className="w-5 h-5 animate-pulse" />
-                  <span className="font-medium text-lg">You are speaking...</span>
-                </div>
-              ) : (
-                <div className="flex items-center justify-center gap-2 text-amber-600">
-                  <Headphones className="w-5 h-5" />
-                  <span className="font-medium text-lg">Listening... Speak when ready</span>
-                </div>
-              )}
-            </div>
-
-            {/* Audio Visualizer */}
-            <div className="mb-6 flex justify-center">
-              <AudioVisualizer
-                inputVolume={inputVolume}
-                outputVolume={outputVolume}
-                mode={conversationMode}
-                width={600}
-                height={120}
-                barCount={60}
-              />
-            </div>
-
-            {/* Microphone Status Indicator */}
-            <div className="flex flex-col items-center justify-center mb-6">
-              <div
-                className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
-                  isAiSpeaking
-                    ? "bg-blue-500 text-white animate-pulse shadow-blue-500/50"
-                    : conversationMode === 'user_speaking'
-                    ? "bg-green-500 text-white animate-pulse shadow-green-500/50"
-                    : conversationMode === 'processing' || !isConnected
-                    ? "bg-muted text-muted-foreground opacity-50"
-                    : "bg-amber-500 text-white shadow-amber-500/50"
-                }`}
-              >
-                {isAiSpeaking ? (
-                  <Volume2 className="w-16 h-16" />
-                ) : conversationMode === 'user_speaking' ? (
-                  <Mic className="w-16 h-16 animate-pulse" />
-                ) : !isConnected ? (
-                  <Loader2 className="w-16 h-16 animate-spin" />
-                ) : (
-                  <Headphones className="w-16 h-16" />
-                )}
+                
+                <Button
+                  onClick={handleStartClick}
+                  size="lg"
+                  className="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all hover:scale-105"
+                >
+                  <div className="flex flex-col items-center gap-2">
+                    <Mic className="w-12 h-12" />
+                    <span>Start Interview</span>
+                  </div>
+                </Button>
+                
+                <p className="text-xs text-muted-foreground mt-4">
+                  Make sure you're in a quiet environment
+                </p>
               </div>
-              <p className={`text-xs mt-2 text-center max-w-xs font-medium ${
-                isAiSpeaking
-                  ? "text-blue-600"
-                  : conversationMode === 'user_speaking'
-                  ? "text-green-600"
-                  : !isConnected
-                  ? "text-muted-foreground"
-                  : "text-amber-600"
-              }`}>
-                {isAiSpeaking
-                  ? "AI is speaking"
-                  : conversationMode === 'user_speaking'
-                  ? "You are speaking"
-                  : !isConnected
-                  ? "Connecting..."
-                  : "Listening - speak naturally"}
-              </p>
-            </div>
+            ) : (
+              <>
+                {/* Status Indicator - Clear visual feedback for each state */}
+                <div className="text-center mb-6">
+                  {!isConnected && isStarting ? (
+                    <div className="flex items-center justify-center gap-2 text-yellow-600">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="font-medium">{statusMessage}</span>
+                    </div>
+                  ) : !isConnected ? (
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <div className="w-3 h-3 bg-muted-foreground rounded-full" />
+                      <span className="font-medium">{statusMessage}</span>
+                    </div>
+                  ) : isAiSpeaking ? (
+                    <div className="flex items-center justify-center gap-2 text-blue-600">
+                      <AISpeakingIndicator size="md" />
+                      <span className="font-medium text-lg">AI is speaking...</span>
+                    </div>
+                  ) : conversationMode === 'user_speaking' ? (
+                    <div className="flex items-center justify-center gap-2 text-green-600">
+                      <User className="w-5 h-5 animate-pulse" />
+                      <span className="font-medium text-lg">You are speaking...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-center gap-2 text-amber-600">
+                      <Headphones className="w-5 h-5" />
+                      <span className="font-medium text-lg">Listening... Speak when ready</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Audio Visualizer */}
+                <div className="mb-6 flex justify-center">
+                  <AudioVisualizer
+                    inputVolume={inputVolume}
+                    outputVolume={outputVolume}
+                    mode={conversationMode}
+                    width={600}
+                    height={120}
+                    barCount={60}
+                  />
+                </div>
+
+                {/* Microphone Status Indicator */}
+                <div className="flex flex-col items-center justify-center mb-6">
+                  <div
+                    className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
+                      isAiSpeaking
+                        ? "bg-blue-500 text-white animate-pulse shadow-blue-500/50"
+                        : conversationMode === 'user_speaking'
+                        ? "bg-green-500 text-white animate-pulse shadow-green-500/50"
+                        : conversationMode === 'processing' || !isConnected
+                        ? "bg-muted text-muted-foreground opacity-50"
+                        : "bg-amber-500 text-white shadow-amber-500/50"
+                    }`}
+                  >
+                    {isAiSpeaking ? (
+                      <Volume2 className="w-16 h-16" />
+                    ) : conversationMode === 'user_speaking' ? (
+                      <Mic className="w-16 h-16 animate-pulse" />
+                    ) : !isConnected ? (
+                      <Loader2 className="w-16 h-16 animate-spin" />
+                    ) : (
+                      <Headphones className="w-16 h-16" />
+                    )}
+                  </div>
+                  <p className={`text-xs mt-2 text-center max-w-xs font-medium ${
+                    isAiSpeaking
+                      ? "text-blue-600"
+                      : conversationMode === 'user_speaking'
+                      ? "text-green-600"
+                      : !isConnected
+                      ? "text-muted-foreground"
+                      : "text-amber-600"
+                  }`}>
+                    {isAiSpeaking
+                      ? "AI is speaking"
+                      : conversationMode === 'user_speaking'
+                      ? "You are speaking"
+                      : !isConnected
+                      ? "Connecting..."
+                      : "Listening - speak naturally"}
+                  </p>
+                </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
