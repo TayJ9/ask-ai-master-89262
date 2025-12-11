@@ -12,6 +12,7 @@ import { Mic, Volume2, Loader2, X, User, Headphones } from "lucide-react";
 import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import AudioVisualizer from "@/components/ui/AudioVisualizer";
+import { getApiUrl } from "@/lib/api";
 
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
@@ -51,7 +52,7 @@ export default function VoiceInterviewWebSocket({
   
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const { toast } = useToast();
-
+  
   // Save interview to backend
   const saveInterview = useCallback(async (convId: string | null) => {
     if (!convId) {
@@ -62,7 +63,7 @@ export default function VoiceInterviewWebSocket({
     try {
       console.log(`Saving interview: conversation_id=${convId}, candidate_id=${sessionId}`);
       const response = await fetch(
-        `/api/save-interview?conversation_id=${convId}&candidate_id=${sessionId}`,
+        getApiUrl(`/api/save-interview?conversation_id=${convId}&candidate_id=${sessionId}`),
         {
           method: 'POST',
           headers: {
@@ -79,11 +80,11 @@ export default function VoiceInterviewWebSocket({
       console.log('Interview saved successfully');
     } catch (error) {
       console.error('Error saving interview:', error);
-      toast({
+          toast({
         title: "Warning",
         description: "Interview may not have been saved. Please contact support if needed.",
-        variant: "destructive",
-      });
+            variant: "destructive",
+          });
     }
   }, [sessionId, toast]);
 
@@ -122,18 +123,18 @@ export default function VoiceInterviewWebSocket({
           const lastMessage = prev[prev.length - 1];
           if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
             // Update the last message
-            return [
-              ...prev.slice(0, -1),
+              return [
+                ...prev.slice(0, -1),
               { ...lastMessage, text, isFinal: true }
             ];
           }
           // Add new message
-          return [
+              return [
             ...prev,
             {
               type: isAI ? 'ai' : 'student',
               text,
-              isFinal: true,
+                  isFinal: true,
               timestamp: Date.now(),
             }
           ];
@@ -229,9 +230,11 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Connecting to interview service...");
       
       // Fetch signed token from backend
-      const tokenResponse = await fetch('/api/conversation-token', {
+      const token = localStorage.getItem('auth_token');
+      const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
         method: 'GET',
         credentials: 'include',
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
       });
       
       if (!tokenResponse.ok) {
@@ -293,7 +296,7 @@ export default function VoiceInterviewWebSocket({
       
       try {
         await conversation.endSession();
-      } catch (error) {
+          } catch (error) {
         console.error('Error ending session:', error);
         // Still call onComplete even if endSession fails
         saveInterview(conversationId);
@@ -311,7 +314,7 @@ export default function VoiceInterviewWebSocket({
     return () => clearTimeout(timer);
   }, [startInterview]);
 
-  // Cleanup on unmount
+    // Cleanup on unmount
   useEffect(() => {
     return () => {
       if (volumeIntervalRef.current) {
@@ -358,14 +361,14 @@ export default function VoiceInterviewWebSocket({
                   {isConnected ? 'Connected' : conversation.status === 'connecting' ? 'Connecting' : 'Disconnected'}
                 </div>
                 
-                <Button
-                  onClick={handleEndInterview}
-                  variant="outline"
+              <Button
+                onClick={handleEndInterview}
+                variant="outline"
                   disabled={!isConnected && !isStarting}
-                >
-                  <X className="w-4 h-4 mr-2" />
-                  End Interview
-                </Button>
+              >
+                <X className="w-4 h-4 mr-2" />
+                End Interview
+              </Button>
               </div>
             </div>
 
