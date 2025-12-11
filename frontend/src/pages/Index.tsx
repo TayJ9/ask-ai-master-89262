@@ -4,6 +4,7 @@ import RoleSelection from "@/components/RoleSelection";
 import InterviewSession from "@/components/InterviewSession";
 import VoiceInterview from "@/components/VoiceInterview";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
+import VoiceInterviewErrorBoundary from "@/components/VoiceInterviewErrorBoundary";
 import ResumeUpload from "@/components/ResumeUpload";
 import SessionHistory from "@/components/SessionHistory";
 import { Button } from "@/components/ui/button";
@@ -278,22 +279,25 @@ export default function Index() {
       )}
 
       {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
-          This prevents unmounting during async operations like getUserMedia. */}
+          This prevents unmounting during async operations like getUserMedia.
+          Wrapped in ErrorBoundary to catch any errors and show fallback UI. */}
       {candidateContext && candidateContext.sessionId && (
-        <VoiceInterviewWebSocket
-          sessionId={candidateContext.sessionId}
-          candidateContext={{
-            name: candidateContext.name,
-            major: candidateContext.major,
-            year: candidateContext.year,
-            skills: candidateContext.skills || [],
-            experience: candidateContext.experience,
-            education: candidateContext.education,
-            summary: candidateContext.summary
-          }}
-          onComplete={handleCompleteInterview}
-          isActive={currentView === "voice"}
-        />
+        <VoiceInterviewErrorBoundary onReset={() => setCurrentView("voice")}>
+          <VoiceInterviewWebSocket
+            sessionId={candidateContext.sessionId}
+            candidateContext={{
+              name: candidateContext.name,
+              major: candidateContext.major,
+              year: candidateContext.year,
+              skills: candidateContext.skills || [],
+              experience: candidateContext.experience,
+              education: candidateContext.education,
+              summary: candidateContext.summary
+            }}
+            onComplete={handleCompleteInterview}
+            isActive={currentView === "voice"}
+          />
+        </VoiceInterviewErrorBoundary>
       )}
       
       {/* Fallback VoiceInterview for cases without candidateContext */}

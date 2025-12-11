@@ -291,19 +291,39 @@ export default function VoiceInterviewWebSocket({
     
     try {
       // ============================================
-      // STEP 1: Request Microphone (with mount check)
+      // STEP 1: Request Microphone (with mount check and timeout)
       // ============================================
       console.log('Step 1: Requesting microphone access...');
+      
+      // FIX #2: Timeout guard on getUserMedia (5 seconds)
+      // Browsers can hang indefinitely if permission dialog is ignored
+      const MIC_TIMEOUT_MS = 5000;
+      
       try {
-        micStream = await navigator.mediaDevices.getUserMedia({ 
+        const micPromise = navigator.mediaDevices.getUserMedia({ 
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           } 
         });
+        
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => {
+            reject(new Error('TIMEOUT'));
+          }, MIC_TIMEOUT_MS);
+        });
+        
+        micStream = await Promise.race([micPromise, timeoutPromise]);
       } catch (micError: any) {
-        console.error('Microphone access denied:', micError);
+        console.error('Microphone access error:', micError);
+        
+        // Check for timeout
+        if (micError.message === 'TIMEOUT') {
+          console.error('Microphone request timeout - browser may have blocked permission dialog');
+          throw new Error('Microphone access timed out. Please check your browser settings and allow microphone access.');
+        }
+        
         throw new Error(
           micError.name === 'NotAllowedError' 
             ? 'Microphone access denied. Please allow microphone access and try again.'
@@ -475,6 +495,15 @@ export default function VoiceInterviewWebSocket({
       }
     };
   }, [conversation]);
+
+  // FIX #1: Cleanup when component becomes hidden (isActive = false)
+  // Disconnect SDK if user navigates away while connected
+  useEffect(() => {
+    if (!isActive && conversation.status === 'connected') {
+      console.log('Component hidden while connected - ending session');
+      conversation.endSession().catch(console.error);
+    }
+  }, [isActive, conversation]);
 
   const isConnected = conversation.status === 'connected';
   const isAiSpeaking = conversation.isSpeaking;
