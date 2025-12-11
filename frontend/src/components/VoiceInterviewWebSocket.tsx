@@ -116,9 +116,15 @@ export default function VoiceInterviewWebSocket({
       setIsStarting(false);
       isStartingRef.current = false;
     },
-    onDisconnect: () => {
-      console.log('ElevenLabs SDK disconnected');
-      if (!isMountedRef.current) return;
+    onDisconnect: (reason) => {
+      console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
+      console.error("Reason:", reason);
+      console.error("Stack Trace:", new Error().stack);
+      
+      if (!isMountedRef.current) {
+        console.log("Component unmounted, ignoring disconnect logic");
+        return;
+      }
       
       // Check if interview actually started before calling onComplete
       // This prevents unmounting the component if disconnect happens during connection
@@ -181,7 +187,7 @@ export default function VoiceInterviewWebSocket({
       }
     },
     onError: (error) => {
-      console.error('ElevenLabs SDK error:', error);
+      console.error("🔥🔥🔥 CRITICAL: SDK ERROR 🔥🔥🔥", error);
       if (!isMountedRef.current) return;
       
       // Reset starting state on error
@@ -402,6 +408,7 @@ export default function VoiceInterviewWebSocket({
       }
       
       console.log('Step 3: Starting ElevenLabs session...');
+      console.log('Attempting to start session...');
       
       const newSessionId = await conversation.startSession({
         signedUrl: signedUrl,
@@ -454,6 +461,7 @@ export default function VoiceInterviewWebSocket({
       
       try {
         if (conversation.status === 'connected') {
+          console.log('Attempting to END session...');
           await conversation.endSession();
         } else {
           // If not connected, just complete locally
@@ -483,9 +491,10 @@ export default function VoiceInterviewWebSocket({
 
   // Cleanup on unmount
   useEffect(() => {
+    console.log("🟢 COMPONENT MOUNTED");
     isMountedRef.current = true;
     return () => {
-      console.log('VoiceInterviewWebSocket unmounting, cleaning up...');
+      console.log("🔴 COMPONENT UNMOUNTED - TRIGGERING CLEANUP");
       isMountedRef.current = false;
       
       if (volumeIntervalRef.current) {
