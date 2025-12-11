@@ -258,7 +258,7 @@ export default function VoiceInterviewWebSocket({
     };
   }, [conversation.status, conversation]);
 
-  // Start interview with signed token - with connection guards
+  // Start interview with signed token - with robust unmount handling
   const startInterview = useCallback(async () => {
     // Guard 1: Check ref to prevent race conditions (Strict Mode, double-clicks)
     if (isStartingRef.current) {
@@ -284,29 +284,23 @@ export default function VoiceInterviewWebSocket({
     setIsIdle(false);
     setStatusMessage("Requesting microphone access...");
     
+    let micStream: MediaStream | null = null;
+    
     try {
-      // PRE-FLIGHT: Warm up the microphone before SDK takes over
-      // This forces the browser to resolve permission immediately
-      // and prevents the SDK from hanging on a suspended AudioContext
-      console.log('Pre-flight: Requesting microphone access...');
-      let preflightStream: MediaStream;
+      // ============================================
+      // STEP 1: Request Microphone (with mount check)
+      // ============================================
+      console.log('Step 1: Requesting microphone access...');
       try {
-        preflightStream = await navigator.mediaDevices.getUserMedia({ 
+        micStream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
           } 
         });
-        console.log('Pre-flight: Microphone access granted');
-        
-        // Immediately release the stream so SDK can acquire it
-        preflightStream.getTracks().forEach(track => {
-          console.log(`Pre-flight: Stopping track ${track.kind}`);
-          track.stop();
-        });
       } catch (micError: any) {
-        console.error('Pre-flight: Microphone access denied:', micError);
+        console.error('Microphone access denied:', micError);
         throw new Error(
           micError.name === 'NotAllowedError' 
             ? 'Microphone access denied. Please allow microphone access and try again.'
@@ -316,18 +310,32 @@ export default function VoiceInterviewWebSocket({
         );
       }
       
-      // Check if component unmounted during async operation
+      // CRITICAL: Check mount state immediately after mic request
       if (!isMountedRef.current) {
-        isStartingRef.current = false;
-        return;
+        console.log('Component unmounted during mic request - aborting start');
+        micStream.getTracks().forEach(t => t.stop()); // Clean up immediately
+        return; // Don't reset refs - finally block handles it
       }
+      
+      // Release the stream - we just needed permission
+      console.log('Microphone access granted, releasing stream...');
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
       
       // Small delay to ensure browser fully releases the mic
       await new Promise(resolve => setTimeout(resolve, 100));
       
-      setStatusMessage("Connecting to interview service...");
+      // ============================================
+      // STEP 2: Fetch Token (with mount check)
+      // ============================================
+      if (!isMountedRef.current) {
+        console.log('Component unmounted before token fetch - aborting');
+        return;
+      }
       
-      // Fetch signed token from backend (fresh token for each attempt)
+      setStatusMessage("Connecting to interview service...");
+      console.log('Step 2: Fetching conversation token...');
+      
       const authToken = localStorage.getItem('auth_token');
       const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
         method: 'GET',
@@ -335,9 +343,9 @@ export default function VoiceInterviewWebSocket({
         headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
       });
       
-      // Check if component unmounted during async operation
+      // Check mount state after fetch
       if (!isMountedRef.current) {
-        isStartingRef.current = false;
+        console.log('Component unmounted during token fetch - aborting');
         return;
       }
       
@@ -358,24 +366,25 @@ export default function VoiceInterviewWebSocket({
       }
       
       // Store conversation ID if provided
-      if (tokenData.conversationId) {
+      if (tokenData.conversationId && isMountedRef.current) {
         setConversationId(tokenData.conversationId);
       }
       
-      // Final check before starting session
+      // ============================================
+      // STEP 3: Start SDK Session (with mount check)
+      // ============================================
       if (!isMountedRef.current) {
-        isStartingRef.current = false;
+        console.log('Component unmounted before SDK start - aborting');
         return;
       }
       
-      console.log('Starting ElevenLabs session with signed URL...');
+      console.log('Step 3: Starting ElevenLabs session...');
       
-      // Start the conversation session with signed URL
       const newSessionId = await conversation.startSession({
         signedUrl: signedUrl,
       });
       
-      // The startSession returns a session ID string
+      // Check mount after session start
       if (newSessionId && isMountedRef.current) {
         setConversationId(newSessionId);
         console.log('Session started with ID:', newSessionId);
@@ -384,26 +393,34 @@ export default function VoiceInterviewWebSocket({
     } catch (error: any) {
       console.error('Failed to start interview:', error);
       
-      // Reset all guards and state on error
-      isStartingRef.current = false;
+      // Clean up any lingering mic stream
+      if (micStream) {
+        micStream.getTracks().forEach(t => t.stop());
+      }
       
-      if (!isMountedRef.current) return;
-      
-      setIsStarting(false);
-      setIsIdle(true); // Return to idle state so user can retry
-      setStatusMessage("Ready to begin");
-      
-      // Show appropriate error message
-      const errorMessage = error.message || "Could not connect to interview service.";
-      const isMicError = errorMessage.toLowerCase().includes('microphone') || 
-                         error.name === 'NotAllowedError' ||
-                         error.name === 'NotFoundError';
-      
-      toast({
-        title: isMicError ? "Microphone Error" : "Connection Failed",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      // Only update state if still mounted
+      if (isMountedRef.current) {
+        setIsStarting(false);
+        setIsIdle(true); // Return to idle state so user can retry
+        setStatusMessage("Ready to begin");
+        
+        // Show appropriate error message
+        const errorMessage = error.message || "Could not connect to interview service.";
+        const isMicError = errorMessage.toLowerCase().includes('microphone') || 
+                           error.name === 'NotAllowedError' ||
+                           error.name === 'NotFoundError';
+        
+        toast({
+          title: isMicError ? "Microphone Error" : "Connection Failed",
+          description: errorMessage,
+          variant: "destructive",
+        });
+      }
+    } finally {
+      // Always reset the starting ref when done (success or failure)
+      if (isMountedRef.current) {
+        isStartingRef.current = false;
+      }
     }
   }, [isStarting, hasStarted, conversation, toast]);
 
