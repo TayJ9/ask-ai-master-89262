@@ -26,6 +26,8 @@ interface VoiceInterviewWebSocketProps {
     summary?: string;
   };
   onComplete: (results?: any) => void;
+  /** When false, component stays mounted but renders nothing. Prevents unmount during async ops. */
+  isActive?: boolean;
 }
 
 interface TranscriptMessage {
@@ -41,6 +43,7 @@ export default function VoiceInterviewWebSocket({
   sessionId,
   candidateContext,
   onComplete,
+  isActive = true, // Default to true for backward compatibility
 }: VoiceInterviewWebSocketProps) {
   const [statusMessage, setStatusMessage] = useState("Ready to begin");
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
@@ -475,6 +478,12 @@ export default function VoiceInterviewWebSocket({
 
   const isConnected = conversation.status === 'connected';
   const isAiSpeaking = conversation.isSpeaking;
+
+  // When not active, render nothing but stay mounted
+  // This prevents unmounting during async operations like getUserMedia
+  if (!isActive) {
+    return null;
+  }
 
   return (
     <AnimatedBackground className="p-6 flex items-center justify-center">

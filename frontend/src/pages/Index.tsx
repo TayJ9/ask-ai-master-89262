@@ -277,36 +277,37 @@ export default function Index() {
         />
       )}
 
-      {currentView === "voice" && voiceSessionId && (
-        <>
-          {/* Use WebSocket-based voice interview if we have candidate context */}
-          {candidateContext && candidateContext.sessionId ? (
-            <VoiceInterviewWebSocket
-              sessionId={candidateContext.sessionId}
-              candidateContext={{
-                name: candidateContext.name,
-                major: candidateContext.major,
-                year: candidateContext.year,
-                skills: candidateContext.skills || [],
-                experience: candidateContext.experience,
-                education: candidateContext.education,
-                summary: candidateContext.summary
-              }}
-              onComplete={handleCompleteInterview}
-            />
-          ) : (
-            <VoiceInterview
-              sessionId={voiceSessionId}
-              userId={user.id}
-              role={selectedRole}
-              difficulty="medium"
-              resumeText={resumeText}
-              initialAudioResponse={voiceInterviewData?.audioResponse}
-              initialAgentText={voiceInterviewData?.agentResponseText}
-              onComplete={handleCompleteInterview}
-            />
-          )}
-        </>
+      {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
+          This prevents unmounting during async operations like getUserMedia. */}
+      {candidateContext && candidateContext.sessionId && (
+        <VoiceInterviewWebSocket
+          sessionId={candidateContext.sessionId}
+          candidateContext={{
+            name: candidateContext.name,
+            major: candidateContext.major,
+            year: candidateContext.year,
+            skills: candidateContext.skills || [],
+            experience: candidateContext.experience,
+            education: candidateContext.education,
+            summary: candidateContext.summary
+          }}
+          onComplete={handleCompleteInterview}
+          isActive={currentView === "voice"}
+        />
+      )}
+      
+      {/* Fallback VoiceInterview for cases without candidateContext */}
+      {currentView === "voice" && voiceSessionId && !candidateContext?.sessionId && (
+        <VoiceInterview
+          sessionId={voiceSessionId}
+          userId={user.id}
+          role={selectedRole}
+          difficulty="medium"
+          resumeText={resumeText}
+          initialAudioResponse={voiceInterviewData?.audioResponse}
+          initialAgentText={voiceInterviewData?.agentResponseText}
+          onComplete={handleCompleteInterview}
+        />
       )}
       
       {currentView === "history" && (
