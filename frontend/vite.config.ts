@@ -13,6 +13,20 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     allowedHosts: true,
+    proxy: {
+      // Proxy API requests to the backend server
+      '/api': {
+        target: 'http://localhost:5000',
+        changeOrigin: true,
+        secure: false,
+      },
+      // Proxy WebSocket requests for voice interviews
+      '/voice': {
+        target: 'ws://localhost:5000',
+        ws: true,
+        changeOrigin: true,
+      },
+    },
   },
   build: {
     outDir: "dist/public",
