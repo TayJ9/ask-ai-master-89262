@@ -50,8 +50,19 @@ export default function VoiceInterviewWebSocket({
   const [outputVolume, setOutputVolume] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
   
+  // Connection guards to prevent race conditions and Strict Mode double-mounting
+  const isStartingRef = useRef(false);
+  const hasAttemptedStartRef = useRef(false);
+  const conversationIdRef = useRef<string | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
+  
   const { toast } = useToast();
+  
+  // Keep conversationId ref in sync
+  useEffect(() => {
+    conversationIdRef.current = conversationId;
+  }, [conversationId]);
   
   // Save interview to backend
   const saveInterview = useCallback(async (convId: string | null) => {
@@ -91,16 +102,25 @@ export default function VoiceInterviewWebSocket({
   // Initialize ElevenLabs conversation hook
   const conversation = useConversation({
     onConnect: () => {
-      console.log('ElevenLabs SDK connected');
+      console.log('ElevenLabs SDK connected successfully');
+      if (!isMountedRef.current) return;
+      
       setStatusMessage("Connected - Interview starting...");
       setHasStarted(true);
+      setIsStarting(false);
+      isStartingRef.current = false;
     },
     onDisconnect: () => {
       console.log('ElevenLabs SDK disconnected');
+      if (!isMountedRef.current) return;
+      
+      // Reset starting state
+      setIsStarting(false);
+      isStartingRef.current = false;
       setStatusMessage("Interview ended");
       
-      // Save interview on disconnect
-      saveInterview(conversationId);
+      // Save interview on disconnect using ref (state may be stale in callback)
+      saveInterview(conversationIdRef.current);
       
       // Stop volume polling
       if (volumeIntervalRef.current) {
@@ -111,6 +131,7 @@ export default function VoiceInterviewWebSocket({
       onComplete();
     },
     onMessage: (message) => {
+      if (!isMountedRef.current) return;
       console.log('SDK Message:', message);
       
       // SDK message has { message: string, source: 'user' | 'ai' }
@@ -123,18 +144,18 @@ export default function VoiceInterviewWebSocket({
           const lastMessage = prev[prev.length - 1];
           if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
             // Update the last message
-              return [
-                ...prev.slice(0, -1),
+            return [
+              ...prev.slice(0, -1),
               { ...lastMessage, text, isFinal: true }
             ];
           }
           // Add new message
-              return [
+          return [
             ...prev,
             {
               type: isAI ? 'ai' : 'student',
               text,
-                  isFinal: true,
+              isFinal: true,
               timestamp: Date.now(),
             }
           ];
@@ -143,6 +164,12 @@ export default function VoiceInterviewWebSocket({
     },
     onError: (error) => {
       console.error('ElevenLabs SDK error:', error);
+      if (!isMountedRef.current) return;
+      
+      // Reset starting state on error
+      setIsStarting(false);
+      isStartingRef.current = false;
+      
       const errorMessage = typeof error === 'string' ? error : (error as Error)?.message || 'Connection failed';
       setStatusMessage(`Error: ${errorMessage}`);
       toast({
@@ -216,10 +243,28 @@ export default function VoiceInterviewWebSocket({
     };
   }, [conversation.status, conversation]);
 
-  // Start interview with signed token
+  // Start interview with signed token - with connection guards
   const startInterview = useCallback(async () => {
-    if (isStarting || hasStarted) return;
+    // Guard 1: Check ref to prevent race conditions (Strict Mode, double-clicks)
+    if (isStartingRef.current) {
+      console.log('Start already in progress (ref guard)');
+      return;
+    }
     
+    // Guard 2: Check if already connected or connecting
+    if (conversation.status === 'connected' || conversation.status === 'connecting') {
+      console.log(`Already ${conversation.status}, skipping start`);
+      return;
+    }
+    
+    // Guard 3: Check state (backup)
+    if (isStarting || hasStarted) {
+      console.log('Start blocked by state guard');
+      return;
+    }
+    
+    // Set both ref and state immediately
+    isStartingRef.current = true;
     setIsStarting(true);
     setStatusMessage("Requesting microphone access...");
     
@@ -227,15 +272,27 @@ export default function VoiceInterviewWebSocket({
       // Request microphone permission first
       await navigator.mediaDevices.getUserMedia({ audio: true });
       
+      // Check if component unmounted during async operation
+      if (!isMountedRef.current) {
+        isStartingRef.current = false;
+        return;
+      }
+      
       setStatusMessage("Connecting to interview service...");
       
-      // Fetch signed token from backend
-      const token = localStorage.getItem('auth_token');
+      // Fetch signed token from backend (fresh token for each attempt)
+      const authToken = localStorage.getItem('auth_token');
       const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
         method: 'GET',
         credentials: 'include',
-        headers: token ? { 'Authorization': `Bearer ${token}` } : {},
+        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
       });
+      
+      // Check if component unmounted during async operation
+      if (!isMountedRef.current) {
+        isStartingRef.current = false;
+        return;
+      }
       
       if (!tokenResponse.ok) {
         throw new Error(`Failed to get conversation token: ${tokenResponse.statusText}`);
@@ -244,12 +301,13 @@ export default function VoiceInterviewWebSocket({
       const tokenData = await tokenResponse.json();
       console.log('Received conversation token:', { 
         hasToken: !!tokenData.token,
+        hasSignedUrl: !!tokenData.signedUrl,
         agentId: tokenData.agentId,
-        expiresIn: tokenData.expiresIn 
       });
       
-      if (!tokenData.token) {
-        throw new Error('No token received from server');
+      const signedUrl = tokenData.signedUrl || tokenData.token;
+      if (!signedUrl) {
+        throw new Error('No signed URL received from server');
       }
       
       // Store conversation ID if provided
@@ -257,19 +315,33 @@ export default function VoiceInterviewWebSocket({
         setConversationId(tokenData.conversationId);
       }
       
+      // Final check before starting session
+      if (!isMountedRef.current) {
+        isStartingRef.current = false;
+        return;
+      }
+      
+      console.log('Starting ElevenLabs session with signed URL...');
+      
       // Start the conversation session with signed URL
-      const sessionId = await conversation.startSession({
-        signedUrl: tokenData.token,
+      const newSessionId = await conversation.startSession({
+        signedUrl: signedUrl,
       });
       
       // The startSession returns a session ID string
-      if (sessionId) {
-        setConversationId(sessionId);
-        console.log('Session started with ID:', sessionId);
+      if (newSessionId && isMountedRef.current) {
+        setConversationId(newSessionId);
+        console.log('Session started with ID:', newSessionId);
       }
       
     } catch (error: any) {
       console.error('Failed to start interview:', error);
+      
+      // Reset guards on error
+      isStartingRef.current = false;
+      
+      if (!isMountedRef.current) return;
+      
       setStatusMessage(`Failed to start: ${error.message}`);
       setIsStarting(false);
       
@@ -305,22 +377,46 @@ export default function VoiceInterviewWebSocket({
     }
   }, [conversation, conversationId, saveInterview, onComplete]);
 
-  // Auto-start interview on mount
+  // Auto-start interview on mount (with Strict Mode protection)
   useEffect(() => {
+    // Mark component as mounted
+    isMountedRef.current = true;
+    
+    // Guard against Strict Mode double-mounting
+    if (hasAttemptedStartRef.current) {
+      console.log('Auto-start skipped: already attempted');
+      return;
+    }
+    hasAttemptedStartRef.current = true;
+    
+    // Delay start slightly to ensure SDK is ready
     const timer = setTimeout(() => {
-      startInterview();
+      if (isMountedRef.current && !isStartingRef.current) {
+        console.log('Auto-starting interview...');
+        startInterview();
+      }
     }, 500);
     
-    return () => clearTimeout(timer);
-  }, [startInterview]);
+    return () => {
+      clearTimeout(timer);
+      // Note: Don't reset hasAttemptedStartRef here - we want it to persist
+    };
+  }, []); // Empty deps - only run once on mount
 
-    // Cleanup on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
+      console.log('VoiceInterviewWebSocket unmounting, cleaning up...');
+      isMountedRef.current = false;
+      
       if (volumeIntervalRef.current) {
         clearInterval(volumeIntervalRef.current);
+        volumeIntervalRef.current = null;
       }
+      
+      // Only end session if connected
       if (conversation.status === 'connected') {
+        console.log('Ending active session on unmount');
         conversation.endSession().catch(console.error);
       }
     };
