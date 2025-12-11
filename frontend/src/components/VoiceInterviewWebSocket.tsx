@@ -271,14 +271,45 @@ export default function VoiceInterviewWebSocket({
     setStatusMessage("Requesting microphone access...");
     
     try {
-      // Request microphone permission first
-      await navigator.mediaDevices.getUserMedia({ audio: true });
+      // PRE-FLIGHT: Warm up the microphone before SDK takes over
+      // This forces the browser to resolve permission immediately
+      // and prevents the SDK from hanging on a suspended AudioContext
+      console.log('Pre-flight: Requesting microphone access...');
+      let preflightStream: MediaStream;
+      try {
+        preflightStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          } 
+        });
+        console.log('Pre-flight: Microphone access granted');
+        
+        // Immediately release the stream so SDK can acquire it
+        preflightStream.getTracks().forEach(track => {
+          console.log(`Pre-flight: Stopping track ${track.kind}`);
+          track.stop();
+        });
+      } catch (micError: any) {
+        console.error('Pre-flight: Microphone access denied:', micError);
+        throw new Error(
+          micError.name === 'NotAllowedError' 
+            ? 'Microphone access denied. Please allow microphone access and try again.'
+            : micError.name === 'NotFoundError'
+            ? 'No microphone found. Please connect a microphone and try again.'
+            : `Microphone error: ${micError.message}`
+        );
+      }
       
       // Check if component unmounted during async operation
       if (!isMountedRef.current) {
         isStartingRef.current = false;
         return;
       }
+      
+      // Small delay to ensure browser fully releases the mic
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       setStatusMessage("Connecting to interview service...");
       
@@ -339,27 +370,26 @@ export default function VoiceInterviewWebSocket({
     } catch (error: any) {
       console.error('Failed to start interview:', error);
       
-      // Reset guards on error
+      // Reset all guards and state on error
       isStartingRef.current = false;
       
       if (!isMountedRef.current) return;
       
-      setStatusMessage(`Failed to start: ${error.message}`);
       setIsStarting(false);
+      setIsIdle(true); // Return to idle state so user can retry
+      setStatusMessage("Ready to begin");
       
-      if (error.name === 'NotAllowedError') {
-        toast({
-          title: "Microphone Permission Denied",
-          description: "Please allow microphone access to start the interview.",
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "Connection Failed",
-          description: error.message || "Could not connect to interview service.",
-          variant: "destructive",
-        });
-      }
+      // Show appropriate error message
+      const errorMessage = error.message || "Could not connect to interview service.";
+      const isMicError = errorMessage.toLowerCase().includes('microphone') || 
+                         error.name === 'NotAllowedError' ||
+                         error.name === 'NotFoundError';
+      
+      toast({
+        title: isMicError ? "Microphone Error" : "Connection Failed",
+        description: errorMessage,
+        variant: "destructive",
+      });
     }
   }, [isStarting, hasStarted, conversation, toast]);
 
