@@ -53,6 +53,7 @@ export default function VoiceInterviewWebSocket({
   
   // Connection guards to prevent race conditions
   const isStartingRef = useRef(false);
+  const hasStartedRef = useRef(false); // Track if interview actually started
   const conversationIdRef = useRef<string | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
@@ -108,6 +109,7 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Connected - Interview starting...");
       setIsIdle(false);
       setHasStarted(true);
+      hasStartedRef.current = true; // Mark interview as truly started
       setIsStarting(false);
       isStartingRef.current = false;
     },
@@ -115,13 +117,15 @@ export default function VoiceInterviewWebSocket({
       console.log('ElevenLabs SDK disconnected');
       if (!isMountedRef.current) return;
       
+      // Check if interview actually started before calling onComplete
+      // This prevents unmounting the component if disconnect happens during connection
+      const wasInterviewActive = hasStartedRef.current;
+      
+      console.log('Disconnect - wasInterviewActive:', wasInterviewActive);
+      
       // Reset starting state
       setIsStarting(false);
       isStartingRef.current = false;
-      setStatusMessage("Interview ended");
-      
-      // Save interview on disconnect using ref (state may be stale in callback)
-      saveInterview(conversationIdRef.current);
       
       // Stop volume polling
       if (volumeIntervalRef.current) {
@@ -129,7 +133,17 @@ export default function VoiceInterviewWebSocket({
         volumeIntervalRef.current = null;
       }
       
-      onComplete();
+      if (wasInterviewActive) {
+        // Interview was active - save and complete
+        setStatusMessage("Interview ended");
+        saveInterview(conversationIdRef.current);
+        onComplete();
+      } else {
+        // Disconnect during connection attempt - return to idle state
+        console.log('Disconnect during connection - returning to idle state');
+        setIsIdle(true);
+        setStatusMessage("Connection failed. Click to try again.");
+      }
     },
     onMessage: (message) => {
       if (!isMountedRef.current) return;
