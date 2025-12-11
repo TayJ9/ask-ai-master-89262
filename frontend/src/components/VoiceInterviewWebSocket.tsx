@@ -91,7 +91,7 @@ export default function VoiceInterviewWebSocket({
   
   // Minimum buffer threshold before starting playback
   const audioBufferAccumulatorRef = useRef<number>(0);
-  const MIN_BUFFER_BEFORE_PLAYBACK = 16000; // 0.5s at 16kHz (16000 samples/s * 0.5s * 2 bytes)
+  const MIN_BUFFER_BEFORE_PLAYBACK = 6400; // 200ms at 16kHz (reduced from 500ms for snappy short responses like "Mm-hmm")
   
   // Jitter buffer: Accumulate small chunks to prevent micro-stuttering
   const jitterBufferRef = useRef<ArrayBuffer[]>([]);
@@ -146,6 +146,29 @@ export default function VoiceInterviewWebSocket({
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
     return `${protocol}//${host}/voice`;
+  };
+
+  // μ-law to Linear PCM16 decoder
+  // Converts 8-bit μ-law encoded audio to 16-bit signed linear PCM
+  const ulawToLinear = (ulawData: Uint8Array): Int16Array => {
+    const BIAS = 0x84;
+    const CLIP = 32635;
+    const pcm16 = new Int16Array(ulawData.length);
+    
+    for (let i = 0; i < ulawData.length; i++) {
+      const ulawByte = ~ulawData[i]; // Invert all bits
+      const sign = (ulawByte & 0x80) ? -1 : 1;
+      const exponent = (ulawByte >> 4) & 0x07;
+      const mantissa = ulawByte & 0x0F;
+      
+      let sample = ((mantissa << 3) + BIAS) << exponent;
+      sample = sign * (sample - BIAS);
+      
+      // Clamp to 16-bit range
+      pcm16[i] = Math.max(-32768, Math.min(32767, sample));
+    }
+    
+    return pcm16;
   };
 
   // Convert Float32Array to PCM16
@@ -399,31 +422,15 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Interview started. AI is speaking...");
         
         // Start continuous microphone stream for VAD (keep it open)
-        // MediaRecorder will continuously stream chunks every 250ms
+        // MediaRecorder will continuously stream chunks every 250ms - always-on
         if (!mediaStreamRef.current && !mediaRecorderRef.current) {
           startRecording().catch((error) => {
             console.error('❌ Failed to start continuous recording:', error);
           });
         } else if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
-          // If already recording, ensure we're sending chunks
-          resumeRecording();
+          // MediaRecorder already running - microphone is always-on
+          console.log('✅ MediaRecorder already running - microphone is always-on');
         }
-        
-        // Set timeout to prevent stuck state (30 seconds max for AI response)
-        if (stateTimeoutRef.current) {
-          clearTimeout(stateTimeoutRef.current);
-        }
-        stateTimeoutRef.current = setTimeout(() => {
-          // Use functional update to get current state value, not stale closure value
-          setConversationStateWithLogging(currentState => {
-            if (currentState === 'ai_speaking') {
-              console.warn('⚠️ State timeout: AI speaking state exceeded 30s, forcing transition to listening');
-              setStatusMessage("Listening... Please speak your answer.");
-              return 'listening';
-            }
-            return currentState;
-          }, 'state_timeout');
-        }, 30000);
         
         // Initialize AudioContext early to handle autoplay policies
         // Use native sample rate to match browser capabilities and prevent resampling artifacts
@@ -445,13 +452,10 @@ export default function VoiceInterviewWebSocket({
         break;
       case 'transcript':
       case 'ai_transcription':
-        // Update conversation state when AI starts speaking
+        // Update conversation state when AI starts speaking (visual only)
         if (conversationState === 'listening' || conversationState === 'user_speaking') {
           setConversationStateWithLogging('ai_speaking', 'ai_transcription_received');
-          // Pause sending audio chunks when AI starts speaking (but keep stream open)
-          if (isRecording) {
-            pauseRecording();
-          }
+          // Microphone stays always-on - backend/ElevenLabs VAD handles interruption
         }
         setTranscripts(prev => {
           const isFinal = message.is_final || false;
@@ -724,10 +728,7 @@ export default function VoiceInterviewWebSocket({
         setIsPlaying(false);
         nextPlayTimeRef.current = 0;
         
-        // Resume sending audio chunks (microphone stream stays open for continuous VAD)
-        if (mediaStreamRef.current && !isRecording) {
-          resumeRecording();
-        }
+        // Microphone is always-on - no need to resume
         break;
       }
       case 'student_speech_ended': {
@@ -749,12 +750,6 @@ export default function VoiceInterviewWebSocket({
       case 'ai_response_done':
         // Keep this log as it's important
         console.log('✅ AI response completed');
-        // Clear any state timeout
-        if (stateTimeoutRef.current) {
-          clearTimeout(stateTimeoutRef.current);
-          stateTimeoutRef.current = null;
-        }
-        
         // Track timing
         const aiResponseDoneTime = Date.now();
         lastAiResponseDoneTimeRef.current = aiResponseDoneTime;
@@ -765,32 +760,21 @@ export default function VoiceInterviewWebSocket({
           console.log(`⏱️ Turn-taking timing: ${responseTime}ms from user speech end to AI response done`);
         }
         
-        // Transition to listening state when AI finishes
+        // Transition to listening state when AI finishes (visual only)
         if (conversationState === 'ai_speaking') {
           setConversationStateWithLogging('listening', 'ai_response_done');
           setStatusMessage("Listening... Please speak your answer.");
-          // Resume sending audio chunks (microphone stream stays open for continuous VAD)
-          if (mediaStreamRef.current && !isRecording) {
-            resumeRecording();
-          }
+          // Microphone is always-on - no need to resume
         }
         break;
       case 'ai_audio_done':
         // Keep this log as it's important
         console.log('✅ AI audio stream completed');
-        // Clear any state timeout
-        if (stateTimeoutRef.current) {
-          clearTimeout(stateTimeoutRef.current);
-          stateTimeoutRef.current = null;
-        }
-        // Ensure we transition to listening state
+        // Ensure we transition to listening state (visual only)
         if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0) {
           setConversationStateWithLogging('listening', 'ai_audio_done');
           setStatusMessage("Listening... Please speak your answer.");
-          // Resume sending audio chunks (microphone stream stays open for continuous VAD)
-          if (mediaStreamRef.current && !isRecording) {
-            resumeRecording();
-          }
+          // Microphone is always-on - no need to resume
         }
         break;
       case 'student_transcription':
@@ -887,14 +871,11 @@ export default function VoiceInterviewWebSocket({
         // Check if this is the end of agent response
         if (message.agent_response_end || message.agent_response_event?.agent_response_end) {
           console.log('✅ Agent response ended (backup signal)');
-          // Backup signal to switch to listening - trust audio queue first, but use this as fallback
+          // Backup signal to switch to listening (visual only)
           if (conversationState === 'ai_speaking' && audioQueueRef.current.length === 0 && activeSourcesRef.current.length === 0) {
             setConversationStateWithLogging('listening', 'agent_response_end');
             setStatusMessage("Listening... Please speak your answer.");
-            // Resume sending audio chunks (microphone stream stays open for continuous VAD)
-            if (mediaStreamRef.current && !isRecording) {
-              resumeRecording();
-            }
+            // Microphone is always-on - no need to resume
           }
         }
         break;
@@ -1458,8 +1439,9 @@ export default function VoiceInterviewWebSocket({
     }
     
     // Check minimum buffer threshold before starting playback
-    // Accumulate at least 0.5s of audio (16000 bytes at 16kHz) before first playback
-    // This prevents buffer underrun and stuttering when large chunks arrive after delays
+    // Accumulate at least 200ms of audio (6400 bytes at 16kHz) before first playback
+    // Reduced from 500ms to make short responses (like "Mm-hmm") feel snappy and immediate
+    // This prevents buffer underrun while maintaining responsive feel
     const totalBufferedBytes = audioQueueRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     if (totalBufferedBytes < MIN_BUFFER_BEFORE_PLAYBACK && audioBufferAccumulatorRef.current < MIN_BUFFER_BEFORE_PLAYBACK) {
       audioBufferAccumulatorRef.current = totalBufferedBytes;
@@ -1587,29 +1569,44 @@ export default function VoiceInterviewWebSocket({
         console.log(`📦 Large chunk received: ${chunkSizeBytes} bytes (~${chunkDurationSeconds.toFixed(2)}s). Will schedule seamlessly.`);
       }
 
-      // Simple PCM16 processing pipeline
-      // Backend is forced to send PCM16 16000Hz, so we just read Int16 Little Endian -> Float32 -> Play
+      // Audio processing pipeline with μ-law decoding support
+      // Backend may send either PCM16 (16-bit, 2 bytes/sample) or μ-law (8-bit, 1 byte/sample)
       let float32Data: Float32Array<ArrayBuffer>;
-      const sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz for PCM16
+      const sourceSampleRate = ELEVENLABS_SAMPLE_RATE; // 16000Hz
       
       try {
-        // Validate buffer size is multiple of 2 (PCM16 is 2 bytes per sample)
-        if (arrayBuffer.byteLength % 2 !== 0) {
-          console.error(`❌ Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
-          isProcessingQueueRef.current = false;
-          if (audioQueueRef.current.length > 0) {
-            requestAnimationFrame(() => processAudioQueue());
+        let pcm16Data: Int16Array;
+        
+        // Auto-detect format: μ-law has 1 byte/sample, PCM16 has 2 bytes/sample
+        // If buffer size is odd, it cannot be PCM16, so assume μ-law
+        // Additionally check typical μ-law characteristics (values often in 0-255 range)
+        const isProbablyUlaw = (arrayBuffer.byteLength % 2 !== 0) || 
+          (arrayBuffer.byteLength < 1000 && arrayBuffer.byteLength % 160 === 0); // 20ms frames at 8kHz
+        
+        if (isProbablyUlaw) {
+          // μ-law format detected - decode to PCM16
+          console.log(`🔊 Decoding μ-law audio: ${arrayBuffer.byteLength} bytes`);
+          const ulawData = new Uint8Array(arrayBuffer);
+          pcm16Data = ulawToLinear(ulawData);
+        } else {
+          // PCM16 format - validate and read directly
+          if (arrayBuffer.byteLength % 2 !== 0) {
+            console.error(`❌ Invalid buffer size ${arrayBuffer.byteLength} bytes (not multiple of 2). Skipping chunk.`);
+            isProcessingQueueRef.current = false;
+            if (audioQueueRef.current.length > 0) {
+              requestAnimationFrame(() => processAudioQueue());
+            }
+            return;
           }
-          return;
-        }
-        
-        // Read Int16 Little Endian using DataView
-        const dataView = new DataView(arrayBuffer);
-        const sampleCount = arrayBuffer.byteLength / 2;
-        const pcm16Data = new Int16Array(sampleCount);
-        
-        for (let i = 0; i < sampleCount; i++) {
-          pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
+          
+          // Read Int16 Little Endian using DataView
+          const dataView = new DataView(arrayBuffer);
+          const sampleCount = arrayBuffer.byteLength / 2;
+          pcm16Data = new Int16Array(sampleCount);
+          
+          for (let i = 0; i < sampleCount; i++) {
+            pcm16Data[i] = dataView.getInt16(i * 2, true); // true = little-endian
+          }
         }
         
         // Convert PCM16 to Float32
@@ -1838,14 +1835,11 @@ export default function VoiceInterviewWebSocket({
               
               // Trust audio queue length - if empty and no sources playing, AI is done
               if (audioQueueRef.current.length === 0) {
-                // Transition to listening state immediately when AI finishes speaking
-                if (conversationState === 'ai_speaking') {
+                // Transition to listening state immediately when AI finishes speaking (visual only)
+              if (conversationState === 'ai_speaking') {
                   setConversationStateWithLogging('listening', 'last_audio_chunk_finished');
-                  setStatusMessage("Listening... Please speak your answer.");
-                  // Resume sending audio chunks (microphone stream stays open for continuous VAD)
-                  if (mediaStreamRef.current && !isRecording) {
-                    resumeRecording();
-                  }
+                setStatusMessage("Listening... Please speak your answer.");
+                  // Microphone is always-on - no need to resume
                 }
               }
             }
@@ -1959,29 +1953,29 @@ export default function VoiceInterviewWebSocket({
       }
     } else {
       // Large chunk - queue directly (no jitter buffer needed)
-      // Buffer and validate chunk - ensures complete PCM frames
-      const completeFrames = bufferAndValidateChunk(arrayBuffer);
+    // Buffer and validate chunk - ensures complete PCM frames
+    const completeFrames = bufferAndValidateChunk(arrayBuffer);
+    
+    // If no complete frames yet (buffering), return early
+    if (completeFrames.length === 0) {
+      return; // Chunk is being buffered, will be processed when complete
+    }
+    
+    // Process each complete frame
+    for (const frame of completeFrames) {
+      // Track audio chunk metrics
+      const now = Date.now();
+      audioChunkSizesRef.current.push(frame.byteLength);
+      audioChunkReceiveTimesRef.current.push(now);
       
-      // If no complete frames yet (buffering), return early
-      if (completeFrames.length === 0) {
-        return; // Chunk is being buffered, will be processed when complete
+      // Keep only last 100 chunk timestamps for rate calculation
+      if (audioChunkReceiveTimesRef.current.length > 100) {
+        audioChunkReceiveTimesRef.current.shift();
+        audioChunkSizesRef.current.shift();
       }
       
-      // Process each complete frame
-      for (const frame of completeFrames) {
-        // Track audio chunk metrics
-        const now = Date.now();
-        audioChunkSizesRef.current.push(frame.byteLength);
-        audioChunkReceiveTimesRef.current.push(now);
-        
-        // Keep only last 100 chunk timestamps for rate calculation
-        if (audioChunkReceiveTimesRef.current.length > 100) {
-          audioChunkReceiveTimesRef.current.shift();
-          audioChunkSizesRef.current.shift();
-        }
-        
-        // Add complete frame to queue
-        audioQueueRef.current.push(frame);
+      // Add complete frame to queue
+      audioQueueRef.current.push(frame);
       }
     }
     
@@ -2475,12 +2469,6 @@ export default function VoiceInterviewWebSocket({
         interviewStartTimeoutRef.current = null;
       }
       
-      // Clear state timeout
-      if (stateTimeoutRef.current) {
-        clearTimeout(stateTimeoutRef.current);
-        stateTimeoutRef.current = null;
-      }
-      
       // Close WebSocket connection
       if (wsRef.current) {
         // Remove event handlers to prevent reconnection attempts
@@ -2555,29 +2543,18 @@ export default function VoiceInterviewWebSocket({
       mediaRecorderRef.current = mediaRecorder;
 
       // Handle data availability - send chunks immediately as binary
-      // CRITICAL: MediaRecorder stays ON - we only control whether we send chunks
-      const recordingStateRef = { isRecording: true };
+      // CRITICAL: Always send chunks - microphone is always-on, trust ElevenLabs VAD
       mediaRecorder.ondataavailable = (event) => {
         if (event.data && event.data.size > 0) {
-          // Always keep MediaRecorder running - only control sending
-          // If paused, discard data (ElevenLabs handles interruption)
-          // If active, send chunks
+          // Always send chunks when WebSocket is open - never gate on conversationState
+          // Backend/ElevenLabs VAD handles interruption detection
           if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-            if (recordingStateRef.isRecording) {
-              // Send blob directly as binary - backend handles binary audio
-              wsRef.current.send(event.data);
-              console.log(`📤 Sent audio chunk: ${event.data.size} bytes (binary)`);
-            } else {
-              // Discard chunk when paused (but MediaRecorder keeps running)
-              // This ensures mic stays hot and we don't lose first few seconds of reply
-              console.log(`🔇 Discarded audio chunk (paused): ${event.data.size} bytes`);
-            }
+            // Send blob directly as binary - backend handles binary audio
+            wsRef.current.send(event.data);
+            console.log(`📤 Sent audio chunk: ${event.data.size} bytes (binary)`);
           }
         }
       };
-      
-      // Store recording state ref for pause/resume control
-      (mediaRecorderRef.current as any).__recordingState = recordingStateRef;
 
       // Handle errors
       mediaRecorder.onerror = (event) => {
@@ -2651,20 +2628,8 @@ export default function VoiceInterviewWebSocket({
     }
   }, [stopRecording, cleanupAudio, onComplete]);
 
-  // Auto-resume sending audio chunks when AI finishes speaking
-  // Note: Microphone stream stays open continuously for VAD
-  useEffect(() => {
-    if (!isPlaying && isInterviewActive && !isRecording && !isProcessing && mediaStreamRef.current) {
-      // Small delay before resuming to send chunks
-      const timer = setTimeout(() => {
-        if (!isPlayingRef.current && mediaStreamRef.current) {
-          resumeRecording();
-        }
-      }, 300);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [isPlaying, isInterviewActive, isRecording, isProcessing, resumeRecording]);
+  // Note: Microphone is always-on - no need for auto-resume logic
+  // MediaRecorder sends chunks continuously regardless of conversationState
 
   return (
     <AnimatedBackground className="p-6 flex items-center justify-center">

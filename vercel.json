@@ -4,6 +4,9 @@
   "framework": "vite",
   "installCommand": "cd frontend && npm install",
   "devCommand": "cd frontend && npm run dev",
+  "github": {
+    "silent": true
+  },
   "rewrites": [
     {
       "source": "/(.*)",
