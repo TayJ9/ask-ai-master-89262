@@ -824,8 +824,9 @@ export function registerRoutes(app: Express) {
         return res.status(500).json({ error: 'ElevenLabs API key not configured' });
       }
 
-      // Call ElevenLabs API to get conversation token
-      const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/token?agent_id=${agentId}`;
+      // Call ElevenLabs API to get SIGNED URL for the SDK
+      // The SDK requires a signed URL, not a token
+      const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`;
       
       console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl}`);
 
@@ -840,21 +841,28 @@ export function registerRoutes(app: Express) {
         const errorText = await response.text();
         console.error(`[CONVERSATION-TOKEN] ElevenLabs API error: ${response.status} - ${errorText}`);
         return res.status(500).json({ 
-          error: 'Failed to get conversation token from ElevenLabs',
+          error: 'Failed to get signed URL from ElevenLabs',
           details: process.env.NODE_ENV === 'development' ? errorText : undefined
         });
       }
 
-      const data = await response.json();
-      const { token, expires_in } = data;
+      const data = await response.json() as { signed_url?: string };
+      // The get_signed_url endpoint returns { signed_url: "wss://..." }
+      const signedUrl = data.signed_url;
 
-      console.log(`[CONVERSATION-TOKEN] Token obtained successfully for user: ${userId}, expires in: ${expires_in}s`);
+      if (!signedUrl) {
+        console.error('[CONVERSATION-TOKEN] No signed_url in response:', data);
+        return res.status(500).json({ error: 'No signed URL returned from ElevenLabs' });
+      }
 
-      // Return token with clientId (userId) and other metadata
+      console.log(`[CONVERSATION-TOKEN] Signed URL obtained successfully for user: ${userId}`);
+
+      // Return the signed URL as 'token' for frontend compatibility
+      // The frontend uses tokenData.token as the signedUrl
       res.json({
-        token,
+        token: signedUrl,
+        signedUrl: signedUrl, // Also include as signedUrl for clarity
         clientId: userId,
-        expiresIn: expires_in || 900, // Default to 15 minutes if not provided
         agentId,
       });
     } catch (error: any) {
