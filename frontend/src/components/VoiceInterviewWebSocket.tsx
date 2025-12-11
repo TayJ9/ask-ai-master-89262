@@ -469,35 +469,31 @@ export default function VoiceInterviewWebSocket({
     startInterview();
   }, [startInterview]);
 
-  // Initialize mounted ref on mount
+  // Keep conversation ref in sync for cleanup
+  const conversationRef = useRef(conversation);
   useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, []);
+    conversationRef.current = conversation;
+  }, [conversation]);
 
   // Cleanup on unmount
   useEffect(() => {
+    isMountedRef.current = true;
     return () => {
-      // NOTE: Do NOT set isMountedRef.current = false here.
-      // That should only happen in the mount/unmount effect above.
-      // This effect runs whenever 'conversation' changes, which might happen during operation.
-      
-      console.log('Conversation cleanup (dependency change or unmount)...');
+      console.log('VoiceInterviewWebSocket unmounting, cleaning up...');
+      isMountedRef.current = false;
       
       if (volumeIntervalRef.current) {
         clearInterval(volumeIntervalRef.current);
         volumeIntervalRef.current = null;
       }
       
-      // Only end session if connected
-      if (conversation.status === 'connected') {
-        console.log('Ending active session');
-        conversation.endSession().catch(console.error);
+      // Only end session if connected (using ref to access latest state)
+      if (conversationRef.current.status === 'connected') {
+        console.log('Ending active session on unmount');
+        conversationRef.current.endSession().catch(console.error);
       }
     };
-  }, [conversation]);
+  }, []);
 
   // FIX #1: Cleanup when component becomes hidden (isActive = false)
   // Disconnect SDK if user navigates away while connected
