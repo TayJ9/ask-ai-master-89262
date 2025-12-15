@@ -12,6 +12,7 @@ import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
 import rateLimit from "express-rate-limit";
 import { db } from "./db";
+import { sql } from "drizzle-orm";
 
 // Lazy-load JWT_SECRET to avoid build-time errors
 // CRITICAL: This function NEVER throws errors - Railway may validate during build
@@ -49,6 +50,33 @@ function getJWTSecret(): string {
   }
   
   return secret;
+}
+
+const API_SECRET = 'my_secret_interview_key_123';
+const RESUME_FULLTEXT_MAX_CHARS = 12000;
+
+function buildResumeProfile(resumeText: string) {
+  const lines = resumeText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+
+  const extractListAfterLabel = (label: string) => {
+    const line = lines.find(l => l.toLowerCase().startsWith(label));
+    if (!line) return [];
+    const parts = line.split(':');
+    if (parts.length < 2) return [];
+    return parts[1].split(/[,;•|-]/).map(s => s.trim()).filter(Boolean).slice(0, 15);
+  };
+
+  const skills = extractListAfterLabel('skills');
+  const educationLines = lines.filter(l => /education/i.test(l)).slice(0, 5);
+  const experienceLines = lines.filter(l => /experience/i.test(l)).slice(0, 5);
+  const projectLines = lines.filter(l => /project/i.test(l)).slice(0, 5);
+
+  return {
+    skills,
+    projects: projectLines,
+    experience: experienceLines,
+    education: educationLines,
+  };
 }
 
 interface AuthRequest extends Express.Request {
@@ -452,10 +480,21 @@ export function registerRoutes(app: Express) {
       // Clear file buffer from memory immediately after processing
       req.file.buffer = null as any;
 
+      const resumeFulltext = resumeText.trim();
+      const resumeProfile = buildResumeProfile(resumeFulltext);
+
+      // Persist resume content keyed by sessionId (interviewid)
+      try {
+        await storage.upsertResume(sessionId, resumeFulltext, resumeProfile);
+      } catch (persistError) {
+        console.error("[UPLOAD-RESUME] Failed to persist resume text/profile:", persistError);
+        // Continue to return success so the user flow is not blocked; downstream tool calls will 404 if missing.
+      }
+
       // Return response matching what frontend expects
       res.json({
         sessionId,
-        resumeText: resumeText.trim(),
+        resumeText: resumeFulltext,
         candidateName: sanitizedName
       });
     } catch (error: any) {
@@ -956,9 +995,8 @@ export function registerRoutes(app: Express) {
     try {
       // Security check: Verify x-api-secret header
       const apiSecret = req.headers['x-api-secret'];
-      const expectedSecret = 'my_secret_interview_key_123';
       
-      if (!apiSecret || apiSecret !== expectedSecret) {
+      if (!apiSecret || apiSecret !== API_SECRET) {
         console.error('[SAVE-INTERVIEW] Invalid or missing x-api-secret header');
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
@@ -994,6 +1032,74 @@ export function registerRoutes(app: Express) {
         error: 'Failed to process interview completion webhook',
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
+    }
+  });
+
+  // ========================================================================
+  // ElevenLabs Server Tools: Fetch resume profile/fulltext by interviewid
+  // ========================================================================
+  app.post("/api/get-resume-profile", async (req, res) => {
+    try {
+      const apiSecret = req.headers['x-api-secret'];
+      if (!apiSecret || apiSecret !== API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+      }
+
+      const interviewId = req.body?.interviewid as string | undefined;
+      if (!interviewId) {
+        return res.status(400).json({ error: 'Missing interviewid in body' });
+      }
+
+      const resume = await storage.getResume(interviewId);
+      console.log('[RESUME-PROFILE] interviewid', interviewId, 'found', !!resume?.resumeProfile);
+
+      if (!resume || !resume.resumeProfile) {
+        return res.status(404).json({ error: 'Resume profile not found' });
+      }
+
+      return res.json({
+        interviewid: interviewId,
+        resumeprofile: resume.resumeProfile,
+      });
+    } catch (error: any) {
+      console.error('[RESUME-PROFILE] Error:', error);
+      return res.status(500).json({ error: 'Failed to fetch resume profile' });
+    }
+  });
+
+  app.post("/api/get-resume-fulltext", async (req, res) => {
+    try {
+      const apiSecret = req.headers['x-api-secret'];
+      if (!apiSecret || apiSecret !== API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+      }
+
+      const interviewId = req.body?.interviewid as string | undefined;
+      if (!interviewId) {
+        return res.status(400).json({ error: 'Missing interviewid in body' });
+      }
+
+      const resume = await storage.getResume(interviewId);
+      console.log('[RESUME-FULLTEXT] interviewid', interviewId, 'found', !!resume?.resumeFulltext);
+
+      if (!resume || !resume.resumeFulltext) {
+        return res.status(404).json({ error: 'Resume full text not found' });
+      }
+
+      const truncated = resume.resumeFulltext.length > RESUME_FULLTEXT_MAX_CHARS;
+      const safeText = truncated 
+        ? resume.resumeFulltext.substring(0, RESUME_FULLTEXT_MAX_CHARS)
+        : resume.resumeFulltext;
+
+      return res.json({
+        interviewid: interviewId,
+        resumefulltext: safeText,
+        truncated,
+        maxChars: RESUME_FULLTEXT_MAX_CHARS,
+      });
+    } catch (error: any) {
+      console.error('[RESUME-FULLTEXT] Error:', error);
+      return res.status(500).json({ error: 'Failed to fetch resume full text' });
     }
   });
 

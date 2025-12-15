@@ -15,7 +15,9 @@ import {
   InsertInterviewResponse,
   InterviewResponse,
   InsertInterviewTurn,
-  InterviewTurn
+  InterviewTurn,
+  resumes,
+  Resume
 } from "../shared/schema";
 
 export interface IStorage {
@@ -40,9 +42,34 @@ export interface IStorage {
   // Interview Turns
   createTurn(data: InsertInterviewTurn): Promise<InterviewTurn>;
   getTurnsBySessionId(sessionId: string): Promise<InterviewTurn[]>;
+
+  // Resumes
+  upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any): Promise<void>;
+  getResume(interviewId: string): Promise<Resume | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
+  private resumeTableReady = false;
+
+  private async ensureResumeTable() {
+    if (this.resumeTableReady) return;
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS resumes (
+          interview_id uuid PRIMARY KEY,
+          resume_fulltext text,
+          resume_profile jsonb,
+          created_at timestamptz DEFAULT NOW(),
+          updated_at timestamptz DEFAULT NOW()
+        );
+      `);
+      this.resumeTableReady = true;
+    } catch (error) {
+      console.error("Failed to ensure resumes table exists:", error);
+      // Do not throw to avoid crashing startup; operations will fail visibly later.
+    }
+  }
+
   async createProfile(data: InsertProfile): Promise<Profile> {
     const [profile] = await db.insert(profiles).values(data).returning();
     return profile;
@@ -119,6 +146,34 @@ export class DatabaseStorage implements IStorage {
     return await db.query.interviewTurns.findMany({
       where: eq(interviewTurns.sessionId, sessionId),
       orderBy: [interviewTurns.turnNumber, interviewTurns.createdAt],
+    });
+  }
+
+  async upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any): Promise<void> {
+    await this.ensureResumeTable();
+    try {
+      await db.insert(resumes).values({
+        interviewId,
+        resumeFulltext,
+        resumeProfile,
+      }).onConflictDoUpdate({
+        target: resumes.interviewId,
+        set: {
+          resumeFulltext,
+          resumeProfile,
+          updatedAt: sql`NOW()`,
+        },
+      });
+    } catch (error) {
+      console.error("Failed to upsert resume:", error);
+      throw error;
+    }
+  }
+
+  async getResume(interviewId: string): Promise<Resume | undefined> {
+    await this.ensureResumeTable();
+    return await db.query.resumes.findFirst({
+      where: eq(resumes.interviewId, interviewId),
     });
   }
 

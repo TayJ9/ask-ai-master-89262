@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, integer, timestamp, varchar } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, integer, timestamp, varchar, jsonb } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -111,3 +111,14 @@ export const insertInterviewSchema = createInsertSchema(interviews).omit({
 });
 export type InsertInterview = z.infer<typeof insertInterviewSchema>;
 export type Interview = typeof interviews.$inferSelect;
+
+// Resume storage keyed by interview/session id
+export const resumes = pgTable("resumes", {
+  interviewId: uuid("interview_id").primaryKey(),
+  resumeFulltext: text("resume_fulltext"),
+  resumeProfile: jsonb("resume_profile"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type Resume = typeof resumes.$inferSelect;
