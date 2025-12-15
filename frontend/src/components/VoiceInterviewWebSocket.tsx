@@ -224,6 +224,9 @@ export default function VoiceInterviewWebSocket({
       const finalize = () => {
         if (firstAiFinalizedRef.current) return;
         const buffer = firstAiMessageRef.current || '';
+        if (shouldDebugEleven()) {
+          console.log("[FIRST AI FINAL]", { chars: buffer.length, preview: buffer.slice(0, 160) });
+        }
         if (buffer.includes('RESUME_PIPELINE_OK')) {
           console.log('[RESUME VARS OK] Agent emitted resume marker');
         } else {
