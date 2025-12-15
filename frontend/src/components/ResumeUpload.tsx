@@ -11,7 +11,7 @@ import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface ResumeUploadProps {
-  onResumeUploaded: (resumeText: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => void;
+  onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string }) => void;
   onSkip: () => void;
   onBack?: () => void;
 }
@@ -20,7 +20,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   const [resumeText, setResumeText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
-  const [candidateName, setCandidateName] = useState("");
+  const [candidateFirstName, setCandidateFirstName] = useState("");
   const [candidateMajor, setCandidateMajor] = useState("");
   const [candidateYear, setCandidateYear] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -40,10 +40,10 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     }
 
     // Validate candidate info
-    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+    if (!candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
       toast({
         title: "Missing Information",
-        description: "Please fill in your name, major, and year before uploading.",
+        description: "Please fill in your first name, major, and year before uploading.",
         variant: "destructive",
       });
       return;
@@ -55,7 +55,8 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     try {
       const formData = new FormData();
       formData.append("resume", file);
-      formData.append("name", candidateName.trim());
+      // Backend expects "name", send first name there for compatibility
+      formData.append("name", candidateFirstName.trim());
       formData.append("major", candidateMajor.trim());
       formData.append("year", candidateYear.trim());
 
@@ -63,7 +64,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       
       // Store sessionId and candidate info
       const candidateInfo = {
-        name: candidateName.trim(),
+        firstName: candidateFirstName.trim(),
         major: candidateMajor.trim(),
         year: candidateYear.trim(),
         sessionId: data.sessionId
@@ -71,7 +72,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       
       // Extract resume text from parsed data if available
       const extractedResumeText = data.resumeText || resumeText || 
-        `Name: ${candidateName}\nMajor: ${candidateMajor}\nYear: ${candidateYear}`;
+        `First Name: ${candidateFirstName}\nMajor: ${candidateMajor}\nYear: ${candidateYear}`;
       
       setResumeText(extractedResumeText);
       
@@ -122,10 +123,10 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       return;
     }
 
-    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+    if (!candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
       toast({
         title: "Missing Information",
-        description: "Please fill in your name, major, and year.",
+        description: "Please fill in your first name, major, and year.",
         variant: "destructive",
       });
       return;
@@ -157,10 +158,10 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   };
 
   const handleContinue = () => {
-    if (!candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
+    if (!candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
       toast({
         title: "Missing Information",
-        description: "Please fill in your name, major, and year.",
+        description: "Please fill in your first name, major, and year.",
         variant: "destructive",
       });
       return;
@@ -171,7 +172,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       const sessionId = generateSessionId();
       
       const candidateInfo = {
-        name: candidateName.trim(),
+        firstName: candidateFirstName.trim(),
         major: candidateMajor.trim(),
         year: candidateYear.trim(),
         sessionId: sessionId
@@ -214,12 +215,12 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="name">Full Name *</Label>
+                <Label htmlFor="firstName">First Name *</Label>
                 <Input
-                  id="name"
-                  placeholder="John Doe"
-                  value={candidateName}
-                  onChange={(e) => setCandidateName(e.target.value)}
+                  id="firstName"
+                  placeholder="John"
+                  value={candidateFirstName}
+                  onChange={(e) => setCandidateFirstName(e.target.value)}
                   disabled={isUploading}
                 />
               </div>
@@ -268,7 +269,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               />
               <Button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+                disabled={isUploading || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
                 variant="outline"
                 className="flex items-center gap-2"
               >
@@ -317,7 +318,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               />
               <Button
                 onClick={handleTextPaste}
-                disabled={isUploading || !resumeText.trim() || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+                disabled={isUploading || !resumeText.trim() || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
                 variant="outline"
                 size="sm"
                 className="w-full"
@@ -354,7 +355,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
             </Button>
             <Button
               onClick={handleContinue}
-              disabled={!resumeText.trim() || isUploading || !candidateName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+              disabled={!resumeText.trim() || isUploading || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
               className="flex-1 gradient-primary text-white"
             >
               Continue with Resume

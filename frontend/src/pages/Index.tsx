@@ -21,7 +21,7 @@ export default function Index() {
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
-  const [candidateContext, setCandidateContext] = useState<{name: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string} | null>(null);
+  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string} | null>(null);
   const { toast } = useToast();
   
   // Debug logging
@@ -58,13 +58,14 @@ export default function Index() {
     console.log('View changed to resume upload');
   };
 
-  const handleResumeUploaded = async (resume: string, candidateInfo?: { name: string; major: string; year: string; sessionId?: string }) => {
+  const handleResumeUploaded = async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string }) => {
     setResumeText(resume);
     
     // Store candidate info for voice interview
     if (candidateInfo) {
       setCandidateContext({
-        name: candidateInfo.name,
+        firstName: candidateInfo.firstName,
+        name: candidateInfo.firstName,
         major: candidateInfo.major,
         year: candidateInfo.year,
         sessionId: candidateInfo.sessionId
@@ -285,8 +286,10 @@ export default function Index() {
         <VoiceInterviewErrorBoundary onReset={() => setCurrentView("voice")}>
           <VoiceInterviewWebSocket
             sessionId={candidateContext.sessionId}
+            firstName={candidateContext.firstName}
+            major={candidateContext.major}
             candidateContext={{
-              name: candidateContext.name,
+              name: candidateContext.name || candidateContext.firstName,
               major: candidateContext.major,
               year: candidateContext.year,
               skills: candidateContext.skills || [],

@@ -16,6 +16,8 @@ import { getApiUrl } from "@/lib/api";
 
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
+  firstName: string;
+  major: string;
   candidateContext: {
     name: string;
     major: string;
@@ -41,6 +43,8 @@ type ConversationMode = 'ai_speaking' | 'listening' | 'user_speaking' | 'process
 
 export default function VoiceInterviewWebSocket({
   sessionId,
+  firstName,
+  major,
   candidateContext,
   onComplete,
   isActive = true, // Default to true for backward compatibility
@@ -70,7 +74,7 @@ export default function VoiceInterviewWebSocket({
   const isStartingRef = useRef(false);
   const hasStartedRef = useRef(false); // Track if interview actually started
   const conversationIdRef = useRef<string | null>(null);
-  const lastStartDynamicVarsRef = useRef<{ candidate_id: string | null; interview_id: string } | null>(null);
+  const lastStartDynamicVarsRef = useRef<{ candidate_id: string | null; interview_id: string; first_name: string; major: string } | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   
@@ -331,6 +335,19 @@ export default function VoiceInterviewWebSocket({
       console.log('Start blocked by state guard');
       return;
     }
+
+    const normalizedFirstName = firstName?.trim() || '';
+    const normalizedMajor = major?.trim() || '';
+
+    if (!normalizedFirstName || !normalizedMajor) {
+      console.warn('Missing required identity fields for ElevenLabs start', { normalizedFirstName, normalizedMajor });
+      toast({
+        title: "Missing information",
+        description: "Please provide your first name and major before starting the interview.",
+        variant: "destructive",
+      });
+      return;
+    }
     
     // Set both ref and state immediately
     isStartingRef.current = true;
@@ -457,8 +474,10 @@ export default function VoiceInterviewWebSocket({
       const startOptions = {
         signedUrl: signedUrl,
         dynamicVariables: {
-          candidate_id: candidateId,
+          candidate_id: candidateId || sessionId,
           interview_id: sessionId,
+          first_name: normalizedFirstName,
+          major: normalizedMajor,
         },
       };
 
@@ -473,7 +492,7 @@ export default function VoiceInterviewWebSocket({
       // Check mount after session start
       if (newSessionId && isMountedRef.current) {
         setConversationId(newSessionId);
-        console.log('Session started with ID (eleven_conversation_id):', newSessionId);
+        console.log('[ELEVEN STARTED] convId', newSessionId);
       }
       
     } catch (error: any) {
