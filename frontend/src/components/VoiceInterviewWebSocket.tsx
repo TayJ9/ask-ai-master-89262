@@ -83,6 +83,8 @@ export default function VoiceInterviewWebSocket({
   const agentIdRef = useRef<string | null>(null);
   const firstAiMessageRef = useRef<string>('');
   const firstAiCheckedRef = useRef(false);
+  const firstAiDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const firstAiFinalizedRef = useRef(false);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   
@@ -214,15 +216,38 @@ export default function VoiceInterviewWebSocket({
     const text = message.message || '';
     const isAI = message.source === 'ai';
 
-    if (shouldDebugEleven() && isAI && text && !firstAiCheckedRef.current) {
+    if (shouldDebugEleven() && isAI && text && !firstAiFinalizedRef.current) {
       firstAiMessageRef.current += text;
-      // One-time QA check for template substitution
-      if (firstAiMessageRef.current.includes('RESUME_PIPELINE_OK')) {
-        console.log('[ELEVEN DEBUG] Resume marker found in first agent message');
-      } else {
-        console.warn('[RESUME VARS NOT USED] Agent template likely missing {{resume_summary}}/{{resume_highlights}} or wrong agent id');
+      if (firstAiDebounceTimerRef.current) {
+        clearTimeout(firstAiDebounceTimerRef.current);
       }
-      firstAiCheckedRef.current = true;
+      const finalize = () => {
+        if (firstAiFinalizedRef.current) return;
+        const buffer = firstAiMessageRef.current || '';
+        if (buffer.includes('RESUME_PIPELINE_OK')) {
+          console.log('[RESUME VARS OK] Agent emitted resume marker');
+        } else {
+          console.warn('[RESUME VARS NOT USED] Agent template likely missing {{resume_summary}}/{{resume_highlights}} or wrong agent id');
+        }
+        if (buffer) {
+          console.log('[ELEVEN DEBUG] First agent message preview (120 chars max):', buffer.slice(0, 120));
+        }
+        firstAiCheckedRef.current = true;
+        firstAiFinalizedRef.current = true;
+      };
+
+      const explicitFinal =
+        message?.isFinal ||
+        message?.final ||
+        message?.type === 'agentresponse' ||
+        message?.type === 'agent_response' ||
+        message?.type === 'final';
+
+      if (explicitFinal) {
+        finalize();
+      } else {
+        firstAiDebounceTimerRef.current = setTimeout(finalize, 600);
+      }
     }
     
     if (text) {
