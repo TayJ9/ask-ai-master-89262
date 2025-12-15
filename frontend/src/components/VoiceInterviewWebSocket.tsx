@@ -80,6 +80,9 @@ export default function VoiceInterviewWebSocket({
   const hasStartedRef = useRef(false); // Track if interview actually started
   const conversationIdRef = useRef<string | null>(null);
   const lastStartDynamicVarsRef = useRef<Record<string, any> | null>(null);
+  const agentIdRef = useRef<string | null>(null);
+  const firstAiMessageRef = useRef<string>('');
+  const firstAiCheckedRef = useRef(false);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   
@@ -210,6 +213,17 @@ export default function VoiceInterviewWebSocket({
     // SDK message has { message: string, source: 'user' | 'ai' }
     const text = message.message || '';
     const isAI = message.source === 'ai';
+
+    if (shouldDebugEleven() && isAI && text && !firstAiCheckedRef.current) {
+      firstAiMessageRef.current += text;
+      // One-time QA check for template substitution
+      if (firstAiMessageRef.current.includes('RESUME_PIPELINE_OK')) {
+        console.log('[ELEVEN DEBUG] Resume marker found in first agent message');
+      } else {
+        console.warn('[RESUME VARS NOT USED] Agent template likely missing {{resume_summary}}/{{resume_highlights}} or wrong agent id');
+      }
+      firstAiCheckedRef.current = true;
+    }
     
     if (text) {
       setTranscripts(prev => {
@@ -502,6 +516,9 @@ export default function VoiceInterviewWebSocket({
         hasSignedUrl: !!tokenData.signedUrl,
         agentId: tokenData.agentId,
       });
+      if (tokenData.agentId) {
+        agentIdRef.current = tokenData.agentId;
+      }
       
       const signedUrl = tokenData.signedUrl || tokenData.token;
       if (!signedUrl) {
@@ -535,6 +552,7 @@ export default function VoiceInterviewWebSocket({
         console.warn('[ELEVEN DEBUG] No resume text available; sending empty resume fields');
       }
 
+      // ElevenLabs substitution requires matching {{variable_name}} placeholders in the agent template; names are case-sensitive.
       dynamicVariables.resume_attached = resumeChars > 0;
       dynamicVariables.resume_summary = resumeSummary;
       dynamicVariables.resume_highlights = resumeHighlights;
@@ -555,7 +573,7 @@ export default function VoiceInterviewWebSocket({
       );
 
       console.log(
-        `[ELEVEN START] candidateContext_present=${candidateContextPresent} resume_attached=${resumeChars > 0} resumeText_length=${resumeChars} resume_summary_chars=${resumeSummary.length} resume_highlights_chars=${resumeHighlights.length} dynamicVariables_keys=${dynamicKeys.join(',')} sentinel=${shouldDebugEleven() ? 'on' : 'off'} BUILD_ID=${BUILD_ID}`
+        `[ELEVEN START] agentId=${agentIdRef.current || 'unknown'} candidateContext_present=${candidateContextPresent} resume_attached=${resumeChars > 0} resumeText_length=${resumeChars} resume_summary_chars=${resumeSummary.length} resume_highlights_chars=${resumeHighlights.length} dynamicVariables_keys=${dynamicKeys.join(',')} sentinel=${shouldDebugEleven() ? 'on' : 'off'} BUILD_ID=${BUILD_ID}`
       );
       if (shouldDebugEleven()) {
         console.log('[ELEVEN START] dynamicVariables object (redacted lengths only)', {
