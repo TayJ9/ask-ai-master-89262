@@ -103,105 +103,124 @@ export default function VoiceInterviewWebSocket({
     }
   }, [sessionId, toast]);
 
+  // Stable callbacks for useConversation (prevents hook re-initialization on re-render)
+  const handleConnect = useCallback(() => {
+    console.log('ElevenLabs SDK connected successfully');
+    if (!isMountedRef.current) return;
+    
+    setStatusMessage("Connected - Interview starting...");
+    setIsIdle(false);
+    setHasStarted(true);
+    hasStartedRef.current = true; // Mark interview as truly started
+    setIsStarting(false);
+    isStartingRef.current = false;
+  }, []);
+
+  const handleDisconnect = useCallback((reason: any) => {
+    console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
+    console.error("Reason:", typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason);
+    
+    // Check for unauthorized/policy violation
+    const reasonStr = typeof reason === 'object' ? JSON.stringify(reason) : String(reason);
+    if (reasonStr.includes('1008') || reasonStr.includes('Policy Violation')) {
+      console.error("⚠️ Disconnect due to Policy Violation or Unauthorized (1008). Check ElevenLabs settings.");
+    }
+
+    console.error("Stack Trace:", new Error().stack);
+    
+    if (!isMountedRef.current) {
+      console.log("Component unmounted, ignoring disconnect logic");
+      return;
+    }
+    
+    // Check if interview actually started before calling onComplete
+    // This prevents unmounting the component if disconnect happens during connection
+    const wasInterviewActive = hasStartedRef.current;
+    
+    console.log('Disconnect - wasInterviewActive:', wasInterviewActive);
+    
+    // Reset starting state
+    setIsStarting(false);
+    isStartingRef.current = false;
+    
+    // Stop volume polling
+    if (volumeIntervalRef.current) {
+      clearInterval(volumeIntervalRef.current);
+      volumeIntervalRef.current = null;
+    }
+    
+    if (wasInterviewActive) {
+      // Interview was active - save and complete
+      setStatusMessage("Interview ended");
+      saveInterview(conversationIdRef.current);
+      onComplete();
+      } else {
+      // Disconnect during connection attempt - return to idle state
+      console.log('Disconnect during connection - returning to idle state');
+      setIsIdle(true);
+      setStatusMessage("Connection failed. Click to try again.");
+    }
+  }, [onComplete, saveInterview]);
+
+  const handleMessage = useCallback((message: any) => {
+    if (!isMountedRef.current) return;
+    console.log('SDK Message:', message);
+    
+    // SDK message has { message: string, source: 'user' | 'ai' }
+    const text = message.message || '';
+    const isAI = message.source === 'ai';
+    
+    if (text) {
+      setTranscripts(prev => {
+        // Check if we should update the last message or add a new one
+        const lastMessage = prev[prev.length - 1];
+        if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
+          // Update the last message
+            return [
+              ...prev.slice(0, -1),
+            { ...lastMessage, text, isFinal: true }
+          ];
+        }
+        // Add new message
+            return [
+          ...prev,
+          {
+            type: isAI ? 'ai' : 'student',
+            text,
+                isFinal: true,
+            timestamp: Date.now(),
+          }
+        ];
+      });
+    }
+  }, []);
+
+  const handleError = useCallback((error: any) => {
+    console.error("🔥🔥🔥 CRITICAL: SDK ERROR 🔥🔥🔥", error);
+    if (!isMountedRef.current) return;
+    
+    // Reset starting state on error
+    setIsStarting(false);
+    isStartingRef.current = false;
+    
+    const errorMessage = typeof error === 'string' ? error : (error as Error)?.message || 'Connection failed';
+    setStatusMessage(`Error: ${errorMessage}`);
+    toast({
+      title: "Interview Error",
+      description: errorMessage,
+      variant: "destructive",
+    });
+  }, [toast]);
+
   // Initialize ElevenLabs conversation hook
   const conversation = useConversation({
-    onConnect: () => {
-      console.log('ElevenLabs SDK connected successfully');
-      if (!isMountedRef.current) return;
-      
-      setStatusMessage("Connected - Interview starting...");
-      setIsIdle(false);
-      setHasStarted(true);
-      hasStartedRef.current = true; // Mark interview as truly started
-      setIsStarting(false);
-      isStartingRef.current = false;
-    },
-    onDisconnect: (reason) => {
-      console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
-      console.error("Reason:", reason);
-      console.error("Stack Trace:", new Error().stack);
-      
-      if (!isMountedRef.current) {
-        console.log("Component unmounted, ignoring disconnect logic");
-        return;
-      }
-      
-      // Check if interview actually started before calling onComplete
-      // This prevents unmounting the component if disconnect happens during connection
-      const wasInterviewActive = hasStartedRef.current;
-      
-      console.log('Disconnect - wasInterviewActive:', wasInterviewActive);
-      
-      // Reset starting state
-      setIsStarting(false);
-      isStartingRef.current = false;
-      
-      // Stop volume polling
-      if (volumeIntervalRef.current) {
-        clearInterval(volumeIntervalRef.current);
-        volumeIntervalRef.current = null;
-      }
-      
-      if (wasInterviewActive) {
-        // Interview was active - save and complete
-        setStatusMessage("Interview ended");
-        saveInterview(conversationIdRef.current);
-        onComplete();
-        } else {
-        // Disconnect during connection attempt - return to idle state
-        console.log('Disconnect during connection - returning to idle state');
-        setIsIdle(true);
-        setStatusMessage("Connection failed. Click to try again.");
-      }
-    },
-    onMessage: (message) => {
-      if (!isMountedRef.current) return;
-      console.log('SDK Message:', message);
-      
-      // SDK message has { message: string, source: 'user' | 'ai' }
-      const text = message.message || '';
-      const isAI = message.source === 'ai';
-      
-      if (text) {
-        setTranscripts(prev => {
-          // Check if we should update the last message or add a new one
-          const lastMessage = prev[prev.length - 1];
-          if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
-            // Update the last message
-              return [
-                ...prev.slice(0, -1),
-              { ...lastMessage, text, isFinal: true }
-            ];
-          }
-          // Add new message
-              return [
-            ...prev,
-            {
-              type: isAI ? 'ai' : 'student',
-              text,
-                  isFinal: true,
-              timestamp: Date.now(),
-            }
-          ];
-        });
-      }
-    },
-    onError: (error) => {
-      console.error("🔥🔥🔥 CRITICAL: SDK ERROR 🔥🔥🔥", error);
-      if (!isMountedRef.current) return;
-      
-      // Reset starting state on error
-      setIsStarting(false);
-      isStartingRef.current = false;
-      
-      const errorMessage = typeof error === 'string' ? error : (error as Error)?.message || 'Connection failed';
-      setStatusMessage(`Error: ${errorMessage}`);
-      toast({
-        title: "Interview Error",
-        description: errorMessage,
-        variant: "destructive",
-      });
-    },
+    clientTools: null,
+    preferHeadphonesForIosDevices: true,
+    useWakeLock: true,
+    onConnect: handleConnect,
+    onDisconnect: handleDisconnect,
+    onMessage: handleMessage,
+    onError: handleError,
   });
 
   // Derive conversation mode from SDK state
@@ -308,6 +327,8 @@ export default function VoiceInterviewWebSocket({
       try {
         const micPromise = navigator.mediaDevices.getUserMedia({ 
           audio: {
+            sampleRate: 16000,
+            channelCount: 1,
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl: true,
