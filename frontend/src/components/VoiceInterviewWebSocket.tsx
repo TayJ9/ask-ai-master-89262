@@ -13,6 +13,9 @@ import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import AudioVisualizer from "@/components/ui/AudioVisualizer";
 import { getApiUrl } from "@/lib/api";
+import { debugLog, initElevenWsDebug, shouldDebugEleven, elevenDebugConstants } from "@/lib/wsDebug";
+
+const BUILD_ID = "eleven-resume-logging-v1";
 
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
@@ -26,6 +29,8 @@ interface VoiceInterviewWebSocketProps {
     experience?: string;
     education?: string;
     summary?: string;
+    resumeText?: string;
+    resumeSource?: string;
   };
   onComplete: (results?: any) => void;
   /** When false, component stays mounted but renders nothing. Prevents unmount during async ops. */
@@ -74,11 +79,17 @@ export default function VoiceInterviewWebSocket({
   const isStartingRef = useRef(false);
   const hasStartedRef = useRef(false); // Track if interview actually started
   const conversationIdRef = useRef<string | null>(null);
-  const lastStartDynamicVarsRef = useRef<{ candidate_id: string | null; interview_id: string; first_name: string; major: string } | null>(null);
+  const lastStartDynamicVarsRef = useRef<Record<string, any> | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   
   const { toast } = useToast();
+
+  useEffect(() => {
+    if (shouldDebugEleven()) {
+      initElevenWsDebug();
+    }
+  }, []);
   
   // Keep conversationId ref in sync
   useEffect(() => {
@@ -338,6 +349,11 @@ export default function VoiceInterviewWebSocket({
 
     const normalizedFirstName = firstName?.trim() || '';
     const normalizedMajor = major?.trim() || '';
+    const resumeTextForSession = candidateContext?.resumeText || candidateContext?.summary || '';
+    const resumeSourceForSession = candidateContext?.resumeSource || 'not_provided';
+    const resumeChars = resumeTextForSession?.length || 0;
+    const candidateContextPresent = !!candidateContext;
+    const resumeExpected = !!candidateContext?.resumeSource || !!candidateContext?.resumeText;
 
     if (!normalizedFirstName || !normalizedMajor) {
       console.warn('Missing required identity fields for ElevenLabs start', { normalizedFirstName, normalizedMajor });
@@ -346,6 +362,40 @@ export default function VoiceInterviewWebSocket({
         description: "Please provide your first name and major before starting the interview.",
         variant: "destructive",
       });
+      return;
+    }
+    
+    if (shouldDebugEleven()) {
+      console.log('[ELEVEN DEBUG][RESUME pipeline]', {
+        resume_found: resumeChars > 0,
+        resume_source: resumeSourceForSession,
+        resume_text_chars: resumeChars,
+      });
+      // #region agent log
+      debugLog({
+        hypothesisId: "H1",
+        location: "VoiceInterviewWebSocket.tsx:startInterview",
+        message: "resume_pipeline_before_start",
+        data: {
+          resume_found: resumeChars > 0,
+          resume_source: resumeSourceForSession,
+          resume_text_chars: resumeChars,
+        },
+      });
+      // #endregion
+    }
+    
+    if (resumeExpected && resumeChars === 0) {
+      console.warn('[RESUME LOST BETWEEN VIEWS]', { candidateContextPresent, resumeExpected, resumeChars });
+      toast({
+        title: "Resume missing",
+        description: "Resume missing—please re-upload before starting.",
+        variant: "destructive",
+      });
+      setIsStarting(false);
+      isStartingRef.current = false;
+      setIsIdle(true);
+      setStatusMessage("Ready to begin");
       return;
     }
     
@@ -471,21 +521,71 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
+      const dynamicVariables: Record<string, any> = {
+        candidate_id: candidateId || sessionId,
+        interview_id: sessionId,
+        first_name: normalizedFirstName,
+        major: normalizedMajor,
+      };
+
+      const resumeSummary = resumeTextForSession ? resumeTextForSession.slice(0, 1500) : '';
+      const resumeHighlights = resumeTextForSession ? resumeTextForSession.slice(0, 500) : '';
+
+      if (!resumeTextForSession) {
+        console.warn('[ELEVEN DEBUG] No resume text available; sending empty resume fields');
+      }
+
+      dynamicVariables.resume_attached = resumeChars > 0;
+      dynamicVariables.resume_summary = resumeSummary;
+      dynamicVariables.resume_highlights = resumeHighlights;
+
+      if (shouldDebugEleven()) {
+        dynamicVariables.resume_sentinel = elevenDebugConstants.SENTINEL;
+      }
+
       const startOptions = {
         signedUrl: signedUrl,
-        dynamicVariables: {
-          candidate_id: candidateId || sessionId,
-          interview_id: sessionId,
-          first_name: normalizedFirstName,
-          major: normalizedMajor,
-        },
+        dynamicVariables,
       };
 
       lastStartDynamicVarsRef.current = startOptions.dynamicVariables;
-      console.log('[ELEVEN START] dynamicVariables', startOptions.dynamicVariables);
+      const dynamicKeys = Object.keys(dynamicVariables);
+      const dynamicSizes = Object.fromEntries(
+        dynamicKeys.map((k) => [k, typeof dynamicVariables[k] === 'string' ? (dynamicVariables[k] as string).length : 0])
+      );
+
+      console.log(
+        `[ELEVEN START] candidateContext_present=${candidateContextPresent} resume_attached=${resumeChars > 0} resumeText_length=${resumeChars} resume_summary_chars=${resumeSummary.length} resume_highlights_chars=${resumeHighlights.length} dynamicVariables_keys=${dynamicKeys.join(',')} sentinel=${shouldDebugEleven() ? 'on' : 'off'} BUILD_ID=${BUILD_ID}`
+      );
+      if (shouldDebugEleven()) {
+        console.log('[ELEVEN START] dynamicVariables object (redacted lengths only)', {
+          keys: dynamicKeys,
+          sizes: dynamicSizes,
+        });
+      }
       console.log('Step 3: Starting ElevenLabs session with option keys:', Object.keys(startOptions));
-      console.log('Dynamic variables payload:', startOptions.dynamicVariables);
-      console.log('Start payload values (redacted signedUrl length):', { signedUrlLength: signedUrl?.length || 0, ...startOptions.dynamicVariables });
+      console.log('Start payload values (redacted signedUrl length):', { signedUrlLength: signedUrl?.length || 0, dynamic_keys: dynamicKeys });
+
+      if (shouldDebugEleven()) {
+        if (!resumeTextForSession) {
+          console.warn('[ELEVEN DEBUG] No resume data included in dynamicVariables');
+        }
+        // #region agent log
+        debugLog({
+          hypothesisId: "H1",
+          location: "VoiceInterviewWebSocket.tsx:startInterview",
+          message: resumeTextForSession ? "dynamic_variables_with_resume_candidate" : "dynamic_variables_without_resume",
+          data: {
+            dynamic_keys: dynamicKeys,
+            dynamic_sizes: dynamicSizes,
+            resume_text_chars: resumeChars,
+            resume_source: resumeSourceForSession,
+            resume_attached: !!resumeTextForSession,
+            sentinel_included: !!dynamicVariables.resume_sentinel,
+          },
+        });
+        // #endregion
+      }
       
       const newSessionId = await conversation.startSession(startOptions);
       
@@ -527,7 +627,7 @@ export default function VoiceInterviewWebSocket({
         isStartingRef.current = false;
       }
     }
-  }, [isStarting, hasStarted, conversation, toast]);
+  }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, major, sessionId, toast]);
 
   // End interview
   const handleEndInterview = useCallback(async () => {

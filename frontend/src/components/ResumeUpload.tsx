@@ -11,7 +11,7 @@ import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
 interface ResumeUploadProps {
-  onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string }) => void;
+  onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => void;
   onSkip: () => void;
   onBack?: () => void;
 }
@@ -67,7 +67,8 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
         firstName: candidateFirstName.trim(),
         major: candidateMajor.trim(),
         year: candidateYear.trim(),
-        sessionId: data.sessionId
+        sessionId: data.sessionId,
+        resumeSource: "pdf_upload"
       };
       
       // Extract resume text from parsed data if available
@@ -175,7 +176,8 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
         firstName: candidateFirstName.trim(),
         major: candidateMajor.trim(),
         year: candidateYear.trim(),
-        sessionId: sessionId
+        sessionId: sessionId,
+        resumeSource: "text_resume"
       };
       onResumeUploaded(resumeText, candidateInfo);
     } else {

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { LogOut, History, ArrowLeft } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 
 export default function Index() {
   const [user, setUser] = useState<any>(null);
@@ -21,7 +22,7 @@ export default function Index() {
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
-  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string} | null>(null);
+  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string; resumeText?: string; resumeSource?: string} | null>(null);
   const { toast } = useToast();
   
   // Debug logging
@@ -35,6 +36,16 @@ export default function Index() {
     if (token && storedUser) {
       setUser(JSON.parse(storedUser));
     }
+    // Hydrate candidate context from localStorage as a safety net
+    try {
+      const storedContext = localStorage.getItem('candidate_context');
+      if (storedContext && !candidateContext) {
+        const parsed = JSON.parse(storedContext);
+        setCandidateContext(parsed);
+      }
+    } catch (e) {
+      console.warn('Failed to hydrate candidate_context', e);
+    }
   }, []);
 
   const handleAuthSuccess = (userData: any, token: string) => {
@@ -44,6 +55,7 @@ export default function Index() {
   const handleSignOut = () => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user');
+    localStorage.removeItem('candidate_context');
     setUser(null);
     setCurrentView("roles");
     setSelectedRole("");
@@ -58,7 +70,7 @@ export default function Index() {
     console.log('View changed to resume upload');
   };
 
-  const handleResumeUploaded = async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string }) => {
+  const handleResumeUploaded = async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
     setResumeText(resume);
     
     // Store candidate info for voice interview
@@ -68,8 +80,39 @@ export default function Index() {
         name: candidateInfo.firstName,
         major: candidateInfo.major,
         year: candidateInfo.year,
-        sessionId: candidateInfo.sessionId
+        sessionId: candidateInfo.sessionId,
+        resumeText: resume,
+        resumeSource: candidateInfo.resumeSource || "unknown"
       });
+      // Persist to localStorage to survive view changes/reloads
+      try {
+        localStorage.setItem('candidate_context', JSON.stringify({
+          firstName: candidateInfo.firstName,
+          name: candidateInfo.firstName,
+          major: candidateInfo.major,
+          year: candidateInfo.year,
+          sessionId: candidateInfo.sessionId,
+          resumeText: resume,
+          resumeSource: candidateInfo.resumeSource || "unknown"
+        }));
+      } catch (e) {
+        console.warn('Failed to persist candidate_context', e);
+      }
+
+      if (shouldDebugEleven()) {
+        // #region agent log
+        debugLog({
+          hypothesisId: "H1",
+          location: "Index.tsx:handleResumeUploaded",
+          message: "resume_pipeline_found",
+          data: {
+            resume_found: !!resume,
+            resume_source: candidateInfo.resumeSource || "unknown",
+            resume_text_chars: resume?.length || 0,
+          },
+        });
+        // #endregion
+      }
     }
     
     // Check authentication before starting interview
@@ -295,7 +338,9 @@ export default function Index() {
               skills: candidateContext.skills || [],
               experience: candidateContext.experience,
               education: candidateContext.education,
-              summary: candidateContext.summary
+              summary: candidateContext.summary,
+              resumeText: candidateContext.resumeText,
+              resumeSource: candidateContext.resumeSource,
             }}
             onComplete={handleCompleteInterview}
             isActive={currentView === "voice"}
