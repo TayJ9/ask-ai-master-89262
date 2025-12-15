@@ -3,7 +3,7 @@
  * Clean, production-grade implementation with server-side VAD and optimal latency
  */
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,6 +45,18 @@ export default function VoiceInterviewWebSocket({
   onComplete,
   isActive = true, // Default to true for backward compatibility
 }: VoiceInterviewWebSocketProps) {
+  // Try to derive candidate_id from stored user (auth token is already required upstream)
+  const candidateId = useMemo(() => {
+    try {
+      const storedUser = localStorage.getItem('user');
+      if (!storedUser) return null;
+      const parsed = JSON.parse(storedUser);
+      return parsed?.id ?? null;
+    } catch (e) {
+      console.warn('Failed to parse candidate_id from localStorage user', e);
+      return null;
+    }
+  }, []);
   const [statusMessage, setStatusMessage] = useState("Ready to begin");
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
   const [isStarting, setIsStarting] = useState(false);
@@ -58,6 +70,7 @@ export default function VoiceInterviewWebSocket({
   const isStartingRef = useRef(false);
   const hasStartedRef = useRef(false); // Track if interview actually started
   const conversationIdRef = useRef<string | null>(null);
+  const lastStartDynamicVarsRef = useRef<{ candidate_id: string | null; interview_id: string } | null>(null);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   
@@ -74,17 +87,25 @@ export default function VoiceInterviewWebSocket({
       console.warn('No conversation ID available for saving');
       return;
     }
-    
+
+    const payload = {
+      conversation_id: convId,
+      candidate_id: candidateId,
+      interview_id: sessionId,
+      status: 'completed',
+    };
+
     try {
-      console.log(`Saving interview: conversation_id=${convId}, candidate_id=${sessionId}`);
+      console.log('Saving interview with payload:', payload);
       const response = await fetch(
-        getApiUrl(`/api/save-interview?conversation_id=${convId}&candidate_id=${sessionId}`),
+        getApiUrl(`/api/save-interview`),
         {
           method: 'POST',
           headers: {
             'x-api-secret': 'my_secret_interview_key_123',
             'Content-Type': 'application/json',
           },
+          body: JSON.stringify(payload),
         }
       );
       
@@ -95,13 +116,13 @@ export default function VoiceInterviewWebSocket({
       console.log('Interview saved successfully');
     } catch (error) {
       console.error('Error saving interview:', error);
-          toast({
+      toast({
         title: "Warning",
         description: "Interview may not have been saved. Please contact support if needed.",
-            variant: "destructive",
-          });
+        variant: "destructive",
+      });
     }
-  }, [sessionId, toast]);
+  }, [candidateId, sessionId, toast]);
 
   // Stable callbacks for useConversation (prevents hook re-initialization on re-render)
   const handleConnect = useCallback(() => {
@@ -119,6 +140,11 @@ export default function VoiceInterviewWebSocket({
   const handleDisconnect = useCallback((reason: any) => {
     console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
     console.error("Reason:", typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason);
+    console.log('[ELEVEN DISCONNECT]', {
+      reason,
+      hasConversationId: !!conversationIdRef.current,
+      lastDynamicVariables: lastStartDynamicVarsRef.current,
+    });
     
     // Check for unauthorized/policy violation
     const reasonStr = typeof reason === 'object' ? JSON.stringify(reason) : String(reason);
@@ -428,17 +454,26 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      console.log('Step 3: Starting ElevenLabs session...');
-      console.log('Attempting to start session...');
-      
-      const newSessionId = await conversation.startSession({
+      const startOptions = {
         signedUrl: signedUrl,
-      });
+        dynamicVariables: {
+          candidate_id: candidateId,
+          interview_id: sessionId,
+        },
+      };
+
+      lastStartDynamicVarsRef.current = startOptions.dynamicVariables;
+      console.log('[ELEVEN START] dynamicVariables', startOptions.dynamicVariables);
+      console.log('Step 3: Starting ElevenLabs session with option keys:', Object.keys(startOptions));
+      console.log('Dynamic variables payload:', startOptions.dynamicVariables);
+      console.log('Start payload values (redacted signedUrl length):', { signedUrlLength: signedUrl?.length || 0, ...startOptions.dynamicVariables });
+      
+      const newSessionId = await conversation.startSession(startOptions);
       
       // Check mount after session start
       if (newSessionId && isMountedRef.current) {
         setConversationId(newSessionId);
-        console.log('Session started with ID:', newSessionId);
+        console.log('Session started with ID (eleven_conversation_id):', newSessionId);
       }
       
     } catch (error: any) {

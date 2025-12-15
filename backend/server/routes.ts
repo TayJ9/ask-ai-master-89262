@@ -963,23 +963,26 @@ export function registerRoutes(app: Express) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      // Extract query parameters
-      const conversation_id = req.query.conversation_id as string;
-      const candidate_id = req.query.candidate_id as string;
+      // Accept body as the single source of truth for identifiers
+      const conversation_id = req.body?.conversation_id as string;
+      const candidate_id = req.body?.candidate_id as string;
+      const interview_id = req.body?.interview_id as string;
+      const status = req.body?.status as string | undefined;
+      console.log('[SAVE-INTERVIEW] body', { candidate_id, interview_id, conversation_id, status });
 
-      // Validate required query parameters
-      if (!conversation_id) {
-        console.error('[SAVE-INTERVIEW] Missing conversation_id in query parameters');
-        return res.status(400).json({ error: 'Missing conversation_id query parameter' });
+      // Validate required fields
+      if (!candidate_id) {
+        console.error('[SAVE-INTERVIEW] Missing candidate_id in body');
+        return res.status(400).json({ error: 'Missing candidate_id in body' });
       }
 
-      if (!candidate_id) {
-        console.error('[SAVE-INTERVIEW] Missing candidate_id in query parameters');
-        return res.status(400).json({ error: 'Missing candidate_id query parameter' });
+      if (!interview_id) {
+        console.error('[SAVE-INTERVIEW] Missing interview_id in body');
+        return res.status(400).json({ error: 'Missing interview_id in body' });
       }
 
       // Log the interview completion
-      console.log(`Received interview completion for Candidate ID: ${candidate_id}, Conversation ID: ${conversation_id}`);
+      console.log(`[SAVE-INTERVIEW] Completion received`, { candidate_id, conversation_id: conversation_id || 'not provided', interview_id, status: status || 'unknown' });
 
       // TODO: Fetch transcript from ElevenLabs using conversation_id and save to database
 
