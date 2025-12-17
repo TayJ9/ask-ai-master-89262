@@ -18,5 +18,8 @@
   },
   "devDependencies": {
     "drizzle-kit": "^0.31.7"
+  },
+  "dependencies": {
+    "next": "^16.0.10"
   }
 }
