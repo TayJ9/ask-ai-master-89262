@@ -74,6 +74,7 @@ export default function VoiceInterviewWebSocket({
   const [inputVolume, setInputVolume] = useState(0);
   const [outputVolume, setOutputVolume] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isTokenRequesting, setIsTokenRequesting] = useState(false);
   
   // Connection guards to prevent race conditions
   const isStartingRef = useRef(false);
@@ -89,6 +90,13 @@ export default function VoiceInterviewWebSocket({
   const isMountedRef = useRef(true);
   
   const { toast } = useToast();
+
+  const generateTokenRequestId = () => {
+    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+      return crypto.randomUUID();
+    }
+    return `token-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
 
   useEffect(() => {
     if (shouldDebugEleven()) {
@@ -389,6 +397,11 @@ export default function VoiceInterviewWebSocket({
       return;
     }
 
+    if (isTokenRequesting) {
+      console.log('[TOKEN REQUEST] Request already in flight - ignoring duplicate start');
+      return;
+    }
+
     const normalizedFirstName = firstName?.trim() || '';
     const normalizedMajor = major?.trim() || '';
     const resumeTextForSession = candidateContext?.resumeText || candidateContext?.summary || '';
@@ -440,6 +453,9 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Ready to begin");
       return;
     }
+    
+    const requestId = generateTokenRequestId();
+    setIsTokenRequesting(true);
     
     // Set both ref and state immediately
     isStartingRef.current = true;
@@ -519,13 +535,16 @@ export default function VoiceInterviewWebSocket({
         }
         
       setStatusMessage("Connecting to interview service...");
-      console.log('Step 2: Fetching conversation token...');
+      console.log('Step 2: Fetching conversation token...', { requestId });
       
       const authToken = localStorage.getItem('auth_token');
       const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
         method: 'GET',
         credentials: 'include',
-        headers: authToken ? { 'Authorization': `Bearer ${authToken}` } : {},
+        headers: {
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          'X-Request-Id': requestId,
+        },
       });
       
       // Check mount state after fetch
@@ -534,28 +553,59 @@ export default function VoiceInterviewWebSocket({
         return;
       }
 
-      if (!tokenResponse.ok) {
-        throw new Error(`Failed to get conversation token: ${tokenResponse.statusText}`);
-      }
-      
       const tokenData = await tokenResponse.json();
-      console.log('Received conversation token:', { 
-        hasToken: !!tokenData.token,
-        hasSignedUrl: !!tokenData.signedUrl,
-        agentId: tokenData.agentId,
-      });
-      if (tokenData.agentId) {
-        agentIdRef.current = tokenData.agentId;
+      if (!tokenResponse.ok) {
+        // Handle structured error response
+        if (tokenData.error) {
+          const errorCode = tokenData.error.code || 'UNKNOWN';
+          const errorMessage = tokenData.error.message || tokenResponse.statusText || 'Failed to get conversation token';
+          const upstreamStatus = tokenData.error.upstreamStatus;
+          
+          console.error('[TOKEN REQUEST] Error response:', { 
+            status: tokenResponse.status, 
+            code: errorCode, 
+            message: errorMessage,
+            upstreamStatus,
+            requestId 
+          });
+          
+          // Provide user-friendly messages based on error code
+          if (tokenResponse.status === 429) {
+            if (errorCode === 'TOO_MANY_CONCURRENT' || errorMessage.includes('concurrent')) {
+              throw new Error('Too many concurrent sessions. Close other sessions and wait 10–30s.');
+            } else if (errorCode === 'SYSTEM_BUSY' || errorMessage.includes('busy')) {
+              throw new Error('Service busy. Try again in a few seconds.');
+            } else {
+              throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+            }
+          }
+          
+          throw new Error(errorMessage);
+        }
+        const failureMessage = tokenResponse.statusText || 'Failed to get conversation token';
+        throw new Error(failureMessage);
       }
-      
-      const signedUrl = tokenData.signedUrl || tokenData.token;
+      const successPayload = tokenData.success || tokenData;
+      const downstreamRequestId = successPayload.requestId || tokenData.requestId || requestId;
+      const signedUrl = successPayload.signedUrl || successPayload.token;
       if (!signedUrl) {
         throw new Error('No signed URL received from server');
       }
+      console.log('Received conversation token:', { 
+        requestId: downstreamRequestId,
+        hasToken: !!signedUrl,
+        hasSignedUrl: !!successPayload.signedUrl,
+        agentId: successPayload.agentId || tokenData.agentId,
+      });
+      if (successPayload.agentId) {
+        agentIdRef.current = successPayload.agentId;
+      } else if (tokenData.agentId) {
+        agentIdRef.current = tokenData.agentId;
+      }
       
       // Store conversation ID if provided
-      if (tokenData.conversationId && isMountedRef.current) {
-        setConversationId(tokenData.conversationId);
+      if (successPayload.conversationId && isMountedRef.current) {
+        setConversationId(successPayload.conversationId);
       }
       
       // ============================================
@@ -668,9 +718,10 @@ export default function VoiceInterviewWebSocket({
         });
       }
     } finally {
-      // Always reset the starting ref when done (success or failure)
+      // Always reset the starting ref and token requesting state when done (success or failure)
       if (isMountedRef.current) {
         isStartingRef.current = false;
+        setIsTokenRequesting(false);
       }
     }
   }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, major, sessionId, toast]);
@@ -786,7 +837,7 @@ export default function VoiceInterviewWebSocket({
             </div>
 
             {/* Idle State - Show Start Interview Button */}
-            {isIdle && !isStarting ? (
+            {isIdle && !isStarting && !isTokenRequesting ? (
               <div className="flex flex-col items-center justify-center py-12">
                 <div className="text-center mb-8">
                   <h3 className="text-xl font-semibold mb-2">Ready to Begin</h3>
@@ -799,7 +850,8 @@ export default function VoiceInterviewWebSocket({
                 <Button
                   onClick={handleStartClick}
                   size="lg"
-                  className="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all hover:scale-105"
+                  disabled={isTokenRequesting || isStarting}
+                  className="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <Mic className="w-12 h-12" />

@@ -11,6 +11,7 @@ import { Readable } from "stream";
 import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
 import rateLimit from "express-rate-limit";
+import { randomUUID } from "crypto";
 import { db } from "./db";
 import { sql } from "drizzle-orm";
 
@@ -54,6 +55,58 @@ function getJWTSecret(): string {
 
 const API_SECRET = 'my_secret_interview_key_123';
 const RESUME_FULLTEXT_MAX_CHARS = 12000;
+const TOKEN_CACHE_TTL_MS = 10 * 1000;
+const MAX_TOKEN_RETRIES = 3;
+const BASE_RETRY_DELAY_MS = 250;
+
+const tokenResponseCache = new Map<string, { timestamp: number; status: number; body: any }>();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const parseRetryAfter = (value: string | null): number | null => {
+  if (!value) return null;
+  const seconds = parseInt(value, 10);
+  if (!Number.isNaN(seconds) && seconds >= 0) {
+    return seconds * 1000;
+  }
+  const date = Date.parse(value);
+  if (!Number.isNaN(date)) {
+    const delay = date - Date.now();
+    return delay > 0 ? delay : 0;
+  }
+  return null;
+};
+
+const sanitizeLogPayload = (payload: unknown) => {
+  if (typeof payload === 'string') {
+    return payload.length > 1000 ? payload.slice(0, 1000) + '…' : payload;
+  }
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+  try {
+    return JSON.parse(JSON.stringify(payload));
+  } catch {
+    return '<unserializable>';
+  }
+};
+
+const getCachedTokenResponse = (requestId: string) => {
+  const entry = tokenResponseCache.get(requestId);
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > TOKEN_CACHE_TTL_MS) {
+    tokenResponseCache.delete(requestId);
+    return null;
+  }
+  return entry;
+};
+
+const cacheTokenResponse = (requestId: string, status: number, body: any) => {
+  tokenResponseCache.set(requestId, { timestamp: Date.now(), status, body });
+  setTimeout(() => {
+    tokenResponseCache.delete(requestId);
+  }, TOKEN_CACHE_TTL_MS);
+};
 
 function buildResumeProfile(resumeText: string) {
   const lines = resumeText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -836,79 +889,244 @@ export function registerRoutes(app: Express) {
   // ============================================================================
 
   // Rate limiter for ElevenLabs token endpoint: 5 requests per hour per user
-  const tokenRateLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 hour
-    max: 5, // 5 requests per hour
-    message: { error: 'Rate limit exceeded. Maximum 5 tokens per hour.' },
-    standardHeaders: true,
-    legacyHeaders: false,
-    // Use userId from request if available (after auth middleware)
-    keyGenerator: (req: any) => {
-      return req.userId || req.ip || 'unknown';
-    },
-  });
+const tokenRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5, // 5 requests per hour
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Use userId from request if available (after auth middleware)
+  keyGenerator: (req: any) => {
+    return req.userId || req.ip || 'unknown';
+  },
+  handler: (req, res) => {
+    const requestId = req.header('X-Request-Id') || randomUUID();
+    console.warn(`[CONVERSATION-TOKEN] Rate limit exceeded for requestId=${requestId}`);
+    const errorBody = {
+      code: 'RATE_LIMIT_EXCEEDED',
+      message: 'Rate limit exceeded. Maximum 5 tokens per hour.',
+      requestId,
+    };
+    return res.status(429).json({ error: errorBody });
+  },
+});
 
   // Get ElevenLabs conversation token for voice interview sessions
   // Requires authentication and is rate-limited to 5 requests per hour per user
   app.get("/api/conversation-token", authenticateToken, tokenRateLimiter, async (req: any, res) => {
+    const requestId = req.header('X-Request-Id') || randomUUID();
+    const timestamp = new Date().toISOString();
     try {
+      const cached = getCachedTokenResponse(requestId);
+      if (cached) {
+        console.log(`[CONVERSATION-TOKEN] Cache HIT - Returning cached result (requestId=${requestId}, timestamp=${timestamp})`);
+        return res.status(cached.status).json(cached.body);
+      }
+      console.log(`[CONVERSATION-TOKEN] Cache MISS - Processing new request (requestId=${requestId}, timestamp=${timestamp})`);
+
       const userId = req.userId;
       const agentId = process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
       const apiKey = process.env.ELEVENLABS_API_KEY;
 
-      console.log(`[CONVERSATION-TOKEN] Request from user: ${userId}`);
+      console.log(`[CONVERSATION-TOKEN] Request from user: ${userId} (requestId=${requestId}, timestamp=${timestamp})`);
 
       if (!apiKey) {
         console.error('[CONVERSATION-TOKEN] ELEVENLABS_API_KEY not configured');
-        return res.status(500).json({ error: 'ElevenLabs API key not configured' });
+        const errorBody = {
+          code: 'ELEVEN_API_KEY_MISSING',
+          message: 'ElevenLabs API key not configured',
+          requestId,
+        };
+        cacheTokenResponse(requestId, 500, { error: errorBody });
+        return res.status(500).json({ error: errorBody });
       }
 
-      // Call ElevenLabs API to get SIGNED URL for the SDK
-      // The SDK requires a signed URL, not a token
       const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`;
-      
-      console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl}`);
-
-      const response = await fetch(elevenLabsUrl, {
+      const fetchOptions = {
         method: 'GET',
         headers: {
           'xi-api-key': apiKey,
         },
-      });
+      };
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error(`[CONVERSATION-TOKEN] ElevenLabs API error: ${response.status} - ${errorText}`);
-        return res.status(500).json({ 
-          error: 'Failed to get signed URL from ElevenLabs',
-          details: process.env.NODE_ENV === 'development' ? errorText : undefined
+      console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl} (requestId=${requestId})`);
+
+      const fetchResult = await (async function fetchSignedUrl(attempt = 0): Promise<{ success: boolean; signedUrl?: string; status?: number; body?: any; special?: 'concurrent' | 'system_busy'; retryAfterSeconds?: number }> {
+        const response = await fetch(elevenLabsUrl, fetchOptions);
+        const responseText = await response.text();
+        let parsedBody: any = null;
+        try {
+          parsedBody = JSON.parse(responseText);
+        } catch {
+          parsedBody = null;
+        }
+
+        if (response.ok) {
+          return { success: true, signedUrl: parsedBody?.signed_url };
+        }
+
+        const headersObj: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          headersObj[key] = value;
         });
+
+        // Extract error message/code from response (sanitized, no sensitive data)
+        const errorMessage = parsedBody?.error?.message || parsedBody?.message || parsedBody?.error || '';
+        const errorCode = parsedBody?.error?.code || parsedBody?.code || '';
+        const sanitizedError = {
+          message: typeof errorMessage === 'string' ? errorMessage : String(errorMessage),
+          code: typeof errorCode === 'string' ? errorCode : String(errorCode),
+        };
+        
+        const retryAfterHeader = response.headers.get('retry-after');
+        const retryAfterSeconds = retryAfterHeader ? parseRetryAfter(retryAfterHeader) : null;
+        
+        const rawErrorText = (errorMessage || responseText || '').toString().toLowerCase();
+        const isConcurrent = rawErrorText.includes('too_many_concurrent_requests');
+        const isBusy = rawErrorText.includes('system_busy');
+        
+        // Explicit detection and logging
+        if (isConcurrent) {
+          console.warn(`[CONVERSATION-TOKEN] Upstream 429 detected: TOO_MANY_CONCURRENT_REQUESTS`, {
+            requestId,
+            timestamp: new Date().toISOString(),
+            upstreamStatus: response.status,
+            retryAfterHeader: retryAfterHeader || null,
+            retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : null,
+            sanitizedError,
+          });
+          return { 
+            success: false, 
+            status: response.status, 
+            body: parsedBody ?? responseText, 
+            special: 'concurrent',
+            retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : undefined,
+          };
+        }
+        if (isBusy) {
+          console.warn(`[CONVERSATION-TOKEN] Upstream 429 detected: SYSTEM_BUSY`, {
+            requestId,
+            timestamp: new Date().toISOString(),
+            upstreamStatus: response.status,
+            retryAfterHeader: retryAfterHeader || null,
+            retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : null,
+            sanitizedError,
+          });
+          return { 
+            success: false, 
+            status: response.status, 
+            body: parsedBody ?? responseText, 
+            special: 'system_busy',
+            retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : undefined,
+          };
+        }
+        
+        // Generic upstream error logging
+        console.warn(`[CONVERSATION-TOKEN] ElevenLabs API error (attempt ${attempt + 1})`, {
+          requestId,
+          timestamp: new Date().toISOString(),
+          upstreamStatus: response.status,
+          retryAfterHeader: retryAfterHeader || null,
+          retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : null,
+          sanitizedError,
+        });
+
+        if (response.status === 429 && attempt < MAX_TOKEN_RETRIES) {
+          const retryAfterValue = response.headers.get('retry-after');
+          const delay = parseRetryAfter(retryAfterValue) ?? Math.round(BASE_RETRY_DELAY_MS * Math.pow(2, attempt) * (0.75 + Math.random() * 0.5));
+          console.log(`[CONVERSATION-TOKEN] Retrying after ${delay}ms for requestId=${requestId} (attempt ${attempt + 1})`);
+          await sleep(delay);
+          return fetchSignedUrl(attempt + 1);
+        }
+
+        return { 
+          success: false, 
+          status: response.status, 
+          body: parsedBody ?? responseText,
+          retryAfterSeconds: retryAfterSeconds ? Math.round(retryAfterSeconds / 1000) : undefined,
+        };
+      })();
+
+      if (fetchResult.success && fetchResult.signedUrl) {
+        console.log(`[CONVERSATION-TOKEN] Signed URL obtained successfully for user: ${userId} (requestId=${requestId})`);
+        const successBody = {
+          success: {
+            token: fetchResult.signedUrl,
+            signedUrl: fetchResult.signedUrl,
+            clientId: userId,
+            agentId,
+            requestId,
+          },
+          token: fetchResult.signedUrl,
+          signedUrl: fetchResult.signedUrl,
+          clientId: userId,
+          agentId,
+        };
+        cacheTokenResponse(requestId, 200, successBody);
+        return res.status(200).json(successBody);
       }
 
-      const data = await response.json() as { signed_url?: string };
-      // The get_signed_url endpoint returns { signed_url: "wss://..." }
-      const signedUrl = data.signed_url;
-
-      if (!signedUrl) {
-        console.error('[CONVERSATION-TOKEN] No signed_url in response:', data);
-        return res.status(500).json({ error: 'No signed URL returned from ElevenLabs' });
+      const upstreamStatus = fetchResult.status || 500;
+      const isConcurrent = fetchResult.special === 'concurrent';
+      const isBusy = fetchResult.special === 'system_busy';
+      const retryAfterSeconds = fetchResult.retryAfterSeconds;
+      
+      // Determine error code based on error type
+      let errorCode: 'SYSTEM_BUSY' | 'TOO_MANY_CONCURRENT' | 'RATE_LIMIT' | 'UPSTREAM_ERROR';
+      if (isConcurrent) {
+        errorCode = 'TOO_MANY_CONCURRENT';
+      } else if (isBusy) {
+        errorCode = 'SYSTEM_BUSY';
+      } else if (upstreamStatus === 429) {
+        errorCode = 'RATE_LIMIT';
+      } else {
+        errorCode = 'UPSTREAM_ERROR';
       }
-
-      console.log(`[CONVERSATION-TOKEN] Signed URL obtained successfully for user: ${userId}`);
-
-      // Return the signed URL as 'token' for frontend compatibility
-      // The frontend uses tokenData.token as the signedUrl
-      res.json({
-        token: signedUrl,
-        signedUrl: signedUrl, // Also include as signedUrl for clarity
-        clientId: userId,
-        agentId,
+      
+      const errorMessage = isConcurrent
+        ? 'Too many concurrent sessions. Close other sessions and wait 10–30s.'
+        : isBusy
+        ? 'Service busy. Try again in a few seconds.'
+        : upstreamStatus === 429
+        ? 'Rate limit exceeded. Please wait and try again.'
+        : 'Failed to get signed URL from ElevenLabs.';
+      
+      const errorBody: {
+        code: string;
+        message: string;
+        requestId: string;
+        retryAfterSeconds?: number;
+      } = {
+        code: errorCode,
+        message: errorMessage,
+        requestId,
+      };
+      
+      if (retryAfterSeconds !== undefined) {
+        errorBody.retryAfterSeconds = retryAfterSeconds;
+      }
+      
+      console.error(`[CONVERSATION-TOKEN] Returning error response`, {
+        requestId,
+        timestamp: new Date().toISOString(),
+        errorCode,
+        upstreamStatus,
+        retryAfterSeconds: retryAfterSeconds || null,
       });
+      
+      cacheTokenResponse(requestId, upstreamStatus, { error: errorBody });
+      return res.status(upstreamStatus).json({ error: errorBody });
     } catch (error: any) {
       console.error('[CONVERSATION-TOKEN] Error:', error);
-      res.status(500).json({ 
-        error: 'Failed to get conversation token',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      const errorBody = {
+        code: 'INTERNAL_ERROR',
+        message: 'Failed to get conversation token',
+        requestId,
+        upstreamStatus: undefined,
+      };
+      cacheTokenResponse(requestId, 500, { error: errorBody });
+      return res.status(500).json({
+        error: errorBody,
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
       });
     }
   });
@@ -934,8 +1152,8 @@ export function registerRoutes(app: Express) {
       }
 
       // Check if interview already exists (prevent duplicates)
-      const existingInterview = await db.query.interviews.findFirst({
-        where: (interviews, { eq }) => eq(interviews.conversationId, conversation_id),
+      const existingInterview = await (db.query as any).interviews?.findFirst({
+        where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
       });
 
       if (existingInterview) {
@@ -959,7 +1177,7 @@ export function registerRoutes(app: Express) {
         status: status || "completed",
       });
 
-      const [interview] = await db.insert(interviews).values(interviewData).returning();
+      const [interview] = await db.insert(interviews).values(interviewData as any).returning();
 
       console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
 
