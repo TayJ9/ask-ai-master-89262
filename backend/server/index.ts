@@ -82,12 +82,34 @@ const corsOptions = {
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-api-secret'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-api-secret', 'X-Request-Id', 'x-request-id'],
   maxAge: 86400 // 24 hours
 };
 
 // Apply CORS middleware - must be before routes
 app.use(cors(corsOptions));
+
+// Explicit OPTIONS handler for all routes (ensures preflight works correctly)
+app.options("*", cors(corsOptions));
+
+// Log OPTIONS preflight requests for debugging
+// This runs AFTER CORS middleware sets headers, so it only logs (doesn't interfere)
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    const origin = req.header('Origin');
+    const requestedHeaders = req.header('Access-Control-Request-Headers');
+    const requestedMethod = req.header('Access-Control-Request-Method');
+    const requestId = req.header('X-Request-Id') || 'none';
+    
+    // Enhanced logging for /api/conversation-token
+    if (req.path === '/api/conversation-token') {
+      log(`[CONVERSATION-TOKEN] OPTIONS preflight - origin=${origin || 'none'} method=${requestedMethod || 'none'} headers=${requestedHeaders || 'none'} requestId=${requestId}`);
+    } else {
+      log(`[CORS PREFLIGHT] OPTIONS ${req.path} - origin=${origin || 'none'} method=${requestedMethod || 'none'} headers=${requestedHeaders || 'none'}`);
+    }
+  }
+  next();
+});
 
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: false, limit: '50mb' }));

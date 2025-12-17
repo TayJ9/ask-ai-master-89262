@@ -911,10 +911,23 @@ const tokenRateLimiter = rateLimit({
 });
 
   // Get ElevenLabs conversation token for voice interview sessions
+  // Note: OPTIONS preflight is handled globally by CORS middleware (see server/index.ts)
+  // The logging middleware logs all OPTIONS requests including this route
   // Requires authentication and is rate-limited to 5 requests per hour per user
   app.get("/api/conversation-token", authenticateToken, tokenRateLimiter, async (req: any, res) => {
     const requestId = req.header('X-Request-Id') || randomUUID();
     const timestamp = new Date().toISOString();
+    const origin = req.header('Origin');
+    const hasRequestIdHeader = !!req.header('X-Request-Id');
+    
+    console.log(`[CONVERSATION-TOKEN] GET request received`, {
+      requestId,
+      timestamp,
+      origin: origin || 'none',
+      hasRequestIdHeader,
+      userId: req.userId || 'unknown',
+    });
+    
     try {
       const cached = getCachedTokenResponse(requestId);
       if (cached) {
