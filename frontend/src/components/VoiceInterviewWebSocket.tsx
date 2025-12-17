@@ -110,47 +110,48 @@ export default function VoiceInterviewWebSocket({
   }, [conversationId]);
   
   // Save interview to backend
-  const saveInterview = useCallback(async (convId: string | null) => {
-    if (!convId) {
-      console.warn('No conversation ID available for saving');
-      return;
-    }
-
+  const saveInterview = useCallback(async (convId: string | null, endedBy: 'user' | 'disconnect' = 'disconnect') => {
+    // Always call save-interview with sessionId (always available)
+    // conversationId is optional (may not be available)
+    const authToken = localStorage.getItem('auth_token');
+    const agentId = agentIdRef.current || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+    
     const payload = {
-      conversation_id: convId,
-      candidate_id: candidateId,
-      interview_id: sessionId,
-      status: 'completed',
+      client_session_id: sessionId, // Always available
+      conversation_id: convId || undefined, // Optional - may be null
+      ended_by: endedBy,
+      agent_id: agentId,
     };
 
     try {
-      console.log('Saving interview with payload:', payload);
+      console.log('Saving interview end state:', payload);
       const response = await fetch(
         getApiUrl(`/api/save-interview`),
         {
           method: 'POST',
           headers: {
-            'x-api-secret': 'my_secret_interview_key_123',
             'Content-Type': 'application/json',
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
           },
           body: JSON.stringify(payload),
         }
       );
       
       if (!response.ok) {
-        throw new Error(`Failed to save interview: ${response.statusText}`);
+        const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        throw new Error(errorData.error || `Failed to save interview: ${response.statusText}`);
       }
       
-      console.log('Interview saved successfully');
-    } catch (error) {
-      console.error('Error saving interview:', error);
+      console.log('Interview end state saved successfully');
+    } catch (error: any) {
+      console.error('Error saving interview end state:', error);
       toast({
         title: "Warning",
-        description: "Interview may not have been saved. Please contact support if needed.",
+        description: "Interview end state may not have been saved. Results may be delayed.",
         variant: "destructive",
       });
     }
-  }, [candidateId, sessionId, toast]);
+  }, [sessionId, toast]);
 
   // Stable callbacks for useConversation (prevents hook re-initialization on re-render)
   const handleConnect = useCallback(() => {
@@ -206,8 +207,8 @@ export default function VoiceInterviewWebSocket({
     if (wasInterviewActive) {
       // Interview was active - save and complete
       setStatusMessage("Interview ended");
-      saveInterview(conversationIdRef.current);
-      onComplete();
+      saveInterview(conversationIdRef.current, 'disconnect');
+      onComplete({ sessionId, conversationId: conversationIdRef.current });
       } else {
       // Disconnect during connection attempt - return to idle state
       console.log('Disconnect during connection - returning to idle state');
@@ -737,17 +738,17 @@ export default function VoiceInterviewWebSocket({
           await conversation.endSession();
         } else {
           // If not connected, just complete locally
-          saveInterview(conversationId);
-          onComplete();
+          saveInterview(conversationId, 'user');
+          onComplete({ sessionId, conversationId });
         }
       } catch (error) {
         console.error('Error ending session:', error);
         // Still call onComplete even if endSession fails
-        saveInterview(conversationId);
-        onComplete();
+        saveInterview(conversationId, 'user');
+        onComplete({ sessionId, conversationId });
       }
     }
-  }, [conversation, conversationId, saveInterview, onComplete]);
+  }, [conversation, conversationId, sessionId, saveInterview, onComplete]);
 
   // Handle user click to start interview (requires user gesture for mic access)
   const handleStartClick = useCallback(() => {

@@ -112,6 +112,51 @@ export const insertInterviewSchema = createInsertSchema(interviews).omit({
 export type InsertInterview = z.infer<typeof insertInterviewSchema>;
 export type Interview = typeof interviews.$inferSelect;
 
+// Interview evaluations table - stores per-question scores and overall evaluation
+export const interviewEvaluations = pgTable("interview_evaluations", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  interviewId: uuid("interview_id").notNull().references(() => interviews.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("pending"), // pending, complete, failed
+  overallScore: integer("overall_score"),
+  evaluationJson: jsonb("evaluation_json"),
+  error: text("error"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertInterviewEvaluationSchema = createInsertSchema(interviewEvaluations).omit({ 
+  id: true, 
+  createdAt: true,
+  updatedAt: true 
+});
+export type InsertInterviewEvaluation = z.infer<typeof insertInterviewEvaluationSchema>;
+export type InterviewEvaluation = typeof interviewEvaluations.$inferSelect;
+
+// Interview sessions table - tracks client-side sessions and maps to conversation_id when webhook arrives
+export const interviewSessions = pgTable("interview_sessions", {
+  id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
+  agentId: text("agent_id").notNull(),
+  clientSessionId: text("client_session_id").notNull(), // Frontend sessionId (always available)
+  conversationId: text("conversation_id"), // ElevenLabs conversation_id (from webhook, nullable)
+  interviewId: uuid("interview_id").references(() => interviews.id, { onDelete: "set null" }), // Link to interviews table when webhook arrives
+  status: text("status").notNull().default("started"), // started, ended_pending_webhook, completed, failed
+  endedBy: text("ended_by"), // 'user' | 'disconnect' | null
+  startedAt: timestamp("started_at").defaultNow(),
+  endedAt: timestamp("ended_at"),
+  clientEndedAt: timestamp("client_ended_at"), // When frontend called save-interview
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertInterviewSessionSchema = createInsertSchema(interviewSessions).omit({ 
+  id: true, 
+  createdAt: true,
+  updatedAt: true 
+});
+export type InsertInterviewSession = z.infer<typeof insertInterviewSessionSchema>;
+export type InterviewSession = typeof interviewSessions.$inferSelect;
+
 // Resume storage keyed by interview/session id
 export const resumes = pgTable("resumes", {
   interviewId: uuid("interview_id").primaryKey(),

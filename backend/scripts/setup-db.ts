@@ -131,12 +131,74 @@ async function setupDatabase() {
       `);
     console.log('✅ Created interview_turns table');
 
+    // Create interviews table (ElevenLabs voice interviews)
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS interviews (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+          conversation_id TEXT,
+          agent_id TEXT NOT NULL,
+          transcript TEXT,
+          duration_seconds INTEGER,
+          started_at TIMESTAMP,
+          ended_at TIMESTAMP,
+          status TEXT NOT NULL DEFAULT 'completed',
+          created_at TIMESTAMP DEFAULT NOW()
+        );
+      `);
+    console.log('✅ Created interviews table');
+
+    // Create interview_evaluations table
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS interview_evaluations (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending',
+          overall_score INTEGER,
+          evaluation_json JSONB,
+          error TEXT,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        );
+      `);
+    console.log('✅ Created interview_evaluations table');
+
+    // Create interview_sessions table (client-side session tracking)
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS interview_sessions (
+          id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+          user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL,
+          client_session_id TEXT NOT NULL,
+          conversation_id TEXT,
+          interview_id UUID REFERENCES interviews(id) ON DELETE SET NULL,
+          status TEXT NOT NULL DEFAULT 'started',
+          ended_by TEXT,
+          started_at TIMESTAMP DEFAULT NOW(),
+          ended_at TIMESTAMP,
+          client_ended_at TIMESTAMP,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW(),
+          UNIQUE(client_session_id),
+          UNIQUE(conversation_id)
+        );
+      `);
+    console.log('✅ Created interview_sessions table');
+
     // Create indexes for better performance
     await executeQuery(`
         CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON interview_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_responses_session_id ON interview_responses(session_id);
         CREATE INDEX IF NOT EXISTS idx_turns_session_id ON interview_turns(session_id);
+        CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);
+        CREATE INDEX IF NOT EXISTS idx_interviews_conversation_id ON interviews(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_evaluations_interview_id ON interview_evaluations(interview_id);
+        CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);
+        CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON interview_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_client_session_id ON interview_sessions(client_session_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_conversation_id ON interview_sessions(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_sessions_status ON interview_sessions(status);
       `);
     console.log('✅ Created indexes');
 

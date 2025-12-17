@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews } from "../shared/schema";
+import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews, interviewSessions, insertInterviewSessionSchema as insertElevenLabsInterviewSessionSchema } from "../shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -11,9 +11,10 @@ import { Readable } from "stream";
 import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
 import rateLimit from "express-rate-limit";
-import { randomUUID } from "crypto";
+import { randomUUID, createHmac } from "crypto";
 import { db } from "./db";
-import { sql } from "drizzle-orm";
+import { sql, eq } from "drizzle-orm";
+import { evaluationQueue } from "./evaluation";
 
 // Lazy-load JWT_SECRET to avoid build-time errors
 // CRITICAL: This function NEVER throws errors - Railway may validate during build
@@ -1144,14 +1145,115 @@ const tokenRateLimiter = rateLimit({
     }
   });
 
-  // ElevenLabs webhook endpoint - receives conversation completion events
-  // No authentication required as this is called by ElevenLabs servers
-  app.post("/webhooks/elevenlabs", async (req, res) => {
-    try {
-      console.log('[WEBHOOK] Received ElevenLabs webhook');
-      console.log('[WEBHOOK] Body:', JSON.stringify(req.body, null, 2));
+  // HMAC verification for ElevenLabs webhooks
+  // ElevenLabs signature format: t=timestamp,v0=hash
+  // Expected hash = hex(hmac_sha256(secret, `${timestamp}.${rawBody}`))
+  function verifyElevenLabsSignature(
+    signatureHeader: string | undefined,
+    rawBody: string | Buffer,
+    secret: string
+  ): { valid: boolean; reason?: string; timestamp?: number } {
+    if (!signatureHeader) {
+      return { valid: false, reason: 'Missing elevenlabs-signature header' };
+    }
 
-      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status } = req.body;
+    // Parse signature header: t=timestamp,v0=hash
+    const parts = signatureHeader.split(',');
+    let timestamp: number | null = null;
+    let hash: string | null = null;
+
+    for (const part of parts) {
+      const [key, value] = part.split('=');
+      if (key === 't') {
+        timestamp = parseInt(value, 10);
+      } else if (key === 'v0') {
+        hash = value;
+      }
+    }
+
+    if (!timestamp || !hash) {
+      return { valid: false, reason: 'Malformed signature header (missing t or v0)' };
+    }
+
+    // Check timestamp tolerance (5 minutes)
+    const now = Math.floor(Date.now() / 1000);
+    const age = now - timestamp;
+    const MAX_AGE_SECONDS = 5 * 60; // 5 minutes
+
+    if (age > MAX_AGE_SECONDS) {
+      return { valid: false, reason: `Timestamp too old (${age}s ago, max ${MAX_AGE_SECONDS}s)`, timestamp };
+    }
+
+    if (age < -MAX_AGE_SECONDS) {
+      return { valid: false, reason: `Timestamp too far in future (${-age}s ahead)`, timestamp };
+    }
+
+    // Compute expected hash
+    const bodyString = typeof rawBody === 'string' ? rawBody : rawBody.toString('utf8');
+    const payload = `${timestamp}.${bodyString}`;
+    const expectedHash = createHmac('sha256', secret).update(payload).digest('hex');
+
+    // Constant-time comparison to prevent timing attacks
+    if (hash.length !== expectedHash.length) {
+      return { valid: false, reason: 'Hash length mismatch', timestamp };
+    }
+
+    let match = 0;
+    for (let i = 0; i < hash.length; i++) {
+      match |= hash.charCodeAt(i) ^ expectedHash.charCodeAt(i);
+    }
+
+    if (match !== 0) {
+      return { valid: false, reason: 'Hash mismatch', timestamp };
+    }
+
+    return { valid: true, timestamp };
+  }
+
+  // ElevenLabs webhook endpoint - receives conversation completion events
+  // Secured with HMAC signature verification
+  // Note: Raw body middleware is applied globally in server/index.ts before express.json()
+  app.post("/webhooks/elevenlabs", async (req: any, res) => {
+    try {
+      // Verify HMAC signature
+      const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET;
+      if (!webhookSecret) {
+        console.error('[WEBHOOK] ELEVENLABS_WEBHOOK_SECRET not configured');
+        return res.status(500).json({ error: 'Webhook secret not configured' });
+      }
+
+      const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['Elevenlabs-Signature'];
+      // req.body is Buffer when using express.raw()
+      const rawBody = req.body instanceof Buffer ? req.body : Buffer.from(JSON.stringify(req.body || {}), 'utf8');
+      
+      const verification = verifyElevenLabsSignature(signatureHeader, rawBody, webhookSecret);
+      
+      if (!verification.valid) {
+        console.error(`[WEBHOOK] Invalid signature: ${verification.reason}`, {
+          hasSignature: !!signatureHeader,
+          timestamp: verification.timestamp,
+        });
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+
+      // Parse JSON body after signature verification
+      let body: any;
+      try {
+        body = JSON.parse(rawBody.toString('utf8'));
+      } catch (parseError: any) {
+        console.error('[WEBHOOK] Failed to parse JSON body:', parseError);
+        return res.status(400).json({ error: 'Invalid JSON body' });
+      }
+
+      console.log(`[WEBHOOK] Signature verified successfully`, {
+        conversation_id: body?.conversation_id || 'unknown',
+        timestamp: verification.timestamp,
+      });
+
+      console.log('[WEBHOOK] Received ElevenLabs webhook');
+      console.log('[WEBHOOK] Body:', JSON.stringify(body, null, 2));
+
+      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status } = body;
 
       // Validate required fields
       if (!conversation_id) {
@@ -1171,6 +1273,35 @@ const tokenRateLimiter = rateLimit({
 
       if (existingInterview) {
         console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists, skipping`);
+        
+        // Link to session if not already linked
+        const sessionByConversationId = await (db.query as any).interviewSessions?.findFirst({
+          where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
+        });
+        
+        if (sessionByConversationId && !sessionByConversationId.interviewId) {
+          await db.update(interviewSessions)
+            .set({
+              interviewId: existingInterview.id,
+              status: 'completed',
+              updatedAt: new Date(),
+            })
+            .where(eq(interviewSessions.id, sessionByConversationId.id));
+          console.log(`[WEBHOOK] Linked existing interview ${existingInterview.id} to session ${sessionByConversationId.id}`);
+        }
+        
+        // Check if evaluation exists, and enqueue if not
+        const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
+          where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, existingInterview.id),
+        });
+        
+        if (!existingEvaluation || existingEvaluation.status === 'failed') {
+          console.log(`[WEBHOOK] Enqueuing evaluation for existing interview ${existingInterview.id}`);
+          evaluationQueue.enqueue(existingInterview.id, conversation_id).catch((error: any) => {
+            console.error(`[WEBHOOK] Failed to enqueue evaluation for existing interview ${existingInterview.id}:`, error);
+          });
+        }
+        
         return res.json({ success: true, message: 'Interview already exists' });
       }
 
@@ -1193,6 +1324,80 @@ const tokenRateLimiter = rateLimit({
       const [interview] = await db.insert(interviews).values(interviewData as any).returning();
 
       console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
+
+      // Link this interview to any existing interview_sessions record
+      // Try by conversation_id first (most reliable)
+      const sessionByConversationId = await (db.query as any).interviewSessions?.findFirst({
+        where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
+      });
+
+      if (sessionByConversationId) {
+        await db.update(interviewSessions)
+          .set({
+            interviewId: interview.id,
+            status: 'completed',
+            updatedAt: new Date(),
+          })
+          .where(eq(interviewSessions.id, sessionByConversationId.id));
+        console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${sessionByConversationId.id} (by conversation_id)`);
+      } else {
+        // Try to find by user_id + agent_id + time window (last 10 minutes)
+        // This handles cases where conversation_id wasn't set in session yet
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const recentSessions = await (db.query as any).interviewSessions?.findMany({
+          where: (sessions: any, { eq, and, gte }: any) => and(
+            eq(sessions.userId, user_id),
+            eq(sessions.agentId, agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e"),
+            eq(sessions.interviewId, null), // Not already linked
+            gte(sessions.startedAt, tenMinutesAgo) // Started within last 10 minutes
+          ),
+        });
+
+        // Link to the most recent unlinked session
+        if (recentSessions && recentSessions.length > 0) {
+          const mostRecentSession = recentSessions.sort((a: any, b: any) => 
+            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+          )[0];
+          
+          await db.update(interviewSessions)
+            .set({
+              conversationId: conversation_id,
+              interviewId: interview.id,
+              status: 'completed',
+              updatedAt: new Date(),
+            })
+            .where(eq(interviewSessions.id, mostRecentSession.id));
+          console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
+        } else {
+          // Create a new session record for this webhook (fallback)
+          const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+          const sessionData = insertElevenLabsInterviewSessionSchema.parse({
+            userId: user_id,
+            agentId,
+            clientSessionId: `webhook-${conversation_id}`, // Fallback ID
+            conversationId: conversation_id,
+            interviewId: interview.id,
+            status: 'completed',
+            startedAt: startedAt || new Date(),
+            endedAt: endedAt || new Date(),
+          });
+          await db.insert(interviewSessions).values(sessionData as any).catch((err: any) => {
+            // Ignore duplicate errors (conversation_id unique constraint)
+            if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
+              console.error('[WEBHOOK] Error creating session record:', err);
+            }
+          });
+          console.log(`[WEBHOOK] Created session record for interview ${interview.id}`);
+        }
+      }
+
+      // Enqueue evaluation job asynchronously (non-blocking)
+      evaluationQueue.enqueue(interview.id, conversation_id).catch((error: any) => {
+        console.error(`[WEBHOOK] Failed to enqueue evaluation for interview ${interview.id}:`, error);
+        // Don't fail the webhook - evaluation can be retried later
+      });
+
+      console.log(`[WEBHOOK] Enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
 
       res.json({ success: true, interviewId: interview.id });
     } catch (error: any) {
@@ -1219,48 +1424,217 @@ const tokenRateLimiter = rateLimit({
     }
   });
 
-  // ElevenLabs custom webhook endpoint for interview completion
-  // This endpoint is called by ElevenLabs when an interview is completed
-  // Requires x-api-secret header for security
-  app.post("/api/save-interview", async (req, res) => {
+  // Get interview by client session ID
+  // Used by frontend to look up interviewId when webhook may be delayed
+  app.get("/api/interviews/by-session/:sessionId", authenticateToken, async (req: any, res) => {
     try {
-      // Security check: Verify x-api-secret header
-      const apiSecret = req.headers['x-api-secret'];
-      
-      if (!apiSecret || apiSecret !== API_SECRET) {
-        console.error('[SAVE-INTERVIEW] Invalid or missing x-api-secret header');
-        return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+      const clientSessionId = req.params.sessionId;
+      const userId = req.userId;
+
+      if (!clientSessionId) {
+        return res.status(400).json({ error: 'Session ID required' });
       }
 
-      // Accept body as the single source of truth for identifiers
-      const conversation_id = req.body?.conversation_id as string;
-      const candidate_id = req.body?.candidate_id as string;
-      const interview_id = req.body?.interview_id as string;
-      const status = req.body?.status as string | undefined;
-      console.log('[SAVE-INTERVIEW] body', { candidate_id, interview_id, conversation_id, status });
+      // Find session record
+      const session = await (db.query as any).interviewSessions?.findFirst({
+        where: (sessions: any, { eq, and }: any) => and(
+          eq(sessions.clientSessionId, clientSessionId),
+          eq(sessions.userId, userId)
+        ),
+      });
+
+      if (!session) {
+        return res.status(404).json({ error: 'Session not found' });
+      }
+
+      // If interviewId is linked, return it
+      if (session.interviewId) {
+        // Also check evaluation status
+        const evaluation = await (db.query as any).interviewEvaluations?.findFirst({
+          where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, session.interviewId),
+        });
+
+        return res.json({
+          interviewId: session.interviewId,
+          conversationId: session.conversationId,
+          status: session.status,
+          evaluationStatus: evaluation?.status || null,
+        });
+      }
+
+      // Interview not linked yet (webhook delayed)
+      return res.json({
+        interviewId: null,
+        conversationId: session.conversationId,
+        status: session.status,
+        evaluationStatus: null,
+      });
+    } catch (error: any) {
+      console.error('[BY-SESSION] Error fetching interview by session:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch interview by session',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Get interview results with evaluation
+  app.get("/api/interviews/:id/results", authenticateToken, async (req: any, res) => {
+    try {
+      const interviewId = req.params.id;
+      const userId = req.userId;
+
+      if (!interviewId) {
+        return res.status(400).json({ error: 'Interview ID required' });
+      }
+
+      // Load interview
+      const interview = await (db.query as any).interviews?.findFirst({
+        where: (interviews: any, { eq, and }: any) => and(
+          eq(interviews.id, interviewId),
+          eq(interviews.userId, userId)
+        ),
+      });
+
+      if (!interview) {
+        return res.status(404).json({ error: 'Interview not found' });
+      }
+
+      // Load evaluation
+      const evaluation = await (db.query as any).interviewEvaluations?.findFirst({
+        where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
+      });
+
+      // Load user profile for additional metadata
+      const profile = await (db.query as any).profiles?.findFirst({
+        where: (profiles: any, { eq }: any) => eq(profiles.id, userId),
+      });
+
+      // Return results
+      res.json({
+        interview: {
+          id: interview.id,
+          conversationId: interview.conversationId,
+          agentId: interview.agentId,
+          transcript: interview.transcript,
+          durationSeconds: interview.durationSeconds,
+          startedAt: interview.startedAt,
+          endedAt: interview.endedAt,
+          status: interview.status,
+          createdAt: interview.createdAt,
+        },
+        evaluation: evaluation ? {
+          status: evaluation.status,
+          overallScore: evaluation.overallScore,
+          evaluation: evaluation.evaluationJson,
+          error: evaluation.error,
+          createdAt: evaluation.createdAt,
+          updatedAt: evaluation.updatedAt,
+        } : null,
+        metadata: {
+          userId: interview.userId,
+          userEmail: profile?.email || null,
+        },
+      });
+    } catch (error: any) {
+      console.error('[RESULTS] Error fetching interview results:', error);
+      res.status(500).json({ 
+        error: 'Failed to fetch interview results',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
+    }
+  });
+
+  // Client-side interview end notification endpoint
+  // Records that the frontend has ended the interview (user click or disconnect)
+  // Webhook is the source of truth for transcript - this endpoint only records client state
+  // Idempotent and safe to call before webhook arrives
+  app.post("/api/save-interview", authenticateToken, async (req: any, res) => {
+    try {
+      const userId = req.userId;
+      const client_session_id = req.body?.client_session_id as string;
+      const conversation_id = req.body?.conversation_id as string | undefined;
+      const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
+      const agent_id = req.body?.agent_id as string | undefined;
+      
+      console.log('[SAVE-INTERVIEW] Client end notification', { 
+        userId, 
+        client_session_id, 
+        conversation_id: conversation_id || 'not provided',
+        ended_by,
+        agent_id: agent_id || 'not provided',
+      });
 
       // Validate required fields
-      if (!candidate_id) {
-        console.error('[SAVE-INTERVIEW] Missing candidate_id in body');
-        return res.status(400).json({ error: 'Missing candidate_id in body' });
+      if (!client_session_id) {
+        return res.status(400).json({ error: 'Missing client_session_id in body' });
       }
 
-      if (!interview_id) {
-        console.error('[SAVE-INTERVIEW] Missing interview_id in body');
-        return res.status(400).json({ error: 'Missing interview_id in body' });
+      const clientEndedAt = new Date();
+
+      // Try to find existing interview by conversation_id first (if provided)
+      let interviewId: string | null = null;
+      if (conversation_id) {
+        const existingInterview = await (db.query as any).interviews?.findFirst({
+          where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
+        });
+        if (existingInterview) {
+          interviewId = existingInterview.id;
+          // Update interview status
+          await db.update(interviews)
+            .set({
+              status: 'completed',
+              endedAt: clientEndedAt,
+              updatedAt: new Date(),
+            })
+            .where(eq(interviews.id, interviewId));
+          console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
+        }
       }
 
-      // Log the interview completion
-      console.log(`[SAVE-INTERVIEW] Completion received`, { candidate_id, conversation_id: conversation_id || 'not provided', interview_id, status: status || 'unknown' });
+      // Find or create interview_sessions record
+      const existingSession = await (db.query as any).interviewSessions?.findFirst({
+        where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
+      });
 
-      // TODO: Fetch transcript from ElevenLabs using conversation_id and save to database
+      if (existingSession) {
+        // Update existing session
+        await db.update(interviewSessions)
+          .set({
+            conversationId: conversation_id || existingSession.conversationId,
+            interviewId: interviewId || existingSession.interviewId,
+            status: interviewId ? 'completed' : 'ended_pending_webhook',
+            endedBy: ended_by || existingSession.endedBy,
+            endedAt: clientEndedAt,
+            clientEndedAt: clientEndedAt,
+            updatedAt: new Date(),
+          })
+          .where(eq(interviewSessions.clientSessionId, client_session_id));
+        console.log(`[SAVE-INTERVIEW] Updated session ${existingSession.id} for client_session_id ${client_session_id}`);
+      } else {
+        // Create new session record
+        const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+        const sessionData = insertElevenLabsInterviewSessionSchema.parse({
+          userId,
+          agentId,
+          clientSessionId: client_session_id,
+          conversationId: conversation_id || null,
+          interviewId: interviewId || null,
+          status: interviewId ? 'completed' : 'ended_pending_webhook',
+          endedBy: ended_by || null,
+          endedAt: clientEndedAt,
+          clientEndedAt: clientEndedAt,
+        });
+        const [session] = await db.insert(interviewSessions).values(sessionData as any).returning();
+        console.log(`[SAVE-INTERVIEW] Created session ${session.id} for client_session_id ${client_session_id}`);
+      }
 
-      // Return success response
+      // Always return success (idempotent)
       res.json({ success: true });
     } catch (error: any) {
-      console.error('[SAVE-INTERVIEW] Error processing webhook:', error);
+      console.error('[SAVE-INTERVIEW] Error processing client end notification:', error);
       res.status(500).json({ 
-        error: 'Failed to process interview completion webhook',
+        error: 'Failed to process interview end notification',
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }

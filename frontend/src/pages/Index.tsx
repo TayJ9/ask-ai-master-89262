@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
 import InterviewSession from "@/components/InterviewSession";
@@ -14,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 
 export default function Index() {
+  const [, setLocation] = useLocation();
   const [user, setUser] = useState<any>(null);
   const [currentView, setCurrentView] = useState<"roles" | "resume" | "interview" | "voice" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -239,19 +241,30 @@ export default function Index() {
   };
 
   const handleCompleteInterview = (results?: any) => {
-    if (results) {
+    // Navigate to results page with sessionId and conversationId
+    const sessionId = voiceSessionId || results?.sessionId;
+    const conversationId = results?.conversationId;
+    
+    if (sessionId) {
+      const params = new URLSearchParams({ sessionId });
+      if (conversationId) {
+        params.set('conversationId', conversationId);
+      }
+      setLocation(`/results?${params.toString()}`);
+    } else {
+      // Fallback: go back to roles if no sessionId
       toast({
         title: "Interview Complete!",
-        description: `Your overall score: ${results.overallScore}/100`,
+        description: "Redirecting to results...",
       });
+      setCurrentView("roles");
+      setSelectedRole("");
+      setResumeText("");
+      setVoiceSessionId(null);
+      setFirstQuestion("");
+      setVoiceInterviewData(null);
+      setCandidateContext(null);
     }
-    setCurrentView("roles");
-    setSelectedRole("");
-    setResumeText("");
-    setVoiceSessionId(null);
-    setFirstQuestion("");
-    setVoiceInterviewData(null);
-    setCandidateContext(null);
   };
 
   if (!user) {
