@@ -1,6 +1,6 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews, interviewSessions, insertInterviewSessionSchema as insertElevenLabsInterviewSessionSchema } from "../shared/schema";
+import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews, elevenLabsInterviewSessions, insertElevenLabsInterviewSessionSchema } from "../shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
@@ -1275,18 +1275,18 @@ const tokenRateLimiter = rateLimit({
         console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists, skipping`);
         
         // Link to session if not already linked
-        const sessionByConversationId = await (db.query as any).interviewSessions?.findFirst({
+        const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
           where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
         });
         
         if (sessionByConversationId && !sessionByConversationId.interviewId) {
-          await db.update(interviewSessions)
+          await db.update(elevenLabsInterviewSessions)
             .set({
               interviewId: existingInterview.id,
               status: 'completed',
               updatedAt: new Date(),
             })
-            .where(eq(interviewSessions.id, sessionByConversationId.id));
+            .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
           console.log(`[WEBHOOK] Linked existing interview ${existingInterview.id} to session ${sessionByConversationId.id}`);
         }
         
@@ -1325,26 +1325,26 @@ const tokenRateLimiter = rateLimit({
 
       console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
 
-      // Link this interview to any existing interview_sessions record
+      // Link this interview to any existing elevenlabs_interview_sessions record
       // Try by conversation_id first (most reliable)
-      const sessionByConversationId = await (db.query as any).interviewSessions?.findFirst({
+      const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
         where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
       });
 
       if (sessionByConversationId) {
-        await db.update(interviewSessions)
+        await db.update(elevenLabsInterviewSessions)
           .set({
             interviewId: interview.id,
             status: 'completed',
             updatedAt: new Date(),
           })
-          .where(eq(interviewSessions.id, sessionByConversationId.id));
+          .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
         console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${sessionByConversationId.id} (by conversation_id)`);
       } else {
         // Try to find by user_id + agent_id + time window (last 10 minutes)
         // This handles cases where conversation_id wasn't set in session yet
         const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const recentSessions = await (db.query as any).interviewSessions?.findMany({
+        const recentSessions = await (db.query as any).elevenLabsInterviewSessions?.findMany({
           where: (sessions: any, { eq, and, gte }: any) => and(
             eq(sessions.userId, user_id),
             eq(sessions.agentId, agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e"),
@@ -1359,14 +1359,14 @@ const tokenRateLimiter = rateLimit({
             new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
           )[0];
           
-          await db.update(interviewSessions)
+          await db.update(elevenLabsInterviewSessions)
             .set({
               conversationId: conversation_id,
               interviewId: interview.id,
               status: 'completed',
               updatedAt: new Date(),
             })
-            .where(eq(interviewSessions.id, mostRecentSession.id));
+            .where(eq(elevenLabsInterviewSessions.id, mostRecentSession.id));
           console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
         } else {
           // Create a new session record for this webhook (fallback)
@@ -1381,7 +1381,7 @@ const tokenRateLimiter = rateLimit({
             startedAt: startedAt || new Date(),
             endedAt: endedAt || new Date(),
           });
-          await db.insert(interviewSessions).values(sessionData as any).catch((err: any) => {
+          await db.insert(elevenLabsInterviewSessions).values(sessionData as any).catch((err: any) => {
             // Ignore duplicate errors (conversation_id unique constraint)
             if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
               console.error('[WEBHOOK] Error creating session record:', err);
@@ -1436,7 +1436,7 @@ const tokenRateLimiter = rateLimit({
       }
 
       // Find session record
-      const session = await (db.query as any).interviewSessions?.findFirst({
+      const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
         where: (sessions: any, { eq, and }: any) => and(
           eq(sessions.clientSessionId, clientSessionId),
           eq(sessions.userId, userId)
@@ -1592,14 +1592,14 @@ const tokenRateLimiter = rateLimit({
         }
       }
 
-      // Find or create interview_sessions record
-      const existingSession = await (db.query as any).interviewSessions?.findFirst({
+      // Find or create elevenlabs_interview_sessions record
+      const existingSession = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
         where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
       });
 
       if (existingSession) {
         // Update existing session
-        await db.update(interviewSessions)
+        await db.update(elevenLabsInterviewSessions)
           .set({
             conversationId: conversation_id || existingSession.conversationId,
             interviewId: interviewId || existingSession.interviewId,
@@ -1609,7 +1609,7 @@ const tokenRateLimiter = rateLimit({
             clientEndedAt: clientEndedAt,
             updatedAt: new Date(),
           })
-          .where(eq(interviewSessions.clientSessionId, client_session_id));
+          .where(eq(elevenLabsInterviewSessions.clientSessionId, client_session_id));
         console.log(`[SAVE-INTERVIEW] Updated session ${existingSession.id} for client_session_id ${client_session_id}`);
       } else {
         // Create new session record
@@ -1625,7 +1625,7 @@ const tokenRateLimiter = rateLimit({
           endedAt: clientEndedAt,
           clientEndedAt: clientEndedAt,
         });
-        const [session] = await db.insert(interviewSessions).values(sessionData as any).returning();
+        const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionData as any).returning();
         console.log(`[SAVE-INTERVIEW] Created session ${session.id} for client_session_id ${client_session_id}`);
       }
 

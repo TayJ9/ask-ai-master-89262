@@ -132,8 +132,8 @@ export const insertInterviewEvaluationSchema = createInsertSchema(interviewEvalu
 export type InsertInterviewEvaluation = z.infer<typeof insertInterviewEvaluationSchema>;
 export type InterviewEvaluation = typeof interviewEvaluations.$inferSelect;
 
-// Interview sessions table - tracks client-side sessions and maps to conversation_id when webhook arrives
-export const interviewSessions = pgTable("interview_sessions", {
+// ElevenLabs interview sessions table - tracks client-side sessions and maps to conversation_id when webhook arrives
+export const elevenLabsInterviewSessions = pgTable("elevenlabs_interview_sessions", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: uuid("user_id").notNull().references(() => profiles.id, { onDelete: "cascade" }),
   agentId: text("agent_id").notNull(),
@@ -149,13 +149,13 @@ export const interviewSessions = pgTable("interview_sessions", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const insertInterviewSessionSchema = createInsertSchema(interviewSessions).omit({ 
+export const insertElevenLabsInterviewSessionSchema = createInsertSchema(elevenLabsInterviewSessions).omit({ 
   id: true, 
   createdAt: true,
   updatedAt: true 
 });
-export type InsertInterviewSession = z.infer<typeof insertInterviewSessionSchema>;
-export type InterviewSession = typeof interviewSessions.$inferSelect;
+export type InsertElevenLabsInterviewSession = z.infer<typeof insertElevenLabsInterviewSessionSchema>;
+export type ElevenLabsInterviewSession = typeof elevenLabsInterviewSessions.$inferSelect;
 
 // Resume storage keyed by interview/session id
 export const resumes = pgTable("resumes", {

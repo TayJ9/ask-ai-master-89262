@@ -163,9 +163,9 @@ async function setupDatabase() {
       `);
     console.log('✅ Created interview_evaluations table');
 
-    // Create interview_sessions table (client-side session tracking)
+    // Create elevenlabs_interview_sessions table (client-side session tracking)
     await executeQuery(`
-        CREATE TABLE IF NOT EXISTS interview_sessions (
+        CREATE TABLE IF NOT EXISTS elevenlabs_interview_sessions (
           id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
           user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
           agent_id TEXT NOT NULL,
@@ -183,7 +183,7 @@ async function setupDatabase() {
           UNIQUE(conversation_id)
         );
       `);
-    console.log('✅ Created interview_sessions table');
+    console.log('✅ Created elevenlabs_interview_sessions table');
 
     // Create indexes for better performance
     await executeQuery(`
@@ -195,10 +195,10 @@ async function setupDatabase() {
         CREATE INDEX IF NOT EXISTS idx_interviews_conversation_id ON interviews(conversation_id);
         CREATE INDEX IF NOT EXISTS idx_evaluations_interview_id ON interview_evaluations(interview_id);
         CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);
-        CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON interview_sessions(user_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_client_session_id ON interview_sessions(client_session_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_conversation_id ON interview_sessions(conversation_id);
-        CREATE INDEX IF NOT EXISTS idx_sessions_status ON interview_sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_user_id ON elevenlabs_interview_sessions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_client_session_id ON elevenlabs_interview_sessions(client_session_id);
+        CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_conversation_id ON elevenlabs_interview_sessions(conversation_id);
+        CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_status ON elevenlabs_interview_sessions(status);
       `);
     console.log('✅ Created indexes');
 
