@@ -1708,4 +1708,42 @@ const tokenRateLimiter = rateLimit({
     }
   });
 
+  // ========================================================================
+  // ElevenLabs Server Tool: Mark interview as complete
+  // ========================================================================
+  app.post("/api/mark-interview-complete", async (req, res) => {
+    try {
+      // Validate API secret header
+      const apiSecret = req.headers['x-api-secret'];
+      if (!apiSecret || apiSecret !== API_SECRET) {
+        return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+      }
+
+      // Validate required body fields
+      const interviewId = req.body?.interviewid as string | undefined;
+      const conversationId = req.body?.conversationid as string | undefined;
+      const candidateId = req.body?.candidateid as string | undefined;
+
+      if (!interviewId || !conversationId || !candidateId) {
+        return res.status(400).json({ 
+          error: 'Missing required fields',
+          required: ['interviewid', 'conversationid', 'candidateid']
+        });
+      }
+
+      // Log the completion signal
+      console.log(`MARK_INTERVIEW_COMPLETE interviewid=${interviewId}, conversationid=${conversationId}`);
+
+      // Return success response
+      return res.json({
+        status: "completed",
+        interviewid: interviewId,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      console.error('[MARK-INTERVIEW-COMPLETE] Error:', error);
+      return res.status(500).json({ error: 'Failed to mark interview as complete' });
+    }
+  });
+
 }

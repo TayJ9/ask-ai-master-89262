@@ -33,6 +33,8 @@ interface VoiceInterviewWebSocketProps {
     resumeSource?: string;
   };
   onComplete: (results?: any) => void;
+  /** Callback when interview ends via tool call (e.g., MarkInterviewComplete) */
+  onInterviewEnd?: (data: { status: string; timestamp: string; reason: string }) => void;
   /** When false, component stays mounted but renders nothing. Prevents unmount during async ops. */
   isActive?: boolean;
 }
@@ -52,6 +54,7 @@ export default function VoiceInterviewWebSocket({
   major,
   candidateContext,
   onComplete,
+  onInterviewEnd,
   isActive = true, // Default to true for backward compatibility
 }: VoiceInterviewWebSocketProps) {
   // Try to derive candidate_id from stored user (auth token is already required upstream)
@@ -166,7 +169,7 @@ export default function VoiceInterviewWebSocket({
     isStartingRef.current = false;
   }, []);
 
-  const handleDisconnect = useCallback((reason: any) => {
+  const handleDisconnect = useCallback(async (reason: any) => {
     console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
     console.error("Reason:", typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason);
     console.log('[ELEVEN DISCONNECT]', {
@@ -192,7 +195,13 @@ export default function VoiceInterviewWebSocket({
     // This prevents unmounting the component if disconnect happens during connection
     const wasInterviewActive = hasStartedRef.current;
     
-    console.log('Disconnect - wasInterviewActive:', wasInterviewActive);
+    // Detect if this is an agent-initiated disconnect (interview ended normally)
+    const isAgentDisconnect = reasonStr.toLowerCase().includes('agent') || 
+                              reasonStr.toLowerCase().includes('completed') ||
+                              reasonStr.toLowerCase().includes('finished') ||
+                              reasonStr.toLowerCase().includes('ended');
+    
+    console.log('Disconnect - wasInterviewActive:', wasInterviewActive, 'isAgentDisconnect:', isAgentDisconnect);
     
     // Reset starting state
     setIsStarting(false);
@@ -206,20 +215,51 @@ export default function VoiceInterviewWebSocket({
     
     if (wasInterviewActive) {
       // Interview was active - save and complete
-      setStatusMessage("Interview ended");
-      saveInterview(conversationIdRef.current, 'disconnect');
-      onComplete({ sessionId, conversationId: conversationIdRef.current });
+      setStatusMessage("Saving interview...");
+      try {
+        // Await save to complete before navigating
+        await saveInterview(conversationIdRef.current, 'disconnect');
+        console.log('Interview saved successfully, navigating to results');
+        onComplete({ sessionId, conversationId: conversationIdRef.current });
+      } catch (error) {
+        console.error('Failed to save interview before navigation:', error);
+        // Still navigate even if save fails - user should see results
+        // The save-interview endpoint is idempotent and can be retried
+        onComplete({ sessionId, conversationId: conversationIdRef.current });
+      }
       } else {
       // Disconnect during connection attempt - return to idle state
       console.log('Disconnect during connection - returning to idle state');
       setIsIdle(true);
       setStatusMessage("Connection failed. Click to try again.");
     }
-  }, [onComplete, saveInterview]);
+  }, [onComplete, saveInterview, sessionId]);
 
   const handleMessage = useCallback((message: any) => {
     if (!isMountedRef.current) return;
     console.log('SDK Message:', message);
+    
+    // Check for tool_call events (e.g., MarkInterviewComplete)
+    if (message.type === 'tool_call' || message.tool_call || message.tool_name) {
+      const toolCall = message.tool_call || message;
+      const toolName = toolCall.tool_name || message.tool_name;
+      
+      console.log('Tool call received:', toolCall);
+      
+      if (toolName === 'MarkInterviewComplete') {
+        console.log('Interview completion signal received via tool call');
+        
+        // Trigger the onInterviewEnd prop function to switch views
+        if (onInterviewEnd) {
+          onInterviewEnd({
+            status: 'completed',
+            timestamp: new Date().toISOString(),
+            reason: 'tool_call'
+          });
+        }
+      }
+      return; // Don't process tool calls as regular messages
+    }
     
     // SDK message has { message: string, source: 'user' | 'ai' }
     const text = message.message || '';
@@ -285,7 +325,7 @@ export default function VoiceInterviewWebSocket({
         ];
       });
     }
-  }, []);
+  }, [onInterviewEnd]);
 
   const handleError = useCallback((error: any) => {
     console.error("🔥🔥🔥 CRITICAL: SDK ERROR 🔥🔥🔥", error);
@@ -736,16 +776,31 @@ export default function VoiceInterviewWebSocket({
         if (conversation.status === 'connected') {
           console.log('Attempting to END session...');
           await conversation.endSession();
-        } else {
-          // If not connected, just complete locally
-          saveInterview(conversationId, 'user');
+        }
+        
+        // Always save interview state before navigating
+        setStatusMessage("Saving interview...");
+        try {
+          await saveInterview(conversationId, 'user');
+          console.log('Interview saved successfully, navigating to results');
+          onComplete({ sessionId, conversationId });
+        } catch (saveError) {
+          console.error('Error saving interview:', saveError);
+          // Still navigate even if save fails - user should see results
+          // The save-interview endpoint is idempotent and can be retried
           onComplete({ sessionId, conversationId });
         }
       } catch (error) {
         console.error('Error ending session:', error);
-        // Still call onComplete even if endSession fails
-        saveInterview(conversationId, 'user');
-        onComplete({ sessionId, conversationId });
+        // Still try to save and complete even if endSession fails
+        try {
+          setStatusMessage("Saving interview...");
+          await saveInterview(conversationId, 'user');
+          onComplete({ sessionId, conversationId });
+        } catch (saveError) {
+          console.error('Error saving interview:', saveError);
+          onComplete({ sessionId, conversationId });
+        }
       }
     }
   }, [conversation, conversationId, sessionId, saveInterview, onComplete]);

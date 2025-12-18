@@ -241,30 +241,54 @@ export default function Index() {
   };
 
   const handleCompleteInterview = (results?: any) => {
-    // Navigate to results page with sessionId and conversationId
+    // Navigate to results page with sessionId and conversationId as query params
     const sessionId = voiceSessionId || results?.sessionId;
     const conversationId = results?.conversationId;
     
-    if (sessionId) {
-      const params = new URLSearchParams({ sessionId });
-      if (conversationId) {
-        params.set('conversationId', conversationId);
-      }
-      setLocation(`/results?${params.toString()}`);
-    } else {
-      // Fallback: go back to roles if no sessionId
+    if (!sessionId) {
+      console.error('No sessionId available for results navigation');
       toast({
-        title: "Interview Complete!",
-        description: "Redirecting to results...",
+        title: "Error",
+        description: "Unable to navigate to results - session ID missing",
+        variant: "destructive",
       });
-      setCurrentView("roles");
-      setSelectedRole("");
-      setResumeText("");
-      setVoiceSessionId(null);
-      setFirstQuestion("");
-      setVoiceInterviewData(null);
-      setCandidateContext(null);
+      return;
     }
+    
+    // Build query params
+    const params = new URLSearchParams();
+    params.set('sessionId', sessionId);
+    if (conversationId) {
+      params.set('conversationId', conversationId);
+    }
+    
+    // Navigate to results route
+    setLocation(`/results?${params.toString()}`);
+    
+    toast({
+      title: "Interview Complete!",
+      description: "Loading your results...",
+    });
+  };
+
+  const handleBackHome = () => {
+    setCurrentView("roles");
+    setSelectedRole("");
+    setResumeText("");
+    setVoiceSessionId(null);
+    setFirstQuestion("");
+    setVoiceInterviewData(null);
+    setCandidateContext(null);
+  };
+
+  const handlePracticeAgain = () => {
+    setCurrentView("roles");
+    setSelectedRole("");
+    setResumeText("");
+    setVoiceSessionId(null);
+    setFirstQuestion("");
+    setVoiceInterviewData(null);
+    setCandidateContext(null);
   };
 
   if (!user) {
@@ -356,6 +380,14 @@ export default function Index() {
               resumeSource: candidateContext.resumeSource,
             }}
             onComplete={handleCompleteInterview}
+            onInterviewEnd={(data) => {
+              console.log('Interview ended via tool call:', data);
+              // Transition to results screen using the same handler
+              handleCompleteInterview({
+                sessionId: candidateContext.sessionId,
+                conversationId: undefined, // Will be populated from the interview data
+              });
+            }}
             isActive={currentView === "voice"}
           />
         </VoiceInterviewErrorBoundary>
@@ -378,6 +410,7 @@ export default function Index() {
       {currentView === "history" && (
         <SessionHistory userId={user.id} onBack={() => setCurrentView("roles")} />
       )}
+
     </>
   );
 }
