@@ -1573,68 +1573,94 @@ const tokenRateLimiter = rateLimit({
       const clientEndedAt = new Date();
 
       // Try to find existing interview by conversation_id first (if provided)
+      // conversation_id is optional - agent may hang up before it's available
       let interviewId: string | null = null;
       if (conversation_id) {
-        const existingInterview = await (db.query as any).interviews?.findFirst({
-          where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
-        });
-        if (existingInterview) {
-          interviewId = existingInterview.id;
+        try {
+          const existingInterview = await (db.query as any).interviews?.findFirst({
+            where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
+          });
+          if (existingInterview) {
+            interviewId = existingInterview.id;
           // Update interview status
           await db.update(interviews)
             .set({
               status: 'completed',
               endedAt: clientEndedAt,
-              updatedAt: new Date(),
             })
             .where(eq(interviews.id, interviewId));
-          console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
+            console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
+          }
+        } catch (dbError: any) {
+          console.error('[SAVE-INTERVIEW] Error finding interview by conversation_id:', dbError);
+          // Continue execution - don't fail if conversation_id lookup fails
         }
       }
 
       // Find or create elevenlabs_interview_sessions record
-      const existingSession = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-        where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
-      });
-
-      if (existingSession) {
-        // Update existing session
-        await db.update(elevenLabsInterviewSessions)
-          .set({
-            conversationId: conversation_id || existingSession.conversationId,
-            interviewId: interviewId || existingSession.interviewId,
-            status: interviewId ? 'completed' : 'ended_pending_webhook',
-            endedBy: ended_by || existingSession.endedBy,
-            endedAt: clientEndedAt,
-            clientEndedAt: clientEndedAt,
-            updatedAt: new Date(),
-          })
-          .where(eq(elevenLabsInterviewSessions.clientSessionId, client_session_id));
-        console.log(`[SAVE-INTERVIEW] Updated session ${existingSession.id} for client_session_id ${client_session_id}`);
-      } else {
-        // Create new session record
-        const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
-        const sessionData = insertElevenLabsInterviewSessionSchema.parse({
-          userId,
-          agentId,
-          clientSessionId: client_session_id,
-          conversationId: conversation_id || null,
-          interviewId: interviewId || null,
-          status: interviewId ? 'completed' : 'ended_pending_webhook',
-          endedBy: ended_by || null,
-          endedAt: clientEndedAt,
-          clientEndedAt: clientEndedAt,
+      // Wrap in try/catch to handle database errors gracefully
+      try {
+        const existingSession = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+          where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
         });
-        const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionData as any).returning();
-        console.log(`[SAVE-INTERVIEW] Created session ${session.id} for client_session_id ${client_session_id}`);
+
+        if (existingSession) {
+          // Update existing session
+          try {
+            await db.update(elevenLabsInterviewSessions)
+              .set({
+                conversationId: conversation_id || existingSession.conversationId,
+                interviewId: interviewId || existingSession.interviewId,
+                status: interviewId ? 'completed' : 'ended_pending_webhook',
+                endedBy: ended_by || existingSession.endedBy,
+                endedAt: clientEndedAt,
+                clientEndedAt: clientEndedAt,
+                updatedAt: new Date(),
+              })
+              .where(eq(elevenLabsInterviewSessions.clientSessionId, client_session_id));
+            console.log(`[SAVE-INTERVIEW] Updated session ${existingSession.id} for client_session_id ${client_session_id}`);
+          } catch (updateError: any) {
+            console.error('[SAVE-INTERVIEW] Error updating session:', updateError);
+            // Continue - don't fail the request
+          }
+        } else {
+          // Create new session record
+          try {
+            const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+            const sessionData = insertElevenLabsInterviewSessionSchema.parse({
+              userId,
+              agentId,
+              clientSessionId: client_session_id,
+              conversationId: conversation_id || null, // conversation_id is optional
+              interviewId: interviewId || null,
+              status: interviewId ? 'completed' : 'ended_pending_webhook',
+              endedBy: ended_by || null,
+              endedAt: clientEndedAt,
+              clientEndedAt: clientEndedAt,
+            });
+            const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionData as any).returning();
+            console.log(`[SAVE-INTERVIEW] Created session ${session.id} for client_session_id ${client_session_id}`);
+          } catch (insertError: any) {
+            console.error('[SAVE-INTERVIEW] Error creating session:', insertError);
+            // Continue - don't fail the request
+          }
+        }
+      } catch (sessionError: any) {
+        console.error('[SAVE-INTERVIEW] Error querying/updating session:', sessionError);
+        // Continue - don't fail the request
       }
 
-      // Always return success (idempotent)
+      // Always return 200 OK even if database operations had issues
+      // This allows frontend to navigate to results page
+      // The webhook will eventually sync the correct state
       res.json({ success: true });
     } catch (error: any) {
-      console.error('[SAVE-INTERVIEW] Error processing client end notification:', error);
-      res.status(500).json({ 
-        error: 'Failed to process interview end notification',
+      console.error('[SAVE-INTERVIEW] Unexpected error processing client end notification:', error);
+      // Return 200 OK instead of 500 to allow frontend navigation
+      // Log the error but don't block the user flow
+      res.status(200).json({ 
+        success: false,
+        error: 'Some data may not have been saved, but you can still view results',
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }

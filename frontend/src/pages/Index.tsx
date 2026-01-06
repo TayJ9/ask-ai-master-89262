@@ -109,10 +109,12 @@ export default function Index() {
   };
 
   const handleSelectRole = (role: string, mode: "text" | "voice" = "voice") => {
-    console.log('handleSelectRole called with:', role, mode);
+    // Ensure role is never empty - default to "General Interview"
+    const normalizedRole = role?.trim() || "General Interview";
+    console.log('handleSelectRole called with:', normalizedRole, mode);
     // Clear any previous interview state before starting new interview
     resetInterviewState();
-    setSelectedRole(role);
+    setSelectedRole(normalizedRole);
     setInterviewMode("voice"); // Always use voice mode
     // Show resume upload step before starting interview
     setCurrentView("resume");
@@ -126,7 +128,8 @@ export default function Index() {
     // Priority: candidateInfo.major (from ResumeUpload) > selectedRole (typed input) > "General Interview"
     // Use the major from candidateInfo (entered in ResumeUpload form) as primary source
     // Fall back to selectedRole (typed in Start Interview page) if candidateInfo.major is missing
-    const interviewRole = candidateInfo?.major || selectedRole || "General Interview";
+    // Ensure we never have an empty role - default to "General Interview"
+    const interviewRole = (candidateInfo?.major?.trim() || selectedRole?.trim() || "General Interview");
     
     if (candidateInfo) {
       setCandidateContext({

@@ -257,8 +257,12 @@ export default function Results() {
     return null;
   }
 
+  // Safely handle partial records - evaluation may be null or incomplete
   const evaluation = results.evaluation;
-  const overallScore = evaluation?.overallScore || evaluation?.evaluation?.overall_score || null;
+  const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
+  const overallScore = hasCompleteFeedback 
+    ? (evaluation?.overallScore || evaluation?.evaluation?.overall_score || null)
+    : null;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
@@ -284,7 +288,21 @@ export default function Results() {
           </CardContent>
         </Card>
 
-        {evaluation?.evaluation && (
+        {evaluation && !hasCompleteFeedback && (
+          <Card className="mb-6">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold mb-2">Processing your interview...</h3>
+                  <p className="text-gray-600 text-sm">Feedback and scores are being generated. This may take a few moments.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {hasCompleteFeedback && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Evaluation</CardTitle>

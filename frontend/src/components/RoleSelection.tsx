@@ -13,8 +13,10 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   const [roleInput, setRoleInput] = useState("");
 
   const handleBeginInterview = () => {
-    const typedRole = roleInput.trim() || ""; // Empty if blank
-    console.log('Begin Interview clicked:', typedRole || 'will use major from resume upload', 'voice');
+    // Default to "General Interview" if input is empty/whitespace
+    // This ensures we never pass empty string to VoiceInterviewWebSocket
+    const typedRole = roleInput.trim() || "General Interview";
+    console.log('Begin Interview clicked:', typedRole, 'voice');
     onSelectRole(typedRole, "voice");
   };
 
