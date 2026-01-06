@@ -34,7 +34,7 @@ interface VoiceInterviewWebSocketProps {
   };
   onComplete: (results?: any) => void;
   /** Callback when interview ends via tool call (e.g., MarkInterviewComplete) */
-  onInterviewEnd?: (data: { status: string; timestamp: string; reason: string }) => void;
+  onInterviewEnd?: (data: { status: string; timestamp: string; reason: string; sessionId?: string; conversationId?: string | null }) => void;
   /** When false, component stays mounted but renders nothing. Prevents unmount during async ops. */
   isActive?: boolean;
 }
@@ -249,14 +249,48 @@ export default function VoiceInterviewWebSocket({
       if (toolName === 'MarkInterviewComplete') {
         console.log('Interview completion signal received via tool call');
         
-        // Trigger the onInterviewEnd prop function to switch views
-        if (onInterviewEnd) {
-          onInterviewEnd({
-            status: 'completed',
-            timestamp: new Date().toISOString(),
-            reason: 'tool_call'
-          });
-        }
+        // Save interview before navigating to results
+        const handleInterviewComplete = async () => {
+          try {
+            setStatusMessage("Saving interview...");
+            console.log('Saving interview before navigation...', {
+              sessionId,
+              conversationId: conversationIdRef.current
+            });
+            
+            // Save interview with 'disconnect' as ended_by since agent called the tool (SDK will disconnect)
+            await saveInterview(conversationIdRef.current, 'disconnect');
+            
+            console.log('Interview saved successfully, triggering navigation to results');
+            
+            // Trigger the onInterviewEnd prop function to switch views
+            if (onInterviewEnd) {
+              onInterviewEnd({
+                status: 'completed',
+                timestamp: new Date().toISOString(),
+                reason: 'tool_call',
+                sessionId: sessionId,
+                conversationId: conversationIdRef.current
+              });
+            }
+          } catch (error: any) {
+            console.error('Error saving interview before navigation:', error);
+            // Still navigate even if save fails - user should see results
+            // The save-interview endpoint is idempotent and can be retried
+            if (onInterviewEnd) {
+              onInterviewEnd({
+                status: 'completed',
+                timestamp: new Date().toISOString(),
+                reason: 'tool_call',
+                sessionId: sessionId,
+                conversationId: conversationIdRef.current
+              });
+            }
+          }
+        };
+        
+        // Execute async handler
+        handleInterviewComplete();
       }
       return; // Don't process tool calls as regular messages
     }

@@ -383,9 +383,10 @@ export default function Index() {
             onInterviewEnd={(data) => {
               console.log('Interview ended via tool call:', data);
               // Transition to results screen using the same handler
+              // Use sessionId and conversationId from callback data, with fallbacks
               handleCompleteInterview({
-                sessionId: candidateContext.sessionId,
-                conversationId: undefined, // Will be populated from the interview data
+                sessionId: data?.sessionId || candidateContext.sessionId || voiceSessionId,
+                conversationId: data?.conversationId || undefined,
               });
             }}
             isActive={currentView === "voice"}
