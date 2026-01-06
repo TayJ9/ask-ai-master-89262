@@ -73,8 +73,20 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       const data = await apiPost(endpoint, body);
 
       if (isLogin) {
-        localStorage.setItem('auth_token', data.token);
-        localStorage.setItem('user', JSON.stringify(data.user));
+        // Validate response structure
+        if (!data.token || !data.user) {
+          throw new Error('Invalid response from server. Missing token or user data.');
+        }
+        
+        // Store auth data in localStorage with error handling
+        try {
+          localStorage.setItem('auth_token', data.token);
+          localStorage.setItem('user', JSON.stringify(data.user));
+        } catch (storageError: any) {
+          console.error('Failed to store auth data:', storageError);
+          throw new Error('Failed to save authentication data. Please check your browser settings.');
+        }
+        
         toast({ title: "Welcome back!" });
         onAuthSuccess(data.user, data.token);
       } else {
@@ -83,7 +95,10 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           description: "Your account has been created successfully. You can now sign in with your credentials.",
         });
         setIsLogin(true);
+        // Clear password but keep email for convenience
         setPassword("");
+        // Optionally clear name field
+        setFullName("");
       }
     } catch (error: any) {
       const { ApiError } = await import('@/lib/api');

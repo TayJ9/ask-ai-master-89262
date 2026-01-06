@@ -59,10 +59,26 @@ export default function Index() {
   }, [location, previousLocation, resetInterviewState]);
 
   useEffect(() => {
-    const token = localStorage.getItem('auth_token');
-    const storedUser = localStorage.getItem('user');
-    if (token && storedUser) {
-      setUser(JSON.parse(storedUser));
+    // Safely retrieve and parse stored auth data
+    try {
+      const token = localStorage.getItem('auth_token');
+      const storedUser = localStorage.getItem('user');
+      if (token && storedUser) {
+        const parsedUser = JSON.parse(storedUser);
+        // Validate user object has required fields
+        if (parsedUser && parsedUser.id && parsedUser.email) {
+          setUser(parsedUser);
+        } else {
+          console.warn('Invalid user data in localStorage, clearing...');
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('user');
+        }
+      }
+    } catch (error) {
+      console.error('Error loading user from localStorage:', error);
+      // Clear corrupted data
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('user');
     }
     // Only hydrate candidate context if we're not coming from results page
     // This prevents stale state from persisting after restart
