@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
