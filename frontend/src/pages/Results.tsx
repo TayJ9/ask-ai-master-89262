@@ -362,7 +362,15 @@ export default function Results() {
         )}
 
         <div className="mt-6 flex justify-center">
-          <Button onClick={() => navigate('/')} variant="outline">
+          <Button 
+            onClick={() => {
+              // Clear interview-related localStorage before navigating to prevent stale state
+              console.log('Clearing interview state before navigating home');
+              localStorage.removeItem('candidate_context');
+              navigate('/');
+            }} 
+            variant="outline"
+          >
             Back to Home
           </Button>
         </div>

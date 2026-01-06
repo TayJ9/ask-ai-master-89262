@@ -91,6 +91,7 @@ export default function VoiceInterviewWebSocket({
   const firstAiFinalizedRef = useRef(false);
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
+  const isInterviewCompleteRef = useRef(false); // Track if interview completed successfully to prevent cleanup from interfering
   
   const { toast } = useToast();
 
@@ -196,12 +197,24 @@ export default function VoiceInterviewWebSocket({
     const wasInterviewActive = hasStartedRef.current;
     
     // Detect if this is an agent-initiated disconnect (interview ended normally)
+    // Check for various indicators that the agent ended the interview:
+    // 1. Reason string contains agent-related keywords
+    // 2. Interview was already marked complete via tool call
+    // 3. Reason indicates normal completion
     const isAgentDisconnect = reasonStr.toLowerCase().includes('agent') || 
                               reasonStr.toLowerCase().includes('completed') ||
                               reasonStr.toLowerCase().includes('finished') ||
-                              reasonStr.toLowerCase().includes('ended');
+                              reasonStr.toLowerCase().includes('ended') ||
+                              reasonStr.toLowerCase().includes('conversation.end') ||
+                              reasonStr.toLowerCase().includes('interview complete') ||
+                              isInterviewCompleteRef.current; // Already completed via tool call
     
-    console.log('Disconnect - wasInterviewActive:', wasInterviewActive, 'isAgentDisconnect:', isAgentDisconnect);
+    console.log('Disconnect - wasInterviewActive:', wasInterviewActive, 'isAgentDisconnect:', isAgentDisconnect, 'reason:', reasonStr);
+    
+    // If interview was already completed via tool call, mark as complete
+    if (isInterviewCompleteRef.current) {
+      console.log('✅ Interview already completed via tool call - disconnect is expected');
+    }
     
     // Reset starting state
     setIsStarting(false);
@@ -213,20 +226,40 @@ export default function VoiceInterviewWebSocket({
       volumeIntervalRef.current = null;
     }
     
-    if (wasInterviewActive) {
-      // Interview was active - save and complete
+      if (wasInterviewActive && !isInterviewCompleteRef.current) {
+      // Interview was active - save and complete (only if not already completed)
+      // If this is an agent-initiated disconnect, treat it as interview completion
+      if (isAgentDisconnect) {
+        console.log('🤖 Agent-initiated disconnect detected - marking interview as complete');
+        isInterviewCompleteRef.current = true;
+      }
+      
       setStatusMessage("Saving interview...");
       try {
         // Await save to complete before navigating
+        // Use 'disconnect' for both agent and normal disconnects (backend handles the distinction)
         await saveInterview(conversationIdRef.current, 'disconnect');
-        console.log('Interview saved successfully, navigating to results');
+        console.log('Interview saved successfully, navigating to results', { 
+          isAgentDisconnect,
+          isComplete: isInterviewCompleteRef.current 
+        });
+        // Mark as complete before navigation (if not already set)
+        if (!isInterviewCompleteRef.current) {
+          isInterviewCompleteRef.current = true;
+        }
         onComplete({ sessionId, conversationId: conversationIdRef.current });
       } catch (error) {
         console.error('Failed to save interview before navigation:', error);
         // Still navigate even if save fails - user should see results
         // The save-interview endpoint is idempotent and can be retried
+        if (!isInterviewCompleteRef.current) {
+          isInterviewCompleteRef.current = true;
+        }
         onComplete({ sessionId, conversationId: conversationIdRef.current });
       }
+      } else if (wasInterviewActive && isInterviewCompleteRef.current) {
+      // Interview was already completed - this disconnect is expected (e.g., after tool call)
+      console.log('✅ Interview already completed - disconnect is expected, skipping save');
       } else {
       // Disconnect during connection attempt - return to idle state
       console.log('Disconnect during connection - returning to idle state');
@@ -263,6 +296,9 @@ export default function VoiceInterviewWebSocket({
             
             console.log('Interview saved successfully, triggering navigation to results');
             
+            // Mark interview as complete before navigation to prevent cleanup from interfering
+            isInterviewCompleteRef.current = true;
+            
             // Trigger the onInterviewEnd prop function to switch views
             if (onInterviewEnd) {
               onInterviewEnd({
@@ -277,6 +313,7 @@ export default function VoiceInterviewWebSocket({
             console.error('Error saving interview before navigation:', error);
             // Still navigate even if save fails - user should see results
             // The save-interview endpoint is idempotent and can be retried
+            isInterviewCompleteRef.current = true;
             if (onInterviewEnd) {
               onInterviewEnd({
                 status: 'completed',
@@ -817,11 +854,14 @@ export default function VoiceInterviewWebSocket({
         try {
           await saveInterview(conversationId, 'user');
           console.log('Interview saved successfully, navigating to results');
+          // Mark as complete before navigation to prevent cleanup from interfering
+          isInterviewCompleteRef.current = true;
           onComplete({ sessionId, conversationId });
         } catch (saveError) {
           console.error('Error saving interview:', saveError);
           // Still navigate even if save fails - user should see results
           // The save-interview endpoint is idempotent and can be retried
+          isInterviewCompleteRef.current = true;
           onComplete({ sessionId, conversationId });
         }
       } catch (error) {
@@ -830,9 +870,11 @@ export default function VoiceInterviewWebSocket({
         try {
           setStatusMessage("Saving interview...");
           await saveInterview(conversationId, 'user');
+          isInterviewCompleteRef.current = true;
           onComplete({ sessionId, conversationId });
         } catch (saveError) {
           console.error('Error saving interview:', saveError);
+          isInterviewCompleteRef.current = true;
           onComplete({ sessionId, conversationId });
         }
       }
@@ -856,12 +898,21 @@ export default function VoiceInterviewWebSocket({
     console.log("🟢 COMPONENT MOUNTED");
     isMountedRef.current = true;
     return () => {
-      console.log("🔴 COMPONENT UNMOUNTED - TRIGGERING CLEANUP");
+      const isComplete = isInterviewCompleteRef.current;
+      console.log("🔴 COMPONENT UNMOUNTED - TRIGGERING CLEANUP", { isInterviewComplete: isComplete });
       isMountedRef.current = false;
       
+      // Only clean up volume polling - don't interfere if interview completed successfully
       if (volumeIntervalRef.current) {
         clearInterval(volumeIntervalRef.current);
         volumeIntervalRef.current = null;
+      }
+      
+      // If interview completed successfully, skip any cleanup that might interfere with navigation
+      // The navigation to /results should proceed without interference
+      if (isComplete) {
+        console.log("✅ Interview completed - skipping cleanup logic to allow navigation");
+        return;
       }
       
       // NOTE: We do NOT automatically end the session here anymore.

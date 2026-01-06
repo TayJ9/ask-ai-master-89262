@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 
 export default function Index() {
-  const [, setLocation] = useLocation();
+  const [location, setLocation] = useLocation();
   const [user, setUser] = useState<any>(null);
   const [currentView, setCurrentView] = useState<"roles" | "resume" | "interview" | "voice" | "history">("roles");
   const [selectedRole, setSelectedRole] = useState<string>("");
@@ -25,12 +25,38 @@ export default function Index() {
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
   const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string; resumeText?: string; resumeSource?: string} | null>(null);
+  const [previousLocation, setPreviousLocation] = useState<string>("");
   const { toast } = useToast();
   
+  // Reset all interview-related state and localStorage
+  const resetInterviewState = useCallback(() => {
+    console.log('Resetting interview state...');
+    setCurrentView("roles");
+    setSelectedRole("");
+    setResumeText("");
+    setVoiceSessionId(null);
+    setFirstQuestion("");
+    setVoiceInterviewData(null);
+    setCandidateContext(null);
+    // Clear localStorage to prevent stale state
+    localStorage.removeItem('candidate_context');
+    console.log('Interview state reset complete');
+  }, []);
+
   // Debug logging
   useEffect(() => {
     console.log('Current view:', currentView, 'Selected role:', selectedRole);
   }, [currentView, selectedRole]);
+
+  // Track location changes to detect navigation from results page
+  useEffect(() => {
+    // If navigating from /results to /, clear interview state
+    if (previousLocation.startsWith('/results') && location === '/') {
+      console.log('Navigating from results page - clearing interview state');
+      resetInterviewState();
+    }
+    setPreviousLocation(location);
+  }, [location, previousLocation, resetInterviewState]);
 
   useEffect(() => {
     const token = localStorage.getItem('auth_token');
@@ -38,15 +64,18 @@ export default function Index() {
     if (token && storedUser) {
       setUser(JSON.parse(storedUser));
     }
-    // Hydrate candidate context from localStorage as a safety net
-    try {
-      const storedContext = localStorage.getItem('candidate_context');
-      if (storedContext && !candidateContext) {
-        const parsed = JSON.parse(storedContext);
-        setCandidateContext(parsed);
+    // Only hydrate candidate context if we're not coming from results page
+    // This prevents stale state from persisting after restart
+    if (!location.startsWith('/results')) {
+      try {
+        const storedContext = localStorage.getItem('candidate_context');
+        if (storedContext && !candidateContext) {
+          const parsed = JSON.parse(storedContext);
+          setCandidateContext(parsed);
+        }
+      } catch (e) {
+        console.warn('Failed to hydrate candidate_context', e);
       }
-    } catch (e) {
-      console.warn('Failed to hydrate candidate_context', e);
     }
   }, []);
 
@@ -65,6 +94,8 @@ export default function Index() {
 
   const handleSelectRole = (role: string, mode: "text" | "voice" = "voice") => {
     console.log('handleSelectRole called with:', role, mode);
+    // Clear any previous interview state before starting new interview
+    resetInterviewState();
     setSelectedRole(role);
     setInterviewMode("voice"); // Always use voice mode
     // Show resume upload step before starting interview
@@ -262,7 +293,9 @@ export default function Index() {
       params.set('conversationId', conversationId);
     }
     
-    // Navigate to results route
+    console.log('Navigating to results page:', { sessionId, conversationId });
+    
+    // Navigate to results route - setLocation from wouter handles SPA navigation
     setLocation(`/results?${params.toString()}`);
     
     toast({
@@ -272,23 +305,11 @@ export default function Index() {
   };
 
   const handleBackHome = () => {
-    setCurrentView("roles");
-    setSelectedRole("");
-    setResumeText("");
-    setVoiceSessionId(null);
-    setFirstQuestion("");
-    setVoiceInterviewData(null);
-    setCandidateContext(null);
+    resetInterviewState();
   };
 
   const handlePracticeAgain = () => {
-    setCurrentView("roles");
-    setSelectedRole("");
-    setResumeText("");
-    setVoiceSessionId(null);
-    setFirstQuestion("");
-    setVoiceInterviewData(null);
-    setCandidateContext(null);
+    resetInterviewState();
   };
 
   if (!user) {
