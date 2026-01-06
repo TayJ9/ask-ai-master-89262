@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { ArrowRight, Mic } from "lucide-react";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 
@@ -7,9 +10,12 @@ interface RoleSelectionProps {
 }
 
 export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
+  const [roleInput, setRoleInput] = useState("");
+
   const handleBeginInterview = () => {
-    console.log('Begin Interview clicked: software-engineer, voice');
-    onSelectRole("software-engineer", "voice");
+    const typedRole = roleInput.trim() || ""; // Empty if blank
+    console.log('Begin Interview clicked:', typedRole || 'will use major from resume upload', 'voice');
+    onSelectRole(typedRole, "voice");
   };
 
   return (
@@ -24,16 +30,39 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           </p>
         </div>
 
-        <Button
-          onClick={handleBeginInterview}
-          size="lg"
-          className="gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6"
-          data-testid="button-begin-interview"
-        >
-          <Mic className="w-5 h-5 mr-2" />
-          Begin Interview
-          <ArrowRight className="w-5 h-5 ml-2" />
-        </Button>
+        <div className="w-full max-w-md space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="role-input">Target Role / Major (Optional)</Label>
+            <Input
+              id="role-input"
+              type="text"
+              placeholder="e.g., Music, Finance, Software Engineering"
+              value={roleInput}
+              onChange={(e) => setRoleInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  handleBeginInterview();
+                }
+              }}
+              className="text-lg"
+              data-testid="input-role"
+            />
+            <p className="text-sm text-muted-foreground">
+              Leave blank to use major from resume upload
+            </p>
+          </div>
+
+          <Button
+            onClick={handleBeginInterview}
+            size="lg"
+            className="w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6"
+            data-testid="button-begin-interview"
+          >
+            <Mic className="w-5 h-5 mr-2" />
+            Begin Interview
+            <ArrowRight className="w-5 h-5 ml-2" />
+          </Button>
+        </div>
       </div>
     </AnimatedBackground>
   );

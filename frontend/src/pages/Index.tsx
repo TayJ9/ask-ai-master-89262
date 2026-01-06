@@ -123,11 +123,16 @@ export default function Index() {
     setResumeText(resume);
     
     // Store candidate info for voice interview
+    // Priority: candidateInfo.major (from ResumeUpload) > selectedRole (typed input) > "General Interview"
+    // Use the major from candidateInfo (entered in ResumeUpload form) as primary source
+    // Fall back to selectedRole (typed in Start Interview page) if candidateInfo.major is missing
+    const interviewRole = candidateInfo?.major || selectedRole || "General Interview";
+    
     if (candidateInfo) {
       setCandidateContext({
         firstName: candidateInfo.firstName,
         name: candidateInfo.firstName,
-        major: candidateInfo.major,
+        major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
         year: candidateInfo.year,
         sessionId: candidateInfo.sessionId,
         resumeText: resume,
@@ -138,7 +143,7 @@ export default function Index() {
         localStorage.setItem('candidate_context', JSON.stringify({
           firstName: candidateInfo.firstName,
           name: candidateInfo.firstName,
-          major: candidateInfo.major,
+          major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
           year: candidateInfo.year,
           sessionId: candidateInfo.sessionId,
           resumeText: resume,

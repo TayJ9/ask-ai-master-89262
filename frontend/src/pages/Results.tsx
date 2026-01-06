@@ -68,7 +68,7 @@ export default function Results() {
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollCountRef = useRef(0);
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
-  const MAX_EVAL_POLLS = 60; // 60 seconds max for evaluation (2s intervals)
+  const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
   // Poll for interviewId by sessionId
   const pollForInterviewId = async (): Promise<string | null> => {
@@ -132,20 +132,31 @@ export default function Results() {
         const resultsData = await fetchResults(interviewId);
         setResults(resultsData);
         
-        if (!resultsData.evaluation || resultsData.evaluation.status === 'pending') {
+        // Check if evaluation is null, incomplete, or pending
+        // evaluation.evaluation is the actual feedback JSON - check if it exists
+        const hasEvaluation = resultsData.evaluation !== null;
+        const hasFeedback = resultsData.evaluation?.evaluation !== null;
+        const evalStatus = resultsData.evaluation?.status;
+        
+        if (!hasEvaluation || !hasFeedback || evalStatus === 'pending') {
           // Phase 3: Poll for evaluation completion
+          // Show "Analyzing..." state - evaluation is being generated
           setStatus('evaluating');
           
           const pollForEvaluation = async () => {
             while (evalPollCount < MAX_EVAL_POLLS) {
               evalPollCount++;
-              await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2s
+              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s
               
               try {
                 const updatedResults = await fetchResults(interviewId!);
                 setResults(updatedResults);
                 
-                if (updatedResults.evaluation?.status === 'complete') {
+                // Check if evaluation is complete AND feedback exists
+                const hasCompleteEvaluation = updatedResults.evaluation?.status === 'complete';
+                const hasCompleteFeedback = updatedResults.evaluation?.evaluation !== null;
+                
+                if (hasCompleteEvaluation && hasCompleteFeedback) {
                   setStatus('complete');
                   return;
                 }
@@ -159,15 +170,15 @@ export default function Results() {
               }
             }
             
-            // Timeout
+            // Timeout after 30 seconds (10 polls * 3s)
             setError('Evaluation is taking longer than expected. Please refresh in a moment.');
             setStatus('error');
           };
           
           pollForEvaluation();
-        } else if (resultsData.evaluation.status === 'complete') {
+        } else if (evalStatus === 'complete' && hasFeedback) {
           setStatus('complete');
-        } else if (resultsData.evaluation.status === 'failed') {
+        } else if (evalStatus === 'failed') {
           setError('Evaluation failed. Please contact support.');
           setStatus('error');
         }
@@ -204,12 +215,12 @@ export default function Results() {
               <div className="text-center">
                 <h2 className="text-xl font-semibold mb-2">
                   {status === 'saving' && 'Saving your interview...'}
-                  {status === 'evaluating' && 'Generating your feedback...'}
+                  {status === 'evaluating' && 'Analyzing your interview...'}
                   {status === 'loading' && 'Loading results...'}
                 </h2>
                 <p className="text-gray-600 text-sm">
                   {status === 'saving' && 'Waiting for interview to be saved...'}
-                  {status === 'evaluating' && 'This may take a few moments...'}
+                  {status === 'evaluating' && 'Generating feedback and scores. This may take a few moments...'}
                   {status === 'loading' && 'Please wait...'}
                 </p>
               </div>
