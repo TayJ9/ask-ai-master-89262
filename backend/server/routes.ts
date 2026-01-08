@@ -54,7 +54,20 @@ function getJWTSecret(): string {
   return secret;
 }
 
-const API_SECRET = 'my_secret_interview_key_123';
+function getAgentId(): string {
+  const agentId = process.env.ELEVENLABS_AGENT_ID;
+  if (!agentId && process.env.NODE_ENV === 'production') {
+    throw new Error('ELEVENLABS_AGENT_ID environment variable must be set in production');
+  }
+  return agentId || "agent_8601kavsezrheczradx9qmz8qp3e"; // Dev fallback only
+}
+
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || (() => {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('ELEVENLABS_API_KEY environment variable must be set in production');
+  }
+  return 'dev-secret-key-change-before-production';
+})();
 const RESUME_FULLTEXT_MAX_CHARS = 12000;
 const TOKEN_CACHE_TTL_MS = 10 * 1000;
 const MAX_TOKEN_RETRIES = 3;
@@ -938,7 +951,7 @@ const tokenRateLimiter = rateLimit({
       console.log(`[CONVERSATION-TOKEN] Cache MISS - Processing new request (requestId=${requestId}, timestamp=${timestamp})`);
 
       const userId = req.userId;
-      const agentId = process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+      const agentId = getAgentId();
       const apiKey = process.env.ELEVENLABS_API_KEY;
 
       console.log(`[CONVERSATION-TOKEN] Request from user: ${userId} (requestId=${requestId}, timestamp=${timestamp})`);
@@ -1313,7 +1326,7 @@ const tokenRateLimiter = rateLimit({
       const interviewData = insertInterviewSchema.parse({
         userId: user_id,
         conversationId: conversation_id,
-        agentId: agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e",
+        agentId: agent_id || getAgentId(),
         transcript: transcript || null,
         durationSeconds: duration ? Math.round(duration) : null,
         startedAt: startedAt,
@@ -1347,7 +1360,7 @@ const tokenRateLimiter = rateLimit({
         const recentSessions = await (db.query as any).elevenLabsInterviewSessions?.findMany({
           where: (sessions: any, { eq, and, gte }: any) => and(
             eq(sessions.userId, user_id),
-            eq(sessions.agentId, agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e"),
+            eq(sessions.agentId, agent_id || getAgentId()),
             eq(sessions.interviewId, null), // Not already linked
             gte(sessions.startedAt, tenMinutesAgo) // Started within last 10 minutes
           ),
@@ -1370,7 +1383,7 @@ const tokenRateLimiter = rateLimit({
           console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
         } else {
           // Create a new session record for this webhook (fallback)
-          const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+          const agentId = agent_id || getAgentId();
           const sessionData = insertElevenLabsInterviewSessionSchema.parse({
             userId: user_id,
             agentId,
@@ -1427,6 +1440,11 @@ const tokenRateLimiter = rateLimit({
   // Get interview by client session ID
   // Used by frontend to look up interviewId when webhook may be delayed
   app.get("/api/interviews/by-session/:sessionId", authenticateToken, async (req: any, res) => {
+    console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/by-session/:sessionId - request:', {
+      sessionId: req.params.sessionId,
+      userId: req.userId,
+      timestamp: new Date().toISOString()
+    });
     try {
       const clientSessionId = req.params.sessionId;
       const userId = req.userId;
@@ -1480,11 +1498,17 @@ const tokenRateLimiter = rateLimit({
 
   // Get interview results with evaluation
   app.get("/api/interviews/:id/results", authenticateToken, async (req: any, res) => {
+    const interviewId = req.params.id;
+    console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - request:', {
+      interviewId,
+      userId: req.userId,
+      timestamp: new Date().toISOString()
+    });
     try {
-      const interviewId = req.params.id;
       const userId = req.userId;
 
       if (!interviewId) {
+        console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - Missing interviewId (400)');
         return res.status(400).json({ error: 'Interview ID required' });
       }
 
@@ -1497,8 +1521,21 @@ const tokenRateLimiter = rateLimit({
       });
 
       if (!interview) {
+        console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - Interview NOT FOUND (404):', {
+          interviewId,
+          userId,
+          timestamp: new Date().toISOString()
+        });
         return res.status(404).json({ error: 'Interview not found' });
       }
+      
+      console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - Interview found:', {
+        interviewId,
+        interviewStatus: interview.status,
+        hasTranscript: !!interview.transcript,
+        transcriptLength: interview.transcript?.length || 0,
+        timestamp: new Date().toISOString()
+      });
 
       // Load evaluation
       const evaluation = await (db.query as any).interviewEvaluations?.findFirst({
@@ -1510,8 +1547,7 @@ const tokenRateLimiter = rateLimit({
         where: (profiles: any, { eq }: any) => eq(profiles.id, userId),
       });
 
-      // Return results
-      res.json({
+      const responseData = {
         interview: {
           id: interview.id,
           conversationId: interview.conversationId,
@@ -1535,7 +1571,18 @@ const tokenRateLimiter = rateLimit({
           userId: interview.userId,
           userEmail: profile?.email || null,
         },
+      };
+      
+      console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - Returning response:', {
+        interviewId,
+        interviewStatus: interview.status,
+        hasEvaluation: !!evaluation,
+        evaluationStatus: evaluation?.status || 'null',
+        hasFeedback: !!evaluation?.evaluationJson,
+        timestamp: new Date().toISOString()
       });
+      
+      res.json(responseData);
     } catch (error: any) {
       console.error('[RESULTS] Error fetching interview results:', error);
       res.status(500).json({ 
@@ -1551,11 +1598,26 @@ const tokenRateLimiter = rateLimit({
   // Idempotent and safe to call before webhook arrives
   app.post("/api/save-interview", authenticateToken, async (req: any, res) => {
     try {
+      console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - incoming request body:', {
+        body: req.body,
+        userId: req.userId,
+        timestamp: new Date().toISOString()
+      });
+      
       const userId = req.userId;
       const client_session_id = req.body?.client_session_id as string;
       const conversation_id = req.body?.conversation_id as string | undefined;
       const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
       const agent_id = req.body?.agent_id as string | undefined;
+      
+      console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - parsed fields:', { 
+        userId, 
+        client_session_id, 
+        conversation_id: conversation_id || 'not provided',
+        ended_by,
+        agent_id: agent_id || 'not provided',
+        timestamp: new Date().toISOString()
+      });
       
       console.log('[SAVE-INTERVIEW] Client end notification', { 
         userId, 
@@ -1569,6 +1631,32 @@ const tokenRateLimiter = rateLimit({
       if (!client_session_id) {
         return res.status(400).json({ error: 'Missing client_session_id in body' });
       }
+
+      // UUID validation regex
+      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+      // Validate client_session_id format
+      if (!uuidRegex.test(client_session_id)) {
+        console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - VALIDATION FAILED: Invalid client_session_id format:', client_session_id);
+        return res.status(400).json({ error: 'Invalid client_session_id format. Must be a valid UUID.' });
+      }
+
+      // Validate userId format (from JWT middleware)
+      if (!userId || !uuidRegex.test(userId)) {
+        console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - VALIDATION FAILED: Invalid userId format:', userId);
+        return res.status(401).json({ error: 'Invalid user token. User ID must be a valid UUID.' });
+      }
+
+      // Validate ended_by enum
+      const validEndedBy = ['user', 'disconnect'];
+      if (ended_by && !validEndedBy.includes(ended_by)) {
+        console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - VALIDATION FAILED: Invalid ended_by value:', ended_by);
+        return res.status(400).json({ 
+          error: `Invalid ended_by value. Must be one of: ${validEndedBy.join(', ')}` 
+        });
+      }
+      
+      console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - All validations passed');
 
       const clientEndedAt = new Date();
 
@@ -1607,26 +1695,38 @@ const tokenRateLimiter = rateLimit({
         if (existingSession) {
           // Update existing session
           try {
+            const updateData = {
+              conversationId: conversation_id || existingSession.conversationId,
+              interviewId: interviewId || existingSession.interviewId,
+              status: interviewId ? 'completed' : 'ended_pending_webhook',
+              endedBy: ended_by || existingSession.endedBy,
+              endedAt: clientEndedAt,
+              clientEndedAt: clientEndedAt,
+              updatedAt: new Date(),
+            };
             await db.update(elevenLabsInterviewSessions)
-              .set({
-                conversationId: conversation_id || existingSession.conversationId,
-                interviewId: interviewId || existingSession.interviewId,
-                status: interviewId ? 'completed' : 'ended_pending_webhook',
-                endedBy: ended_by || existingSession.endedBy,
-                endedAt: clientEndedAt,
-                clientEndedAt: clientEndedAt,
-                updatedAt: new Date(),
-              })
+              .set(updateData)
               .where(eq(elevenLabsInterviewSessions.clientSessionId, client_session_id));
+            console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database UPDATE session:', {
+              sessionId: existingSession.id,
+              clientSessionId: client_session_id,
+              updateData,
+              timestamp: new Date().toISOString()
+            });
             console.log(`[SAVE-INTERVIEW] Updated session ${existingSession.id} for client_session_id ${client_session_id}`);
           } catch (updateError: any) {
+            console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database UPDATE session FAILED:', {
+              error: updateError.message || updateError,
+              clientSessionId: client_session_id,
+              timestamp: new Date().toISOString()
+            });
             console.error('[SAVE-INTERVIEW] Error updating session:', updateError);
             // Continue - don't fail the request
           }
         } else {
           // Create new session record
           try {
-            const agentId = agent_id || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+            const agentId = agent_id || getAgentId();
             const sessionData = insertElevenLabsInterviewSessionSchema.parse({
               userId,
               agentId,
@@ -1639,8 +1739,21 @@ const tokenRateLimiter = rateLimit({
               clientEndedAt: clientEndedAt,
             });
             const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionData as any).returning();
+            console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database INSERT session:', {
+              sessionId: session.id,
+              clientSessionId: client_session_id,
+              conversationId: conversation_id || null,
+              interviewId: interviewId || null,
+              status: sessionData.status,
+              timestamp: new Date().toISOString()
+            });
             console.log(`[SAVE-INTERVIEW] Created session ${session.id} for client_session_id ${client_session_id}`);
           } catch (insertError: any) {
+            console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database INSERT session FAILED:', {
+              error: insertError.message || insertError,
+              clientSessionId: client_session_id,
+              timestamp: new Date().toISOString()
+            });
             console.error('[SAVE-INTERVIEW] Error creating session:', insertError);
             // Continue - don't fail the request
           }
@@ -1672,7 +1785,7 @@ const tokenRateLimiter = rateLimit({
   app.post("/api/get-resume-profile", async (req, res) => {
     try {
       const apiSecret = req.headers['x-api-secret'];
-      if (!apiSecret || apiSecret !== API_SECRET) {
+      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
@@ -1701,7 +1814,7 @@ const tokenRateLimiter = rateLimit({
   app.post("/api/get-resume-fulltext", async (req, res) => {
     try {
       const apiSecret = req.headers['x-api-secret'];
-      if (!apiSecret || apiSecret !== API_SECRET) {
+      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
@@ -1741,7 +1854,7 @@ const tokenRateLimiter = rateLimit({
     try {
       // Validate API secret header
       const apiSecret = req.headers['x-api-secret'];
-      if (!apiSecret || apiSecret !== API_SECRET) {
+      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 

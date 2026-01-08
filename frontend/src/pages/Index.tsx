@@ -2,8 +2,6 @@ import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
-import InterviewSession from "@/components/InterviewSession";
-import VoiceInterview from "@/components/VoiceInterview";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
 import VoiceInterviewErrorBoundary from "@/components/VoiceInterviewErrorBoundary";
 import ResumeUpload from "@/components/ResumeUpload";
@@ -45,8 +43,14 @@ export default function Index() {
 
   // Debug logging
   useEffect(() => {
-    console.log('Current view:', currentView, 'Selected role:', selectedRole);
-  }, [currentView, selectedRole]);
+    console.log('[FLIGHT_RECORDER] [SETUP] View changed:', {
+      currentView,
+      selectedRole,
+      candidateContextExists: !!candidateContext,
+      candidateContextSessionId: candidateContext?.sessionId || null,
+      timestamp: new Date().toISOString()
+    });
+  }, [currentView, selectedRole, candidateContext]);
 
   // Track location changes to detect navigation from results page
   useEffect(() => {
@@ -132,7 +136,7 @@ export default function Index() {
     const interviewRole = (candidateInfo?.major?.trim() || selectedRole?.trim() || "General Interview");
     
     if (candidateInfo) {
-      setCandidateContext({
+      const newCandidateContext = {
         firstName: candidateInfo.firstName,
         name: candidateInfo.firstName,
         major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
@@ -140,10 +144,20 @@ export default function Index() {
         sessionId: candidateInfo.sessionId,
         resumeText: resume,
         resumeSource: candidateInfo.resumeSource || "unknown"
+      };
+      console.log('[FLIGHT_RECORDER] [SETUP] candidateContext updated:', {
+        firstName: newCandidateContext.firstName,
+        major: newCandidateContext.major,
+        year: newCandidateContext.year,
+        sessionId: newCandidateContext.sessionId,
+        resumeTextLength: newCandidateContext.resumeText?.length || 0,
+        resumeSource: newCandidateContext.resumeSource,
+        timestamp: new Date().toISOString()
       });
+      setCandidateContext(newCandidateContext);
       // Persist to localStorage to survive view changes/reloads
       try {
-        localStorage.setItem('candidate_context', JSON.stringify({
+        const contextToStore = {
           firstName: candidateInfo.firstName,
           name: candidateInfo.firstName,
           major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
@@ -151,9 +165,14 @@ export default function Index() {
           sessionId: candidateInfo.sessionId,
           resumeText: resume,
           resumeSource: candidateInfo.resumeSource || "unknown"
-        }));
+        };
+        localStorage.setItem('candidate_context', JSON.stringify(contextToStore));
+        console.log('[FLIGHT_RECORDER] [SETUP] candidateContext persisted to localStorage:', {
+          sessionId: contextToStore.sessionId,
+          timestamp: new Date().toISOString()
+        });
       } catch (e) {
-        console.warn('Failed to persist candidate_context', e);
+        console.warn('[FLIGHT_RECORDER] [SETUP] Failed to persist candidate_context', e);
       }
 
       if (shouldDebugEleven()) {
@@ -299,6 +318,15 @@ export default function Index() {
     // Navigate to results page with sessionId and conversationId as query params
     const sessionId = voiceSessionId || results?.sessionId;
     const conversationId = results?.conversationId;
+    console.log('[FLIGHT_RECORDER] [TRANSITION] handleCompleteInterview called:', {
+      resultsProvided: !!results,
+      resultsSessionId: results?.sessionId,
+      resultsConversationId: results?.conversationId,
+      voiceSessionId,
+      finalSessionId: sessionId,
+      finalConversationId: conversationId,
+      timestamp: new Date().toISOString()
+    });
     
     if (!sessionId) {
       console.error('No sessionId available for results navigation');
@@ -342,7 +370,7 @@ export default function Index() {
 
   return (
     <>
-      {currentView !== "interview" && (
+      {(
         <div className="fixed top-4 right-4 flex gap-2 z-50">
           {currentView === "resume" && (
             <Button
@@ -395,15 +423,6 @@ export default function Index() {
         />
       )}
       
-      {currentView === "interview" && (
-        <InterviewSession
-          role={selectedRole}
-          difficulty="medium"
-          userId={user.id}
-          onComplete={handleCompleteInterview}
-        />
-      )}
-
       {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
           This prevents unmounting during async operations like getUserMedia.
           Wrapped in ErrorBoundary to catch any errors and show fallback UI. */}
@@ -437,20 +456,6 @@ export default function Index() {
             isActive={currentView === "voice"}
           />
         </VoiceInterviewErrorBoundary>
-      )}
-      
-      {/* Fallback VoiceInterview for cases without candidateContext */}
-      {currentView === "voice" && voiceSessionId && !candidateContext?.sessionId && (
-        <VoiceInterview
-          sessionId={voiceSessionId}
-          userId={user.id}
-          role={selectedRole}
-          difficulty="medium"
-          resumeText={resumeText}
-          initialAudioResponse={voiceInterviewData?.audioResponse}
-          initialAgentText={voiceInterviewData?.agentResponseText}
-          onComplete={handleCompleteInterview}
-        />
       )}
       
       {currentView === "history" && (

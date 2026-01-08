@@ -61,26 +61,56 @@ export default function Results() {
   const sessionId = searchParams.get("sessionId");
   const conversationId = searchParams.get("conversationId");
   
+  console.log('[FLIGHT_RECORDER] [RESULTS] Page loaded - URL params extracted:', {
+    fullLocation: location,
+    sessionId: sessionId || 'null',
+    conversationId: conversationId || 'null',
+    timestamp: new Date().toISOString()
+  });
+  
   const [status, setStatus] = useState<'loading' | 'saving' | 'evaluating' | 'complete' | 'error'>('loading');
   const [results, setResults] = useState<InterviewResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollCountRef = useRef(0);
+  const isMountedRef = useRef(true);
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
   // Poll for interviewId by sessionId
   const pollForInterviewId = async (): Promise<string | null> => {
-    if (!sessionId) return null;
+    if (!sessionId) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] pollForInterviewId - no sessionId provided');
+      return null;
+    }
     
     try {
+      console.log('[FLIGHT_RECORDER] [RESULTS] Polling for interviewId by sessionId:', {
+        sessionId,
+        timestamp: new Date().toISOString()
+      });
       const data = await apiGet(`/api/interviews/by-session/${sessionId}`);
       if (data.interviewId) {
+        console.log('[FLIGHT_RECORDER] [RESULTS] Found interviewId:', {
+          sessionId,
+          interviewId: data.interviewId,
+          timestamp: new Date().toISOString()
+        });
         return data.interviewId;
       }
+      console.log('[FLIGHT_RECORDER] [RESULTS] No interviewId found yet for sessionId:', {
+        sessionId,
+        timestamp: new Date().toISOString()
+      });
       return null;
     } catch (err: any) {
+      console.error('[FLIGHT_RECORDER] [RESULTS] Error polling for interviewId:', {
+        sessionId,
+        error: err.message || err,
+        status: err.status || 'unknown',
+        timestamp: new Date().toISOString()
+      });
       console.error('Error polling for interviewId:', err);
       return null;
     }
@@ -191,6 +221,7 @@ export default function Results() {
     startPolling();
 
     return () => {
+      isMountedRef.current = false;
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
       }

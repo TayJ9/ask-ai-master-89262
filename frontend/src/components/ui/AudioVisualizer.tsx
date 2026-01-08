@@ -47,6 +47,7 @@ export default function AudioVisualizer({
     }
   };
 
+  // Setup canvas once (only on size changes)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -59,20 +60,34 @@ export default function AudioVisualizer({
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     ctx.scale(dpr, dpr);
+  }, [width, height, barCount]); // Only re-setup on size changes
+
+  // Animation loop (separate effect, uses activeVolume from closure)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
     // Animation function
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
+      // Use activeVolume from closure (not dependency) - reads latest props value
+      const currentActiveVolume = mode === 'user_speaking' ? inputVolume : 
+                                 mode === 'ai_speaking' ? outputVolume : 
+                                 Math.max(inputVolume, outputVolume) * 0.3;
+
       // Generate target bar heights based on volume with some randomness
       const isActive = mode === 'user_speaking' || mode === 'ai_speaking';
       
       for (let i = 0; i < barCount; i++) {
-        if (isActive && activeVolume > 0.01) {
+        if (isActive && currentActiveVolume > 0.01) {
           // Create organic wave-like motion with volume influence
           const wave = Math.sin(Date.now() * 0.003 + i * 0.3) * 0.3 + 0.7;
           const noise = Math.random() * 0.3;
-          targetBarsRef.current[i] = activeVolume * wave * (0.7 + noise) * height * 0.8;
+          targetBarsRef.current[i] = currentActiveVolume * wave * (0.7 + noise) * height * 0.8;
         } else {
           // Minimal idle animation
           const idleWave = Math.sin(Date.now() * 0.001 + i * 0.2) * 0.5 + 0.5;
@@ -117,7 +132,7 @@ export default function AudioVisualizer({
         ctx.fill();
 
         // Add glow effect for active modes
-        if (isActive && activeVolume > 0.1) {
+        if (isActive && currentActiveVolume > 0.1) {
           ctx.shadowBlur = 8;
           ctx.shadowColor = color;
           ctx.fill();
@@ -135,7 +150,7 @@ export default function AudioVisualizer({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [activeVolume, mode, width, height, barCount]);
+  }, [mode, width, height, barCount]); // Only restart animation on mode/size change
 
   return (
     <div className="flex flex-col items-center gap-2">

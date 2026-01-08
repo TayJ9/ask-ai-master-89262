@@ -118,7 +118,13 @@ export default function VoiceInterviewWebSocket({
     // Always call save-interview with sessionId (always available)
     // conversationId is optional (may not be available)
     const authToken = localStorage.getItem('auth_token');
-    const agentId = agentIdRef.current || process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
+    const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID || (() => {
+      if (import.meta.env.PROD) {
+        console.error('VITE_ELEVENLABS_AGENT_ID must be set in production');
+        throw new Error('Agent ID not configured');
+      }
+      return "agent_8601kavsezrheczradx9qmz8qp3e"; // Dev fallback
+    })();
     
     const payload = {
       client_session_id: sessionId, // Always available
@@ -128,7 +134,14 @@ export default function VoiceInterviewWebSocket({
     };
 
     try {
-      console.log('Saving interview end state:', payload);
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Preparing to save interview - payload:', {
+        client_session_id: payload.client_session_id,
+        conversation_id: payload.conversation_id || 'null/undefined',
+        ended_by: payload.ended_by,
+        agent_id: payload.agent_id,
+        timestamp: new Date().toISOString()
+      });
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Waiting for saveInterview() to complete...');
       const response = await fetch(
         getApiUrl(`/api/save-interview`),
         {
@@ -143,10 +156,21 @@ export default function VoiceInterviewWebSocket({
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ error: response.statusText }));
+        console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED:', {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorData.error || response.statusText,
+          timestamp: new Date().toISOString()
+        });
         throw new Error(errorData.error || `Failed to save interview: ${response.statusText}`);
       }
       
-      console.log('Interview end state saved successfully');
+      const responseData = await response.json().catch(() => ({}));
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Save complete - response:', {
+        status: response.status,
+        responseData,
+        timestamp: new Date().toISOString()
+      });
     } catch (error: any) {
       console.error('Error saving interview end state:', error);
       toast({
@@ -159,7 +183,7 @@ export default function VoiceInterviewWebSocket({
 
   // Stable callbacks for useConversation (prevents hook re-initialization on re-render)
   const handleConnect = useCallback(() => {
-    console.log('ElevenLabs SDK connected successfully');
+    console.log('[FLIGHT_RECORDER] [INTERVIEW] ElevenLabs SDK connected successfully');
     if (!isMountedRef.current) return;
     
     setStatusMessage("Connected - Interview starting...");
@@ -230,32 +254,50 @@ export default function VoiceInterviewWebSocket({
       // Interview was active - save and complete (only if not already completed)
       // If this is an agent-initiated disconnect, treat it as interview completion
       if (isAgentDisconnect) {
-        console.log('🤖 Agent-initiated disconnect detected - marking interview as complete');
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Agent-initiated disconnect detected - marking interview as complete');
         isInterviewCompleteRef.current = true;
       }
       
       setStatusMessage("Saving interview...");
       try {
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview:', {
+          sessionId,
+          conversationId: conversationIdRef.current || 'null',
+          isAgentDisconnect,
+          timestamp: new Date().toISOString()
+        });
         // Await save to complete before navigating
         // Use 'disconnect' for both agent and normal disconnects (backend handles the distinction)
         await saveInterview(conversationIdRef.current, 'disconnect');
-        console.log('Interview saved successfully, navigating to results', { 
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - interview saved, navigating to results:', { 
+          sessionId,
+          conversationId: conversationIdRef.current || 'null',
           isAgentDisconnect,
-          isComplete: isInterviewCompleteRef.current 
+          isComplete: isInterviewCompleteRef.current,
+          timestamp: new Date().toISOString()
         });
         // Mark as complete before navigation (if not already set)
         if (!isInterviewCompleteRef.current) {
           isInterviewCompleteRef.current = true;
         }
-        onComplete({ sessionId, conversationId: conversationIdRef.current });
+        const completeData = { sessionId, conversationId: conversationIdRef.current };
+        console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete with:', completeData);
+        onComplete(completeData);
       } catch (error) {
-        console.error('Failed to save interview before navigation:', error);
+        console.error('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - failed to save interview before navigation:', {
+          error,
+          sessionId,
+          conversationId: conversationIdRef.current || 'null',
+          timestamp: new Date().toISOString()
+        });
         // Still navigate even if save fails - user should see results
         // The save-interview endpoint is idempotent and can be retried
         if (!isInterviewCompleteRef.current) {
           isInterviewCompleteRef.current = true;
         }
-        onComplete({ sessionId, conversationId: conversationIdRef.current });
+        const completeData = { sessionId, conversationId: conversationIdRef.current };
+        console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - error path, calling onComplete with:', completeData);
+        onComplete(completeData);
       }
       } else if (wasInterviewActive && isInterviewCompleteRef.current) {
       // Interview was already completed - this disconnect is expected (e.g., after tool call)
@@ -473,11 +515,6 @@ export default function VoiceInterviewWebSocket({
         const output = conversation.getOutputVolume();
         setInputVolume(input);
         setOutputVolume(output);
-        
-        // Debug log occasionally
-        if (Math.random() < 0.05) {
-          console.log(`Volume - Input: ${(input * 100).toFixed(0)}%, Output: ${(output * 100).toFixed(0)}%`);
-        }
       }, 50); // 20fps for smooth visualization
     }
     
@@ -799,8 +836,19 @@ export default function VoiceInterviewWebSocket({
       
       // Check mount after session start
       if (newSessionId && isMountedRef.current) {
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] SDK startSession returned conversationId:', {
+          conversationId: newSessionId,
+          sessionId: sessionId,
+          timestamp: new Date().toISOString()
+        });
         setConversationId(newSessionId);
         console.log('[ELEVEN STARTED] convId', newSessionId);
+      } else {
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] SDK startSession did not return conversationId:', {
+          newSessionId: newSessionId || null,
+          isMounted: isMountedRef.current,
+          timestamp: new Date().toISOString()
+        });
       }
       
     } catch (error: any) {
@@ -852,17 +900,35 @@ export default function VoiceInterviewWebSocket({
         // Always save interview state before navigating
         setStatusMessage("Saving interview...");
         try {
+          console.log('[FLIGHT_RECORDER] [INTERVIEW] User click End - saving interview:', {
+            sessionId,
+            conversationId: conversationId || 'null',
+            timestamp: new Date().toISOString()
+          });
           await saveInterview(conversationId, 'user');
-          console.log('Interview saved successfully, navigating to results');
+          console.log('[FLIGHT_RECORDER] [INTERVIEW] User click End - interview saved, navigating to results:', {
+            sessionId,
+            conversationId: conversationId || 'null',
+            timestamp: new Date().toISOString()
+          });
           // Mark as complete before navigation to prevent cleanup from interfering
           isInterviewCompleteRef.current = true;
-          onComplete({ sessionId, conversationId });
+          const completeData = { sessionId, conversationId };
+          console.log('[FLIGHT_RECORDER] [TRANSITION] User click End - calling onComplete with:', completeData);
+          onComplete(completeData);
         } catch (saveError) {
-          console.error('Error saving interview:', saveError);
+          console.error('[FLIGHT_RECORDER] [INTERVIEW] User click End - error saving interview:', {
+            error: saveError,
+            sessionId,
+            conversationId: conversationId || 'null',
+            timestamp: new Date().toISOString()
+          });
           // Still navigate even if save fails - user should see results
           // The save-interview endpoint is idempotent and can be retried
           isInterviewCompleteRef.current = true;
-          onComplete({ sessionId, conversationId });
+          const completeData = { sessionId, conversationId };
+          console.log('[FLIGHT_RECORDER] [TRANSITION] User click End - error path, calling onComplete with:', completeData);
+          onComplete(completeData);
         }
       } catch (error) {
         console.error('Error ending session:', error);
