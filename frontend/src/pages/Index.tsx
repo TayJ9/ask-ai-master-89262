@@ -345,10 +345,32 @@ export default function Index() {
       params.set('conversationId', conversationId);
     }
     
-    console.log('Navigating to results page:', { sessionId, conversationId });
+    const resultsUrl = `/results?${params.toString()}`;
+    console.log('[FLIGHT_RECORDER] [TRANSITION] Navigating to results URL:', {
+      url: resultsUrl,
+      sessionId,
+      conversationId: conversationId || 'not provided',
+      paramsString: params.toString(),
+      timestamp: new Date().toISOString()
+    });
     
-    // Navigate to results route - setLocation from wouter handles SPA navigation
-    setLocation(`/results?${params.toString()}`);
+    // CRITICAL FIX: Ensure query parameters are preserved during navigation
+    // Use both wouter's setLocation AND window.history to ensure URL is correct
+    // This handles cases where wouter might strip query parameters
+    setLocation(resultsUrl);
+    
+    // Fallback: Also update browser URL directly to ensure query params persist
+    // This is a safeguard in case wouter doesn't preserve query strings
+    if (typeof window !== 'undefined') {
+      const fullUrl = `${window.location.origin}${resultsUrl}`;
+      window.history.replaceState({}, '', fullUrl);
+      console.log('[FLIGHT_RECORDER] [TRANSITION] Updated window.location to:', {
+        fullUrl,
+        windowLocationHref: window.location.href,
+        windowLocationSearch: window.location.search,
+        timestamp: new Date().toISOString()
+      });
+    }
     
     toast({
       title: "Interview Complete!",

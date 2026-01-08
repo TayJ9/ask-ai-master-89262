@@ -57,16 +57,39 @@ export default function Results() {
   const { toast } = useToast();
   
   // Parse query params from location
-  const searchParams = new URLSearchParams(location.split('?')[1] || '');
+  // CRITICAL: Ensure we're parsing from the actual URL, not a stale location value
+  const urlParts = location.split('?');
+  const queryString = urlParts.length > 1 ? urlParts[1] : '';
+  const searchParams = new URLSearchParams(queryString);
   const sessionId = searchParams.get("sessionId");
   const conversationId = searchParams.get("conversationId");
   
   console.log('[FLIGHT_RECORDER] [RESULTS] Page loaded - URL params extracted:', {
     fullLocation: location,
+    urlParts: urlParts,
+    queryString: queryString,
+    searchParamsEntries: Array.from(searchParams.entries()),
     sessionId: sessionId || 'null',
     conversationId: conversationId || 'null',
+    windowLocationSearch: typeof window !== 'undefined' ? window.location.search : 'N/A',
+    windowLocationHref: typeof window !== 'undefined' ? window.location.href : 'N/A',
     timestamp: new Date().toISOString()
   });
+  
+  // FALLBACK: If sessionId is missing from URL params, try to get it from window.location
+  // This handles cases where wouter's location might not include query params
+  const finalSessionId = sessionId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('sessionId') : null);
+  const finalConversationId = conversationId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversationId') : null);
+  
+  if (finalSessionId !== sessionId || finalConversationId !== conversationId) {
+    console.warn('[FLIGHT_RECORDER] [RESULTS] Query params mismatch - using window.location fallback:', {
+      wouterSessionId: sessionId,
+      windowSessionId: finalSessionId,
+      wouterConversationId: conversationId,
+      windowConversationId: finalConversationId,
+      timestamp: new Date().toISOString()
+    });
+  }
   
   const [status, setStatus] = useState<'loading' | 'saving' | 'evaluating' | 'complete' | 'error'>('loading');
   const [results, setResults] = useState<InterviewResults | null>(null);
@@ -79,34 +102,38 @@ export default function Results() {
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
   // Poll for interviewId by sessionId
+  // CRITICAL: Use finalSessionId (with fallback to window.location) to ensure we get the correct sessionId
   const pollForInterviewId = async (): Promise<string | null> => {
-    if (!sessionId) {
+    const activeSessionId = finalSessionId || sessionId;
+    if (!activeSessionId) {
       console.log('[FLIGHT_RECORDER] [RESULTS] pollForInterviewId - no sessionId provided');
       return null;
     }
     
     try {
       console.log('[FLIGHT_RECORDER] [RESULTS] Polling for interviewId by sessionId:', {
-        sessionId,
+        sessionId: activeSessionId,
+        finalSessionId,
+        wouterSessionId: sessionId,
         timestamp: new Date().toISOString()
       });
-      const data = await apiGet(`/api/interviews/by-session/${sessionId}`);
+      const data = await apiGet(`/api/interviews/by-session/${activeSessionId}`);
       if (data.interviewId) {
         console.log('[FLIGHT_RECORDER] [RESULTS] Found interviewId:', {
-          sessionId,
+          sessionId: activeSessionId,
           interviewId: data.interviewId,
           timestamp: new Date().toISOString()
         });
         return data.interviewId;
       }
       console.log('[FLIGHT_RECORDER] [RESULTS] No interviewId found yet for sessionId:', {
-        sessionId,
+        sessionId: activeSessionId,
         timestamp: new Date().toISOString()
       });
       return null;
     } catch (err: any) {
       console.error('[FLIGHT_RECORDER] [RESULTS] Error polling for interviewId:', {
-        sessionId,
+        sessionId: activeSessionId,
         error: err.message || err,
         status: err.status || 'unknown',
         timestamp: new Date().toISOString()
@@ -129,11 +156,16 @@ export default function Results() {
 
   // Start polling for interviewId
   useEffect(() => {
-    if (!sessionId) {
+    const activeSessionId = finalSessionId || sessionId;
+    if (!activeSessionId) {
+      console.error('[FLIGHT_RECORDER] [RESULTS] ERROR: No sessionId available from URL params or window.location');
       setError('Session ID is required');
       setStatus('error');
       return;
     }
+    
+    // Use the active sessionId for all operations
+    const effectiveSessionId = activeSessionId;
 
     let interviewId: string | null = null;
     let evalPollCount = 0;
@@ -226,7 +258,7 @@ export default function Results() {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [sessionId]);
+  }, [finalSessionId, sessionId]); // Depend on both to re-run if either changes
 
   const handleRetry = () => {
     pollCountRef.current = 0;
