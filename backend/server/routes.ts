@@ -55,13 +55,7 @@ function getJWTSecret(): string {
 }
 
 function getAgentId(): string {
-  const agentId = process.env.ELEVENLABS_AGENT_ID;
-  // Allow fallback to default agent ID in all environments (including production)
-  // The validation check in server/index.ts will warn if missing but allow operation
-  if (!agentId) {
-    console.warn('[getAgentId] ELEVENLABS_AGENT_ID not set, using default agent ID');
-  }
-  return agentId || "agent_8601kavsezrheczradx9qmz8qp3e"; // Default fallback for all environments
+  return process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
 }
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || (() => {
