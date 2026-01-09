@@ -56,10 +56,12 @@ function getJWTSecret(): string {
 
 function getAgentId(): string {
   const agentId = process.env.ELEVENLABS_AGENT_ID;
-  if (!agentId && process.env.NODE_ENV === 'production') {
-    throw new Error('ELEVENLABS_AGENT_ID environment variable must be set in production');
+  // Allow fallback to default agent ID in all environments (including production)
+  // The validation check in server/index.ts will warn if missing but allow operation
+  if (!agentId) {
+    console.warn('[getAgentId] ELEVENLABS_AGENT_ID not set, using default agent ID');
   }
-  return agentId || "agent_8601kavsezrheczradx9qmz8qp3e"; // Dev fallback only
+  return agentId || "agent_8601kavsezrheczradx9qmz8qp3e"; // Default fallback for all environments
 }
 
 const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || (() => {
@@ -909,8 +911,13 @@ const tokenRateLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // Use userId from request if available (after auth middleware)
+  // For IP fallback, use ipKeyGenerator helper to properly handle IPv6 addresses
   keyGenerator: (req: any) => {
-    return req.userId || req.ip || 'unknown';
+    if (req.userId) {
+      return req.userId;
+    }
+    // Use ipKeyGenerator helper for proper IPv6 handling
+    return ipKeyGenerator(req);
   },
   handler: (req, res) => {
     const requestId = req.header('X-Request-Id') || randomUUID();
