@@ -967,6 +967,16 @@ const tokenRateLimiter = rateLimit({
         return res.status(500).json({ error: errorBody });
       }
 
+      // Log exact parameters being sent to ElevenLabs (masking API key)
+      const maskedApiKey = apiKey ? `${apiKey.substring(0, 8)}...${apiKey.substring(apiKey.length - 4)}` : 'MISSING';
+      console.log(`[CONVERSATION-TOKEN] ElevenLabs API Parameters:`, {
+        requestId,
+        agentId,
+        apiKeyMasked: maskedApiKey,
+        apiKeyLength: apiKey?.length || 0,
+        timestamp: new Date().toISOString(),
+      });
+
       const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`;
       const fetchOptions = {
         method: 'GET',
@@ -1097,6 +1107,17 @@ const tokenRateLimiter = rateLimit({
       const isBusy = fetchResult.special === 'system_busy';
       const retryAfterSeconds = fetchResult.retryAfterSeconds;
       
+      // Log full error details from ElevenLabs response
+      console.error(`[CONVERSATION-TOKEN] ElevenLabs API returned error:`, {
+        requestId,
+        upstreamStatus,
+        upstreamBody: fetchResult.body,
+        isConcurrent,
+        isBusy,
+        retryAfterSeconds: retryAfterSeconds || null,
+        timestamp: new Date().toISOString(),
+      });
+      
       // Determine error code based on error type
       let errorCode: 'SYSTEM_BUSY' | 'TOO_MANY_CONCURRENT' | 'RATE_LIMIT' | 'UPSTREAM_ERROR';
       if (isConcurrent) {
@@ -1109,13 +1130,28 @@ const tokenRateLimiter = rateLimit({
         errorCode = 'UPSTREAM_ERROR';
       }
       
-      const errorMessage = isConcurrent
-        ? 'Too many concurrent sessions. Close other sessions and wait 10–30s.'
-        : isBusy
-        ? 'Service busy. Try again in a few seconds.'
-        : upstreamStatus === 429
-        ? 'Rate limit exceeded. Please wait and try again.'
-        : 'Failed to get signed URL from ElevenLabs.';
+      // Extract detailed error message from ElevenLabs response body
+      let errorMessage = 'Failed to get signed URL from ElevenLabs.';
+      if (fetchResult.body) {
+        if (typeof fetchResult.body === 'string') {
+          errorMessage = `Upstream Error: ${fetchResult.body}`;
+        } else if (fetchResult.body?.error?.message) {
+          errorMessage = `Upstream Error: ${fetchResult.body.error.message}`;
+        } else if (fetchResult.body?.message) {
+          errorMessage = `Upstream Error: ${fetchResult.body.message}`;
+        } else if (fetchResult.body?.error) {
+          errorMessage = `Upstream Error: ${String(fetchResult.body.error)}`;
+        }
+      }
+      
+      // Override with user-friendly messages for specific error types
+      if (isConcurrent) {
+        errorMessage = 'Too many concurrent sessions. Close other sessions and wait 10–30s.';
+      } else if (isBusy) {
+        errorMessage = 'Service busy. Try again in a few seconds.';
+      } else if (upstreamStatus === 429) {
+        errorMessage = 'Rate limit exceeded. Please wait and try again.';
+      }
       
       const errorBody: {
         code: string;
@@ -1132,28 +1168,61 @@ const tokenRateLimiter = rateLimit({
         errorBody.retryAfterSeconds = retryAfterSeconds;
       }
       
-      console.error(`[CONVERSATION-TOKEN] Returning error response`, {
+      console.error(`[CONVERSATION-TOKEN] Returning error response to frontend:`, {
         requestId,
         timestamp: new Date().toISOString(),
         errorCode,
+        errorMessage,
         upstreamStatus,
         retryAfterSeconds: retryAfterSeconds || null,
       });
       
       cacheTokenResponse(requestId, upstreamStatus, { error: errorBody });
-      return res.status(upstreamStatus).json({ error: errorBody });
+      
+      // Return specific error message to frontend (include upstream error details)
+      return res.status(upstreamStatus).json({ 
+        error: errorBody,
+        details: upstreamStatus >= 500 ? errorMessage : undefined, // Include details for 5xx errors
+      });
     } catch (error: any) {
-      console.error('[CONVERSATION-TOKEN] Error:', error);
+      // CRITICAL: Log full error details including stack trace
+      console.error('[CONVERSATION-TOKEN] CRITICAL ERROR - Exception caught:', {
+        requestId,
+        errorName: error?.name || 'Unknown',
+        errorMessage: error?.message || String(error),
+        errorStack: error?.stack || 'No stack trace available',
+        errorType: typeof error,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Log the full error object for debugging
+      if (error instanceof Error) {
+        console.error('[CONVERSATION-TOKEN] Error stack trace:', error.stack);
+      } else {
+        console.error('[CONVERSATION-TOKEN] Error object:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      }
+      
+      // Determine error message for frontend
+      let errorMessage = 'Failed to get conversation token';
+      if (error?.message) {
+        errorMessage = `Upstream Error: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorMessage = `Upstream Error: ${error}`;
+      }
+      
       const errorBody = {
         code: 'INTERNAL_ERROR',
-        message: 'Failed to get conversation token',
+        message: errorMessage,
         requestId,
         upstreamStatus: undefined,
       };
+      
       cacheTokenResponse(requestId, 500, { error: errorBody });
+      
+      // Return specific error message to frontend (always include in 500 responses)
       return res.status(500).json({
         error: errorBody,
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined,
+        details: errorMessage, // Always include error details, not just in development
       });
     }
   });
