@@ -220,25 +220,39 @@ export default function VoiceInterviewWebSocket({
     // This prevents unmounting the component if disconnect happens during connection
     const wasInterviewActive = hasStartedRef.current;
     
-    // Detect if this is an agent-initiated disconnect (interview ended normally)
-    // Check for various indicators that the agent ended the interview:
-    // 1. Reason string contains agent-related keywords
-    // 2. Interview was already marked complete via tool call
-    // 3. Reason indicates normal completion
-    const isAgentDisconnect = reasonStr.toLowerCase().includes('agent') || 
-                              reasonStr.toLowerCase().includes('completed') ||
-                              reasonStr.toLowerCase().includes('finished') ||
-                              reasonStr.toLowerCase().includes('ended') ||
-                              reasonStr.toLowerCase().includes('conversation.end') ||
-                              reasonStr.toLowerCase().includes('interview complete') ||
+    // Enhanced detection for agent-initiated disconnect
+    // Check multiple formats of the reason parameter:
+    // 1. String equality: 'agent_ended' or 'agent'
+    // 2. String contains: agent-related keywords (existing logic)
+    // 3. WebSocket code: 1000 (normal closure initiated by server)
+    // 4. Object property: reason.reason contains agent keywords
+    // 5. Completion flag: already completed via tool call
+    const isStringAgentEnded = reason === 'agent_ended' || reason === 'agent';
+    const isCode1000 = typeof reason === 'object' && reason?.code === 1000;
+    const isObjectAgentReason = typeof reason === 'object' && 
+                                 (reason?.reason?.toLowerCase?.().includes('agent') ||
+                                  reason?.reason?.toLowerCase?.().includes('completed') ||
+                                  reason?.reason?.toLowerCase?.().includes('ended'));
+    const isStringContainsAgent = reasonStr.toLowerCase().includes('agent') || 
+                                  reasonStr.toLowerCase().includes('completed') ||
+                                  reasonStr.toLowerCase().includes('finished') ||
+                                  reasonStr.toLowerCase().includes('ended') ||
+                                  reasonStr.toLowerCase().includes('conversation.end') ||
+                                  reasonStr.toLowerCase().includes('interview complete');
+    
+    const isAgentDisconnect = isStringAgentEnded || 
+                              isCode1000 || 
+                              isObjectAgentReason || 
+                              isStringContainsAgent ||
                               isInterviewCompleteRef.current; // Already completed via tool call
     
-    console.log('Disconnect - wasInterviewActive:', wasInterviewActive, 'isAgentDisconnect:', isAgentDisconnect, 'reason:', reasonStr);
-    
-    // If interview was already completed via tool call, mark as complete
-    if (isInterviewCompleteRef.current) {
-      console.log('✅ Interview already completed via tool call - disconnect is expected');
-    }
+    console.log('Disconnect - wasInterviewActive:', wasInterviewActive, 'isAgentDisconnect:', isAgentDisconnect, 'reason:', reasonStr, {
+      isStringAgentEnded,
+      isCode1000,
+      isObjectAgentReason,
+      isStringContainsAgent,
+      isInterviewCompleteRef: isInterviewCompleteRef.current
+    });
     
     // Reset starting state
     setIsStarting(false);
@@ -250,36 +264,75 @@ export default function VoiceInterviewWebSocket({
       volumeIntervalRef.current = null;
     }
     
-      if (wasInterviewActive && !isInterviewCompleteRef.current) {
-      // Interview was active - save and complete (only if not already completed)
-      // If this is an agent-initiated disconnect, treat it as interview completion
-      if (isAgentDisconnect) {
-        console.log('[FLIGHT_RECORDER] [INTERVIEW] Agent-initiated disconnect detected - marking interview as complete');
-        isInterviewCompleteRef.current = true;
-      }
+    // Handle agent-initiated disconnect: IMMEDIATE navigation to results
+    if (wasInterviewActive && (isAgentDisconnect || isInterviewCompleteRef.current)) {
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Agent ended the interview. Navigating to results immediately...');
       
-      setStatusMessage("Saving interview...");
-      try {
-        console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview:', {
+      // Mark as complete
+      isInterviewCompleteRef.current = true;
+      
+      // IMMEDIATE navigation - don't wait for anything
+      const completeData = { sessionId, conversationId: conversationIdRef.current };
+      console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete immediately with:', completeData);
+      onComplete(completeData);
+      
+      // Save interview in background (don't await - let it run asynchronously)
+      // The save-interview endpoint is idempotent, so calling it multiple times is safe
+      const conversationIdForSave = conversationIdRef.current;
+      if (!conversationIdForSave) {
+        console.warn('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - conversationIdRef is null during agent disconnect save. This is expected if interview ended before conversation_id was assigned.', {
           sessionId,
-          conversationId: conversationIdRef.current || 'null',
-          isAgentDisconnect,
           timestamp: new Date().toISOString()
         });
-        // Await save to complete before navigating
-        // Use 'disconnect' for both agent and normal disconnects (backend handles the distinction)
-        await saveInterview(conversationIdRef.current, 'disconnect');
+      }
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview in background:', {
+        sessionId,
+        conversationId: conversationIdForSave || 'null',
+        hasConversationId: !!conversationIdForSave,
+        isAgentDisconnect,
+        timestamp: new Date().toISOString()
+      });
+      saveInterview(conversationIdForSave, 'disconnect').catch((error) => {
+        console.error('[FLIGHT_RECORDER] [INTERVIEW] Background save failed:', {
+          error,
+          sessionId,
+          conversationId: conversationIdForSave || 'null',
+          hasConversationId: !!conversationIdForSave,
+          timestamp: new Date().toISOString()
+        });
+        // Don't show error to user - they're already on results page
+        // The results page polling will handle finding the interview
+      });
+      
+      return; // Exit early - navigation already triggered
+    }
+    
+    // Handle normal disconnect (not agent-initiated) - only if interview was active
+    if (wasInterviewActive && !isInterviewCompleteRef.current) {
+      // Normal disconnect - save and complete
+      setStatusMessage("Saving interview...");
+      try {
+        const conversationIdForSave = conversationIdRef.current;
+        if (!conversationIdForSave) {
+          console.warn('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - conversationIdRef is null during normal disconnect save. This may occur if disconnect happened before conversation_id was assigned.', {
+            sessionId,
+            timestamp: new Date().toISOString()
+          });
+        }
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview:', {
+          sessionId,
+          conversationId: conversationIdForSave || 'null',
+          hasConversationId: !!conversationIdForSave,
+          timestamp: new Date().toISOString()
+        });
+        // Await save to complete before navigating for normal disconnects
+        await saveInterview(conversationIdForSave, 'disconnect');
         console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - interview saved, navigating to results:', { 
           sessionId,
           conversationId: conversationIdRef.current || 'null',
-          isAgentDisconnect,
-          isComplete: isInterviewCompleteRef.current,
           timestamp: new Date().toISOString()
         });
-        // Mark as complete before navigation (if not already set)
-        if (!isInterviewCompleteRef.current) {
-          isInterviewCompleteRef.current = true;
-        }
+        isInterviewCompleteRef.current = true;
         const completeData = { sessionId, conversationId: conversationIdRef.current };
         console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete with:', completeData);
         onComplete(completeData);
@@ -292,17 +345,15 @@ export default function VoiceInterviewWebSocket({
         });
         // Still navigate even if save fails - user should see results
         // The save-interview endpoint is idempotent and can be retried
-        if (!isInterviewCompleteRef.current) {
-          isInterviewCompleteRef.current = true;
-        }
+        isInterviewCompleteRef.current = true;
         const completeData = { sessionId, conversationId: conversationIdRef.current };
         console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - error path, calling onComplete with:', completeData);
         onComplete(completeData);
       }
-      } else if (wasInterviewActive && isInterviewCompleteRef.current) {
+    } else if (wasInterviewActive && isInterviewCompleteRef.current) {
       // Interview was already completed - this disconnect is expected (e.g., after tool call)
       console.log('✅ Interview already completed - disconnect is expected, skipping save');
-      } else {
+    } else {
       // Disconnect during connection attempt - return to idle state
       console.log('Disconnect during connection - returning to idle state');
       setIsIdle(true);

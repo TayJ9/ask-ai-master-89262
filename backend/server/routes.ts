@@ -73,6 +73,131 @@ const tokenResponseCache = new Map<string, { timestamp: number; status: number; 
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * Format transcript array into readable string format
+ * Handles various message formats from ElevenLabs API
+ */
+function formatTranscriptArray(messages: any[]): string {
+  const formattedLines: string[] = [];
+  
+  for (const msg of messages) {
+    // Handle different message formats
+    const role = msg.role || msg.source || msg.speaker || 'unknown';
+    const text = msg.text || msg.message || msg.content || '';
+    
+    if (text && text.trim()) {
+      // Format as "Role: text"
+      const roleLabel = role === 'assistant' || role === 'ai' || role === 'agent' 
+        ? 'AI' 
+        : role === 'user' || role === 'candidate' 
+        ? 'User' 
+        : role.charAt(0).toUpperCase() + role.slice(1);
+      
+      formattedLines.push(`${roleLabel}: ${text.trim()}`);
+    }
+  }
+  
+  return formattedLines.join('\n\n');
+}
+
+/**
+ * Fetch transcript from ElevenLabs API for a given conversation_id
+ * Implements retry strategy: if 404, wait 1000ms and retry once
+ * Returns formatted transcript string or null if not available
+ */
+async function fetchTranscriptFromElevenLabs(conversationId: string): Promise<string | null> {
+  const apiKey = ELEVENLABS_API_KEY;
+  if (!apiKey) {
+    console.warn('[FETCH-TRANSCRIPT] ELEVENLABS_API_KEY not configured, skipping transcript fetch');
+    return null;
+  }
+
+  const url = `https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`;
+  const fetchOptions = {
+    method: 'GET',
+    headers: {
+      'xi-api-key': apiKey,
+    },
+  };
+
+  // Retry logic: try once, if 404 wait 1000ms and retry once more
+  const attemptFetch = async (attempt: number): Promise<string | null> => {
+    try {
+      console.log(`[FETCH-TRANSCRIPT] Fetching transcript for conversation_id: ${conversationId} (attempt ${attempt})`);
+      const response = await fetch(url, fetchOptions);
+      
+      if (!response.ok) {
+        if (response.status === 404) {
+          if (attempt === 1) {
+            // First attempt got 404 - wait 1000ms and retry once
+            console.log(`[FETCH-TRANSCRIPT] Transcript not found (404) for conversation_id: ${conversationId} - waiting 1000ms before retry`);
+            await sleep(1000);
+            return attemptFetch(2);
+          } else {
+            // Second attempt also got 404 - transcript not ready yet
+            console.warn(`[FETCH-TRANSCRIPT] Transcript still not found (404) after retry for conversation_id: ${conversationId} - may not be ready yet`);
+            return null;
+          }
+        }
+        
+        // Other error status codes
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error(`[FETCH-TRANSCRIPT] ElevenLabs API error (${response.status}) for conversation_id ${conversationId}:`, errorText);
+        return null;
+      }
+
+      const data = await response.json();
+      
+      // Extract transcript from response - handle multiple possible formats
+      let transcriptText: string | null = null;
+      
+      // Format 1: Direct transcript string
+      if (data.transcript && typeof data.transcript === 'string') {
+        transcriptText = data.transcript;
+      }
+      // Format 2: Transcript as array of messages
+      else if (data.transcript && Array.isArray(data.transcript)) {
+        transcriptText = formatTranscriptArray(data.transcript);
+      }
+      // Format 3: Messages array at root level
+      else if (data.messages && Array.isArray(data.messages)) {
+        transcriptText = formatTranscriptArray(data.messages);
+      }
+      // Format 4: Nested conversation.transcript
+      else if (data.conversation) {
+        if (typeof data.conversation.transcript === 'string') {
+          transcriptText = data.conversation.transcript;
+        } else if (Array.isArray(data.conversation.transcript)) {
+          transcriptText = formatTranscriptArray(data.conversation.transcript);
+        } else if (data.conversation.messages && Array.isArray(data.conversation.messages)) {
+          transcriptText = formatTranscriptArray(data.conversation.messages);
+        }
+      }
+
+      if (!transcriptText || transcriptText.trim().length === 0) {
+        console.warn(`[FETCH-TRANSCRIPT] Transcript is empty or incomplete for conversation_id: ${conversationId}`);
+        return null;
+      }
+
+      console.log(`[FETCH-TRANSCRIPT] Successfully fetched transcript (${transcriptText.length} chars) for conversation_id: ${conversationId}`);
+      return transcriptText;
+    } catch (error: any) {
+      console.error(`[FETCH-TRANSCRIPT] Error fetching transcript for conversation_id ${conversationId} (attempt ${attempt}):`, error.message || error);
+      
+      // Only retry on network errors if it's the first attempt
+      if (attempt === 1 && (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.message?.includes('fetch'))) {
+        console.log(`[FETCH-TRANSCRIPT] Network error on attempt ${attempt}, waiting 1000ms before retry`);
+        await sleep(1000);
+        return attemptFetch(2);
+      }
+      
+      return null;
+    }
+  };
+
+  return attemptFetch(1);
+}
+
 const parseRetryAfter = (value: string | null): number | null => {
   if (!value) return null;
   const seconds = parseInt(value, 10);
@@ -1740,14 +1865,50 @@ const tokenRateLimiter = rateLimit({
           });
           if (existingInterview) {
             interviewId = existingInterview.id;
-          // Update interview status
-          await db.update(interviews)
-            .set({
-              status: 'completed',
-              endedAt: clientEndedAt,
-            })
-            .where(eq(interviews.id, interviewId));
-            console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
+            
+            // Optimization: Skip update if interview already completed (idempotency check)
+            const isAlreadyCompleted = existingInterview.status === 'completed' && existingInterview.endedAt;
+            if (isAlreadyCompleted) {
+              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already completed (status: ${existingInterview.status}, endedAt: ${existingInterview.endedAt}), skipping status update`);
+            } else {
+              // Update interview status
+              await db.update(interviews)
+                .set({
+                  status: 'completed',
+                  endedAt: clientEndedAt,
+                })
+                .where(eq(interviews.id, interviewId));
+              console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
+            }
+            
+            // Fetch and save transcript from ElevenLabs API (non-blocking)
+            // Only fetch if transcript is not already set (avoid overwriting webhook data)
+            if (!existingInterview.transcript && conversation_id) {
+              // Fire-and-forget: Start transcript fetch but don't await it
+              // This ensures the main response is not delayed
+              fetchTranscriptFromElevenLabs(conversation_id)
+                .then(async (transcript) => {
+                  if (transcript) {
+                    try {
+                      await db.update(interviews)
+                        .set({ transcript })
+                        .where(eq(interviews.id, interviewId));
+                      console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for interview ${interviewId}`);
+                    } catch (updateError: any) {
+                      console.error(`[SAVE-INTERVIEW] Error updating transcript for interview ${interviewId}:`, updateError.message || updateError);
+                    }
+                  } else {
+                    console.log(`[SAVE-INTERVIEW] Transcript not available yet for interview ${interviewId} - will be available via webhook or can be retried`);
+                  }
+                })
+                .catch((transcriptError: any) => {
+                  // Don't fail the request if transcript fetch fails
+                  console.error(`[SAVE-INTERVIEW] Error fetching transcript for interview ${interviewId}:`, transcriptError.message || transcriptError);
+                  // Transcript may be available later via webhook
+                });
+            } else if (existingInterview.transcript) {
+              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, skipping fetch`);
+            }
           }
         } catch (dbError: any) {
           console.error('[SAVE-INTERVIEW] Error finding interview by conversation_id:', dbError);
