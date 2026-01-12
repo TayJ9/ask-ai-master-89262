@@ -118,9 +118,14 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    background-color: #000000; /* Black background for cinematic dip-to-black transitions */
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
+    background-color: #000000; /* Black background to prevent white flashes during transitions */
   }
 
   h1, h2, h3, h4, h5, h6 {
