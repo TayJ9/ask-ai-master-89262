@@ -49,6 +49,28 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       return;
     }
 
+    // Check for authentication token before upload
+    const token = localStorage.getItem('auth_token');
+    if (!token || !token.trim()) {
+      console.error('[ResumeUpload] No auth token found in localStorage');
+      console.error('[ResumeUpload] localStorage keys:', Object.keys(localStorage));
+      toast({
+        title: "Authentication Required",
+        description: "Please sign in again to upload your resume.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Log token info for debugging (masked)
+    const tokenPreview = token.length > 20 ? `${token.substring(0, 20)}...` : token;
+    console.log('[ResumeUpload] Token check before upload:', {
+      exists: true,
+      length: token.length,
+      preview: tokenPreview,
+      trimmed: token.trim() === token
+    });
+
     setIsUploading(true);
     setUploadedFileName(file.name);
 

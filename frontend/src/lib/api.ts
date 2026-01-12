@@ -123,7 +123,10 @@ export async function apiFetch(
   options: RequestInit = {}
 ): Promise<any> {
   const url = getApiUrl(path);
-  const token = localStorage.getItem('auth_token');
+  const rawToken = localStorage.getItem('auth_token');
+  
+  // Trim and validate token
+  const token = rawToken ? rawToken.trim() : null;
   
   const headers: HeadersInit = {
     'Content-Type': 'application/json',
@@ -131,7 +134,11 @@ export async function apiFetch(
   };
   
   if (token) {
+    // Ensure proper format: "Bearer <token>" (no double Bearer, proper spacing)
     headers['Authorization'] = `Bearer ${token}`;
+  } else if (path !== '/api/auth/signin' && path !== '/api/auth/signup') {
+    // Log missing token for non-auth endpoints
+    console.warn('[API] No token found for authenticated endpoint:', path);
   }
   
   // Add timeout
@@ -218,12 +225,42 @@ export async function apiDelete(path: string): Promise<any> {
  */
 export async function apiPostFormData(path: string, formData: FormData): Promise<any> {
   const url = getApiUrl(path);
-  const token = localStorage.getItem('auth_token');
+  const rawToken = localStorage.getItem('auth_token');
+  
+  // Trim and validate token
+  const token = rawToken ? rawToken.trim() : null;
+  
+  // Debug logging for token and header
+  if (token) {
+    const tokenPreview = token.length > 20 ? `${token.substring(0, 20)}...` : token;
+    console.log('[API] Token retrieved:', {
+      exists: true,
+      length: token.length,
+      preview: tokenPreview,
+      path: path
+    });
+  } else {
+    console.error('[API] No token found in localStorage for path:', path);
+    console.error('[API] localStorage keys:', Object.keys(localStorage));
+  }
   
   const headers: HeadersInit = {};
   // Don't set Content-Type for FormData - browser will set it with boundary
   if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+    // Ensure proper format: "Bearer <token>" (no double Bearer, proper spacing)
+    const authHeader = `Bearer ${token}`;
+    headers['Authorization'] = authHeader;
+    
+    // Log header format for debugging
+    console.log('[API] Authorization header set:', {
+      format: 'Bearer <token>',
+      headerLength: authHeader.length,
+      tokenLength: token.length,
+      startsWithBearer: authHeader.startsWith('Bearer '),
+      hasDoubleBearer: authHeader.includes('Bearer Bearer')
+    });
+  } else {
+    console.warn('[API] No Authorization header will be sent - token is missing');
   }
   
   const controller = new AbortController();
@@ -238,6 +275,17 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
     });
     
     clearTimeout(timeoutId);
+    
+    // Log response status for debugging
+    if (!response.ok) {
+      console.error('[API] Upload request failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        path: path,
+        hasAuthHeader: !!headers['Authorization']
+      });
+    }
+    
     return handleApiResponse(response);
   } catch (error: any) {
     clearTimeout(timeoutId);

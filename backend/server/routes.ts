@@ -274,26 +274,72 @@ interface AuthRequest extends Express.Request {
 function authenticateToken(req: any, res: any, next: any) {
   try {
     const authHeader = req.headers['authorization'];
-    // Authentication check
     
+    // Log auth header for debugging (masked)
+    if (authHeader) {
+      const headerPreview = authHeader.length > 30 ? `${authHeader.substring(0, 30)}...` : authHeader;
+      console.log('[Auth] Authorization header received:', {
+        exists: true,
+        length: authHeader.length,
+        preview: headerPreview,
+        startsWithBearer: authHeader.startsWith('Bearer '),
+        hasDoubleBearer: authHeader.includes('Bearer Bearer')
+      });
+    } else {
+      console.error('[Auth] No Authorization header found for path:', req.path);
+      console.error('[Auth] Available headers:', Object.keys(req.headers));
+    }
+    
+    // Authentication check
     const token = authHeader && authHeader.split(' ')[1];
 
     if (!token) {
-      console.error('No token provided for:', req.path);
+      console.error('[Auth] No token provided for:', req.path);
+      console.error('[Auth] Auth header value:', authHeader || 'null');
       return res.status(401).json({ error: 'No token provided' });
     }
 
-    jwt.verify(token, getJWTSecret(), (err: any, decoded: any) => {
+    // Trim token to handle any whitespace issues
+    const trimmedToken = token.trim();
+    if (!trimmedToken) {
+      console.error('[Auth] Token is empty after trimming for path:', req.path);
+      return res.status(401).json({ error: 'Invalid token format' });
+    }
+
+    // Log token info for debugging (masked)
+    const tokenPreview = trimmedToken.length > 20 ? `${trimmedToken.substring(0, 20)}...` : trimmedToken;
+    console.log('[Auth] Verifying token:', {
+      length: trimmedToken.length,
+      preview: tokenPreview,
+      path: req.path
+    });
+
+    jwt.verify(trimmedToken, getJWTSecret(), (err: any, decoded: any) => {
       if (err) {
-        console.error('Token verification failed:', err.message);
+        console.error('[Auth] Token verification failed:', {
+          error: err.message,
+          name: err.name,
+          path: req.path,
+          tokenLength: trimmedToken.length
+        });
         return res.status(403).json({ error: 'Invalid token' });
       }
+      
+      console.log('[Auth] Token verified successfully:', {
+        userId: decoded.userId,
+        path: req.path
+      });
+      
       req.userId = decoded.userId;
       // Token verified
       next();
     });
   } catch (error: any) {
-    console.error('Error in authenticateToken middleware:', error);
+    console.error('[Auth] Error in authenticateToken middleware:', {
+      error: error.message,
+      stack: error.stack,
+      path: req.path
+    });
     return res.status(500).json({ error: 'Authentication error: ' + error.message });
   }
 }

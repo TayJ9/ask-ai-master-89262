@@ -78,17 +78,43 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           throw new Error('Invalid response from server. Missing token or user data.');
         }
         
+        // Trim token to ensure no leading/trailing whitespace
+        const trimmedToken = data.token.trim();
+        if (!trimmedToken) {
+          throw new Error('Invalid token received from server.');
+        }
+        
+        // Log token info for debugging (masked)
+        const tokenPreview = trimmedToken.length > 20 ? `${trimmedToken.substring(0, 20)}...` : trimmedToken;
+        console.log('[Auth] Storing token in localStorage:', {
+          length: trimmedToken.length,
+          preview: tokenPreview,
+          wasTrimmed: trimmedToken !== data.token
+        });
+        
         // Store auth data in localStorage with error handling
         try {
-          localStorage.setItem('auth_token', data.token);
+          localStorage.setItem('auth_token', trimmedToken);
           localStorage.setItem('user', JSON.stringify(data.user));
+          
+          // Verify token was stored correctly
+          const storedToken = localStorage.getItem('auth_token');
+          if (storedToken !== trimmedToken) {
+            console.error('[Auth] Token storage verification failed:', {
+              expected: trimmedToken.substring(0, 20) + '...',
+              actual: storedToken ? storedToken.substring(0, 20) + '...' : 'null'
+            });
+            throw new Error('Token storage verification failed.');
+          }
+          
+          console.log('[Auth] Token successfully stored and verified');
         } catch (storageError: any) {
-          console.error('Failed to store auth data:', storageError);
+          console.error('[Auth] Failed to store auth data:', storageError);
           throw new Error('Failed to save authentication data. Please check your browser settings.');
         }
         
         toast({ title: "Welcome back!" });
-        onAuthSuccess(data.user, data.token);
+        onAuthSuccess(data.user, trimmedToken);
       } else {
         toast({ 
           title: "Success!", 
