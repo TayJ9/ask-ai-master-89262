@@ -452,15 +452,7 @@ export default function Index() {
         </div>
       )}
 
-      <div
-        style={{
-          width: "100%",
-          minHeight: "100vh",
-          backgroundColor: "#000000", // Black background for dip-to-black effect
-          position: "relative",
-        }}
-      >
-        <AnimatePresence mode="wait" initial={false}>
+      <AnimatePresence mode="wait" initial={false}>
           {currentView === "roles" && (
             <motion.div
               key="roles"
@@ -556,7 +548,6 @@ export default function Index() {
             </motion.div>
           )}
         </AnimatePresence>
-      </div>
 
     </>
   );

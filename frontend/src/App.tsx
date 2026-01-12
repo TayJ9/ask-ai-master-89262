@@ -1,3 +1,4 @@
+import React from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Route, Switch, useLocation } from "wouter";
 import { queryClient } from "@/lib/queryClient";
@@ -36,7 +37,6 @@ const AppContent = () => {
       style={{
         width: "100%",
         minHeight: "100vh",
-        backgroundColor: "#000000", // Solid black background for dip-to-black effect
         position: "relative",
       }}
     >
@@ -54,6 +54,18 @@ const AppContent = () => {
             position: "relative",
           }}
         >
+          {/* Black background that shows through when content fades out */}
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "#000000",
+              zIndex: -1, // Behind content, visible when content opacity is 0
+            }}
+          />
           <Switch>
             <Route path="/" component={Index} />
             <Route path="/results" component={Results} />
