@@ -792,14 +792,23 @@ export default function VoiceInterviewWebSocket({
       }
       const successPayload = tokenData.success || tokenData;
       const downstreamRequestId = successPayload.requestId || tokenData.requestId || requestId;
-      const signedUrl = successPayload.signedUrl || successPayload.token;
-      if (!signedUrl) {
-        throw new Error('No signed URL received from server');
+      
+      // For WebRTC, use conversationToken (JWT) instead of signedUrl (WebSocket)
+      // Backend now returns: { token, conversationToken, conversationId }
+      const conversationToken = successPayload.conversationToken || successPayload.token;
+      const conversationId = successPayload.conversationId || tokenData.conversationId;
+      
+      if (!conversationToken) {
+        console.error('[TOKEN] Missing conversationToken in response:', { successPayload, tokenData });
+        throw new Error('No conversation token received from server for WebRTC connection');
       }
-      console.log('Received conversation token:', { 
+      
+      console.log('[WebRTC] Received conversation token:', { 
         requestId: downstreamRequestId,
-        hasToken: !!signedUrl,
-        hasSignedUrl: !!successPayload.signedUrl,
+        hasToken: !!conversationToken,
+        tokenLength: conversationToken.length,
+        hasConversationId: !!conversationId,
+        conversationId: conversationId || 'not provided',
         agentId: successPayload.agentId || tokenData.agentId,
       });
       if (successPayload.agentId) {
@@ -808,9 +817,9 @@ export default function VoiceInterviewWebSocket({
         agentIdRef.current = tokenData.agentId;
       }
       
-      // Store conversation ID if provided
-      if (successPayload.conversationId && isMountedRef.current) {
-        setConversationId(successPayload.conversationId);
+      // Store conversation ID if provided (from WebRTC token response)
+      if (conversationId && isMountedRef.current) {
+        setConversationId(conversationId);
       }
       
       // ============================================
@@ -844,9 +853,8 @@ export default function VoiceInterviewWebSocket({
         dynamicVariables.resume_sentinel = elevenDebugConstants.SENTINEL;
       }
 
-      // For WebRTC, the SDK requires either conversationToken or agentId
-      // The signedUrl from ElevenLabs IS the conversationToken
-      const conversationToken = signedUrl;
+      // For WebRTC, use the conversationToken (JWT) from the backend
+      // This is different from the old WebSocket signedUrl approach
       const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID;
       
       // Log token/agentId availability for debugging
@@ -855,7 +863,8 @@ export default function VoiceInterviewWebSocket({
         conversationTokenLength: conversationToken?.length || 0,
         hasAgentId: !!agentId,
         agentId: agentId || 'not available',
-        connectionType: 'webrtc'
+        connectionType: 'webrtc',
+        hasConversationId: !!conversationId
       });
       
       if (!conversationToken && !agentId) {
@@ -868,16 +877,18 @@ export default function VoiceInterviewWebSocket({
         // WebRTC provides superior audio processing (echo cancellation, noise reduction)
         // and automatically optimizes audio format for best quality/latency balance
         connectionType: 'webrtc' as const,
-        // Note: Audio format (e.g., pcm_24000) is typically configured at the agent level
-        // in the ElevenLabs platform. WebRTC will use the optimal format automatically.
+        // Request high-fidelity audio (24kHz PCM) for best quality
+        // WebRTC will use optimal format, but we can specify preferences
+        audioFormat: 'pcm_24000' as const,
       };
       
-      // For WebRTC, pass conversationToken (preferred) or agentId as fallback
+      // For WebRTC, pass conversationToken (JWT) - this is required
       if (conversationToken) {
         startOptions.conversationToken = conversationToken;
-        // Also keep signedUrl for backward compatibility if SDK supports both
-        startOptions.signedUrl = signedUrl;
+        // Some SDK versions may also accept 'token' as an alias
+        startOptions.token = conversationToken;
       } else if (agentId) {
+        // Fallback: use agentId if token is not available (not recommended for production)
         startOptions.agentId = agentId;
         console.warn('[WebRTC] Using agentId instead of conversationToken - token may not have been received');
       }
@@ -901,11 +912,11 @@ export default function VoiceInterviewWebSocket({
       console.log('[WebRTC] Start payload values:', { 
         hasConversationToken: !!startOptions.conversationToken,
         conversationTokenLength: startOptions.conversationToken?.length || 0,
+        hasToken: !!startOptions.token,
         hasAgentId: !!startOptions.agentId,
         agentId: startOptions.agentId || 'not set',
-        hasSignedUrl: !!startOptions.signedUrl,
-        signedUrlLength: startOptions.signedUrl?.length || 0,
         connectionType: startOptions.connectionType,
+        audioFormat: startOptions.audioFormat,
         dynamic_keys: dynamicKeys 
       });
 
