@@ -1152,23 +1152,20 @@ const tokenRateLimiter = rateLimit({
         timestamp: new Date().toISOString(),
       });
 
-      // For WebRTC, use POST /v1/convai/conversation to create a conversation and get a JWT token
-      // This replaces the WebSocket get_signed_url endpoint
-      const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation`;
+      // Use GET /v1/convai/conversation/get_signed_url - this is the standard entry point
+      // The SDK will automatically upgrade to WebRTC if available/supported
+      const elevenLabsUrl = `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`;
       const fetchOptions = {
-        method: 'POST',
+        method: 'GET',
         headers: {
           'xi-api-key': apiKey,
-          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          agent_id: agentId,
-        }),
       };
 
-      console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs WebRTC API: ${elevenLabsUrl} (requestId=${requestId}, agentId=${agentId})`);
+      console.log(`[CONVERSATION-TOKEN] Fetching signed URL for WebRTC... (requestId=${requestId}, agentId=${agentId})`);
+      console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl}`);
 
-      const fetchResult = await (async function fetchWebRTCToken(attempt = 0): Promise<{ success: boolean; token?: string; conversationId?: string; status?: number; body?: any; special?: 'concurrent' | 'system_busy'; retryAfterSeconds?: number }> {
+      const fetchResult = await (async function fetchSignedUrl(attempt = 0): Promise<{ success: boolean; signedUrl?: string; status?: number; body?: any; special?: 'concurrent' | 'system_busy'; retryAfterSeconds?: number }> {
         const response = await fetch(elevenLabsUrl, fetchOptions);
         const responseText = await response.text();
         let parsedBody: any = null;
@@ -1179,23 +1176,22 @@ const tokenRateLimiter = rateLimit({
         }
 
         if (response.ok) {
-          // WebRTC endpoint returns: { token: "...", conversation_id: "..." }
-          const token = parsedBody?.token || parsedBody?.conversation_token;
-          const conversationId = parsedBody?.conversation_id;
+          // ElevenLabs returns: { signed_url: "..." } (snake_case)
+          const signedUrl = parsedBody?.signed_url;
           
-          if (!token) {
-            console.error('[CONVERSATION-TOKEN] WebRTC API response missing token:', parsedBody);
+          if (!signedUrl) {
+            console.error('[CONVERSATION-TOKEN] API response missing signed_url:', parsedBody);
             return { 
               success: false, 
               status: 500, 
-              body: { error: 'Token not found in response', response: parsedBody }
+              body: { error: 'signed_url not found in response', response: parsedBody }
             };
           }
           
+          console.log(`[CONVERSATION-TOKEN] Successfully received signed_url (length: ${signedUrl.length})`);
           return { 
             success: true, 
-            token: token,
-            conversationId: conversationId
+            signedUrl: signedUrl
           };
         }
 
@@ -1270,7 +1266,7 @@ const tokenRateLimiter = rateLimit({
           const delay = parseRetryAfter(retryAfterValue) ?? Math.round(BASE_RETRY_DELAY_MS * Math.pow(2, attempt) * (0.75 + Math.random() * 0.5));
           console.log(`[CONVERSATION-TOKEN] Retrying after ${delay}ms for requestId=${requestId} (attempt ${attempt + 1})`);
           await sleep(delay);
-          return fetchWebRTCToken(attempt + 1);
+          return fetchSignedUrl(attempt + 1);
         }
 
         return { 
@@ -1281,20 +1277,20 @@ const tokenRateLimiter = rateLimit({
         };
       })();
 
-      if (fetchResult.success && fetchResult.token) {
-        console.log(`[CONVERSATION-TOKEN] WebRTC token obtained successfully for user: ${userId} (requestId=${requestId})`);
+      if (fetchResult.success && fetchResult.signedUrl) {
+        console.log(`[CONVERSATION-TOKEN] Signed URL obtained successfully for user: ${userId} (requestId=${requestId})`);
+        // Return the signed_url exactly as received from ElevenLabs
+        // The SDK will automatically upgrade to WebRTC if available/supported
         const successBody = {
           success: {
-            token: fetchResult.token,
-            conversationToken: fetchResult.token, // Alias for WebRTC compatibility
-            conversationId: fetchResult.conversationId,
+            signed_url: fetchResult.signedUrl, // snake_case from ElevenLabs API
+            signedUrl: fetchResult.signedUrl,   // camelCase alias for frontend convenience
             clientId: userId,
             agentId,
             requestId,
           },
-          token: fetchResult.token,
-          conversationToken: fetchResult.token, // Alias for WebRTC compatibility
-          conversationId: fetchResult.conversationId,
+          signed_url: fetchResult.signedUrl, // snake_case from ElevenLabs API
+          signedUrl: fetchResult.signedUrl,   // camelCase alias for frontend convenience
           clientId: userId,
           agentId,
         };
