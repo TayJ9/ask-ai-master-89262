@@ -13,6 +13,15 @@ import { Loader2, CheckCircle2, AlertCircle, RefreshCw } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
+// Step configuration for loading screen
+const STEPS = [
+  { id: 1, text: "Saving your interview...", delay: 0 },
+  { id: 2, text: "Reviewing your responses...", delay: 800 },
+  { id: 3, text: "Putting together your feedback...", delay: 1600 },
+  { id: 4, text: "Almost done...", delay: 2400 },
+];
+const MIN_LOAD_TIME = 2500;
+
 interface InterviewResults {
   interview: {
     id: string;
@@ -95,9 +104,18 @@ export default function Results() {
   const [results, setResults] = useState<InterviewResults | null>(null);
   const [error, setError] = useState<string | null>(null);
   
+  // Step-by-step loading state
+  const [activeStep, setActiveStep] = useState<number>(1);
+  const [completedSteps, setCompletedSteps] = useState<Set<number>>(new Set());
+  const [tempData, setTempData] = useState<InterviewResults | null>(null);
+  const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+  const [showResults, setShowResults] = useState(false);
+  
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollCountRef = useRef(0);
   const isMountedRef = useRef(true);
+  const stepTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const minTimeElapsedRef = useRef(false);
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
@@ -154,6 +172,77 @@ export default function Results() {
     }
   };
 
+  // Helper function to check if data is ready and complete
+  const isDataReady = (data: InterviewResults | null): boolean => {
+    if (!data) return false;
+    const hasEvaluation = data.evaluation !== null;
+    const hasFeedback = data.evaluation?.evaluation !== null;
+    const evalStatus = data.evaluation?.status;
+    return hasEvaluation && hasFeedback && evalStatus === 'complete';
+  };
+
+  // Minimum time timer - ensures loading screen shows for at least 2500ms
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      minTimeElapsedRef.current = true;
+      setMinTimeElapsed(true);
+    }, MIN_LOAD_TIME);
+
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Step progression logic - activates steps at specified delays
+  useEffect(() => {
+    // Clear any existing timeouts
+    stepTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+    stepTimeoutsRef.current = [];
+
+    // Activate each step at its specified delay
+    STEPS.forEach((step) => {
+      if (step.id === 1) {
+        // Step 1 is active immediately
+        setActiveStep(1);
+      } else {
+        const timeout = setTimeout(() => {
+          // Mark previous step as completed
+          setCompletedSteps(prev => new Set([...prev, step.id - 1]));
+          // Activate current step
+          setActiveStep(step.id);
+          // Step 4 will stay active/pulsing until data arrives (handled separately)
+        }, step.delay);
+        stepTimeoutsRef.current.push(timeout);
+      }
+    });
+
+    return () => {
+      stepTimeoutsRef.current.forEach(timeout => clearTimeout(timeout));
+    };
+  }, []);
+
+  // Effect to handle showing results when both conditions are met
+  useEffect(() => {
+    const dataReady = isDataReady(results) || isDataReady(tempData);
+    
+    if (minTimeElapsed && dataReady) {
+      // If we have tempData and timer is done, move it to results
+      if (tempData && !isDataReady(results)) {
+        setResults(tempData);
+        setTempData(null);
+        // Mark step 4 as completed when moving data
+        setCompletedSteps(prev => new Set([...prev, 4]));
+      } else if (isDataReady(results)) {
+        // Results already ready, just mark step 4 as completed
+        setCompletedSteps(prev => new Set([...prev, 4]));
+      }
+      
+      // Show results with fade transition
+      setTimeout(() => {
+        setShowResults(true);
+        setStatus('complete');
+      }, 100); // Small delay for smooth transition
+    }
+  }, [minTimeElapsed, results, tempData]);
+
   // Start polling for interviewId
   useEffect(() => {
     const activeSessionId = finalSessionId || sessionId;
@@ -192,13 +281,21 @@ export default function Results() {
       // Phase 2: Fetch results and check evaluation status
       try {
         const resultsData = await fetchResults(interviewId);
-        setResults(resultsData);
         
         // Check if evaluation is null, incomplete, or pending
         // evaluation.evaluation is the actual feedback JSON - check if it exists
         const hasEvaluation = resultsData.evaluation !== null;
         const hasFeedback = resultsData.evaluation?.evaluation !== null;
         const evalStatus = resultsData.evaluation?.status;
+        const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
+        
+        // Always store in tempData first - useEffect will handle moving to results when timer is done
+        setTempData(resultsData);
+        
+        // Mark step 4 as completed when data arrives (even if not complete yet)
+        if (isComplete) {
+          setCompletedSteps(prev => new Set([...prev, 4]));
+        }
         
         if (!hasEvaluation || !hasFeedback || evalStatus === 'pending') {
           // Phase 3: Poll for evaluation completion
@@ -212,14 +309,16 @@ export default function Results() {
               
               try {
                 const updatedResults = await fetchResults(interviewId!);
-                setResults(updatedResults);
                 
                 // Check if evaluation is complete AND feedback exists
                 const hasCompleteEvaluation = updatedResults.evaluation?.status === 'complete';
                 const hasCompleteFeedback = updatedResults.evaluation?.evaluation !== null;
                 
                 if (hasCompleteEvaluation && hasCompleteFeedback) {
-                  setStatus('complete');
+                  // Store in tempData - useEffect will handle showing when timer is done
+                  setTempData(updatedResults);
+                  // Mark step 4 as completed
+                  setCompletedSteps(prev => new Set([...prev, 4]));
                   return;
                 }
                 if (updatedResults.evaluation?.status === 'failed') {
@@ -227,6 +326,9 @@ export default function Results() {
                   setStatus('error');
                   return;
                 }
+                
+                // Update tempData with partial data
+                setTempData(updatedResults);
               } catch (err) {
                 console.error('Error polling for evaluation:', err);
               }
@@ -239,7 +341,7 @@ export default function Results() {
           
           pollForEvaluation();
         } else if (evalStatus === 'complete' && hasFeedback) {
-          setStatus('complete');
+          // Already handled above
         } else if (evalStatus === 'failed') {
           setError('Evaluation failed. Please contact support.');
           setStatus('error');
@@ -268,32 +370,78 @@ export default function Results() {
     window.location.reload();
   };
 
-  if (status === 'loading' || status === 'saving' || status === 'evaluating') {
+  // Step-by-Step Loading Screen Component
+  const renderLoadingScreen = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-        <Card className="w-full max-w-md">
-          <CardContent className="pt-6">
-            <div className="flex flex-col items-center gap-4">
-              <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
-              <div className="text-center">
-                <h2 className="text-xl font-semibold mb-2">
-                  {status === 'saving' && 'Saving your interview...'}
-                  {status === 'evaluating' && 'Analyzing your interview...'}
-                  {status === 'loading' && 'Loading results...'}
+        <Card className="w-full max-w-lg">
+          <CardContent className="pt-8 pb-8 px-8">
+            <div className="flex flex-col gap-6">
+              <div className="text-center mb-2">
+                <h2 className="text-2xl font-semibold text-gray-800 mb-2">
+                  Getting your results ready
                 </h2>
                 <p className="text-gray-600 text-sm">
-                  {status === 'saving' && 'Waiting for interview to be saved...'}
-                  {status === 'evaluating' && 'Generating feedback and scores. This may take a few moments...'}
-                  {status === 'loading' && 'Please wait...'}
+                  This will just take a moment...
                 </p>
+              </div>
+              
+              <div className="space-y-4">
+                {STEPS.map((step) => {
+                  const isCompleted = completedSteps.has(step.id);
+                  const isActive = activeStep === step.id && !isCompleted;
+                  const isFuture = activeStep < step.id;
+                  
+                  return (
+                    <div
+                      key={step.id}
+                      className={`flex items-center gap-4 transition-all duration-300 ${
+                        isActive ? 'opacity-100' : isCompleted ? 'opacity-100' : 'opacity-60'
+                      }`}
+                    >
+                      {/* Step Indicator */}
+                      <div className="flex-shrink-0">
+                        {isCompleted ? (
+                          <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
+                            <CheckCircle2 className="w-5 h-5 text-white" />
+                          </div>
+                        ) : isActive ? (
+                          <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
+                            <Loader2 className="w-5 h-5 text-white animate-spin" />
+                          </div>
+                        ) : (
+                          <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
+                            <div className="w-3 h-3 rounded-full bg-white" />
+                          </div>
+                        )}
+                      </div>
+                      
+                      {/* Step Text */}
+                      <div className="flex-1">
+                        <p
+                          className={`text-sm font-medium transition-colors duration-300 ${
+                            isCompleted
+                              ? 'text-green-600'
+                              : isActive
+                              ? 'text-blue-600'
+                              : 'text-gray-500'
+                          }`}
+                        >
+                          {step.text}
+                        </p>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </CardContent>
         </Card>
       </div>
     );
-  }
+  };
 
+  // Show error screen
   if (status === 'error') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -316,19 +464,28 @@ export default function Results() {
     );
   }
 
-  if (!results) {
-    return null;
-  }
-
   // Safely handle partial records - evaluation may be null or incomplete
-  const evaluation = results.evaluation;
+  const evaluation = results?.evaluation;
   const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
   const overallScore = hasCompleteFeedback 
     ? (evaluation?.overallScore || evaluation?.evaluation?.overall_score || null)
     : null;
 
+  // Render both loading and results with fade transitions
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
+    <div className="relative min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
+      {/* Loading Screen - fades out when showResults is true */}
+      <div className={`absolute inset-0 transition-opacity duration-500 ${
+        showResults ? 'opacity-0 pointer-events-none' : 'opacity-100'
+      }`}>
+        {renderLoadingScreen()}
+      </div>
+      
+      {/* Results Screen - fades in when showResults is true */}
+      {results && (
+        <div className={`relative transition-opacity duration-500 py-8 px-4 ${
+          showResults ? 'opacity-100' : 'opacity-0 pointer-events-none'
+        }`}>
       <div className="max-w-4xl mx-auto">
         <Card className="mb-6">
           <CardHeader>
@@ -467,6 +624,8 @@ export default function Results() {
           </Button>
         </div>
       </div>
+        </div>
+      )}
     </div>
   );
 }

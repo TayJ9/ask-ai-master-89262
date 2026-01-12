@@ -527,8 +527,9 @@ export default function VoiceInterviewWebSocket({
     if (conversation.isSpeaking) {
       return 'ai_speaking';
     }
-    // Use input volume to detect user speaking
-    if (inputVolume > 0.1) {
+    // Use input volume to detect user speaking - lowered threshold for better sensitivity
+    // 0.03 allows detection of quieter speech while avoiding false positives
+    if (inputVolume > 0.03) {
       return 'user_speaking';
     }
     return 'listening';
@@ -1153,16 +1154,43 @@ export default function VoiceInterviewWebSocket({
               )}
             </div>
 
-            {/* Audio Visualizer */}
-            <div className="mb-6 flex justify-center">
-              <AudioVisualizer
-                    inputVolume={inputVolume}
-                    outputVolume={outputVolume}
-                    mode={conversationMode}
-                width={600}
-                height={120}
-                barCount={60}
-              />
+            {/* Audio Visualizer - Enhanced for better visibility */}
+            <div className="mb-6 flex flex-col items-center justify-center">
+              {/* Microphone Activity Indicator */}
+              {isConnected && (
+                <div className="flex items-center gap-2 mb-2">
+                  <div className={`flex items-center gap-2 ${
+                    inputVolume > 0.01 
+                      ? 'text-green-500' 
+                      : 'text-amber-500'
+                  }`}>
+                    <div className={`h-2 w-2 rounded-full ${
+                      inputVolume > 0.01 
+                        ? 'bg-green-500 animate-pulse' 
+                        : 'bg-amber-500'
+                    }`} />
+                    <span className="text-xs font-medium">
+                      {inputVolume > 0.01 ? 'Microphone active' : 'Microphone ready'}
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className={`transition-all duration-300 ${
+                conversationMode === 'user_speaking' 
+                  ? 'scale-105 drop-shadow-lg' 
+                  : conversationMode === 'ai_speaking'
+                  ? 'scale-105 drop-shadow-lg'
+                  : ''
+              }`}>
+                <AudioVisualizer
+                  inputVolume={inputVolume}
+                  outputVolume={outputVolume}
+                  mode={conversationMode}
+                  width={700}
+                  height={140}
+                  barCount={70}
+                />
+              </div>
             </div>
 
                 {/* Microphone Status Indicator */}

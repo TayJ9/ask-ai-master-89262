@@ -62,7 +62,19 @@ export default function AudioVisualizer({
     ctx.scale(dpr, dpr);
   }, [width, height, barCount]); // Only re-setup on size changes
 
-  // Animation loop (separate effect, uses activeVolume from closure)
+  // Use refs to store latest prop values for animation loop
+  const inputVolumeRef = useRef(inputVolume);
+  const outputVolumeRef = useRef(outputVolume);
+  const modeRef = useRef(mode);
+  
+  // Update refs whenever props change
+  useEffect(() => {
+    inputVolumeRef.current = inputVolume;
+    outputVolumeRef.current = outputVolume;
+    modeRef.current = mode;
+  }, [inputVolume, outputVolume, mode]);
+
+  // Animation loop (separate effect, reads latest props from refs each frame)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -74,20 +86,34 @@ export default function AudioVisualizer({
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
-      // Use activeVolume from closure (not dependency) - reads latest props value
-      const currentActiveVolume = mode === 'user_speaking' ? inputVolume : 
-                                 mode === 'ai_speaking' ? outputVolume : 
-                                 Math.max(inputVolume, outputVolume) * 0.3;
+      // Read latest values from refs each frame
+      const currentInputVolume = inputVolumeRef.current;
+      const currentOutputVolume = outputVolumeRef.current;
+      const currentMode = modeRef.current;
+      
+      const currentActiveVolume = currentMode === 'user_speaking' ? currentInputVolume : 
+                                 currentMode === 'ai_speaking' ? currentOutputVolume : 
+                                 Math.max(currentInputVolume, currentOutputVolume) * 0.3;
 
       // Generate target bar heights based on volume with some randomness
-      const isActive = mode === 'user_speaking' || mode === 'ai_speaking';
+      const isActive = currentMode === 'user_speaking' || currentMode === 'ai_speaking';
+      const isListening = currentMode === 'listening';
       
       for (let i = 0; i < barCount; i++) {
         if (isActive && currentActiveVolume > 0.01) {
           // Create organic wave-like motion with volume influence
-          const wave = Math.sin(Date.now() * 0.003 + i * 0.3) * 0.3 + 0.7;
+          // More aggressive animation for user speaking
+          const waveSpeed = currentMode === 'user_speaking' ? 0.004 : 0.003;
+          const wave = Math.sin(Date.now() * waveSpeed + i * 0.3) * 0.3 + 0.7;
           const noise = Math.random() * 0.3;
-          targetBarsRef.current[i] = currentActiveVolume * wave * (0.7 + noise) * height * 0.8;
+          const volumeMultiplier = currentMode === 'user_speaking' ? 0.9 : 0.8;
+          targetBarsRef.current[i] = currentActiveVolume * wave * (0.7 + noise) * height * volumeMultiplier;
+        } else if (isListening && currentInputVolume > 0.005) {
+          // Show subtle activity when listening and microphone picks up any sound
+          // This helps users know the app is hearing them even when not speaking loudly
+          const listeningWave = Math.sin(Date.now() * 0.002 + i * 0.25) * 0.4 + 0.6;
+          const listeningVolume = Math.min(currentInputVolume * 2, 0.3); // Amplify low volumes for visibility
+          targetBarsRef.current[i] = 3 + listeningVolume * listeningWave * height * 0.15;
         } else {
           // Minimal idle animation
           const idleWave = Math.sin(Date.now() * 0.001 + i * 0.2) * 0.5 + 0.5;
@@ -107,7 +133,20 @@ export default function AudioVisualizer({
 
       // Draw bars
       const barWidth = width / barCount;
-      const color = getColor();
+      // Get color based on current mode
+      const color = (() => {
+        switch (currentMode) {
+          case 'user_speaking':
+            return '#22c55e'; // Green - User Speaking
+          case 'ai_speaking':
+            return '#3b82f6'; // Blue - AI Speaking
+          case 'listening':
+            return '#f59e0b'; // Amber - Listening
+          case 'processing':
+          default:
+            return '#6b7280'; // Gray - Processing
+        }
+      })();
       const barGap = 2;
 
       for (let i = 0; i < barCount; i++) {
@@ -132,8 +171,18 @@ export default function AudioVisualizer({
         ctx.fill();
 
         // Add glow effect for active modes
-        if (isActive && currentActiveVolume > 0.1) {
-          ctx.shadowBlur = 8;
+        // Lower threshold for user_speaking to show glow even with quieter speech
+        const glowThreshold = currentMode === 'user_speaking' ? 0.05 : 0.1;
+        if (isActive && currentActiveVolume > glowThreshold) {
+          ctx.shadowBlur = currentMode === 'user_speaking' ? 12 : 8;
+          ctx.shadowColor = color;
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+        
+        // Subtle glow for listening mode when microphone is active
+        if (isListening && currentInputVolume > 0.005) {
+          ctx.shadowBlur = 4;
           ctx.shadowColor = color;
           ctx.fill();
           ctx.shadowBlur = 0;
@@ -150,7 +199,7 @@ export default function AudioVisualizer({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [mode, width, height, barCount]); // Only restart animation on mode/size change
+  }, [width, height, barCount]); // Only restart animation on size changes - volumes read from refs each frame
 
   return (
     <div className="flex flex-col items-center gap-2">
