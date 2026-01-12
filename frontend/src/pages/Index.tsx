@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
+import { AnimatePresence, motion } from "framer-motion";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
@@ -11,6 +12,30 @@ import { LogOut, History, ArrowLeft } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
+
+// Premium easing for internal view transitions
+const viewTransition = {
+  duration: 0.35,
+  ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
+};
+
+const viewVariants = {
+  initial: {
+    opacity: 0,
+    scale: 0.98,
+    y: 10,
+  },
+  animate: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+  },
+  exit: {
+    opacity: 0,
+    scale: 1.02,
+    y: -10,
+  },
+};
 
 export default function Index() {
   const [location, setLocation] = useLocation();
@@ -431,58 +456,102 @@ export default function Index() {
         </div>
       )}
 
-      {currentView === "roles" && <RoleSelection onSelectRole={handleSelectRole} />}
-      
-      {currentView === "resume" && (
-        <ResumeUpload
-          onResumeUploaded={handleResumeUploaded}
-          onSkip={handleSkipResume}
-          onBack={() => {
-            setCurrentView("roles");
-            setSelectedRole("");
-            setResumeText("");
-          }}
-        />
-      )}
-      
-      {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
-          This prevents unmounting during async operations like getUserMedia.
-          Wrapped in ErrorBoundary to catch any errors and show fallback UI. */}
-      {candidateContext && candidateContext.sessionId && (
-        <VoiceInterviewErrorBoundary onReset={() => setCurrentView("voice")}>
-          <VoiceInterviewWebSocket
-            sessionId={candidateContext.sessionId}
-            firstName={candidateContext.firstName}
-            major={candidateContext.major}
-            candidateContext={{
-              name: candidateContext.name || candidateContext.firstName,
-              major: candidateContext.major,
-              year: candidateContext.year,
-              skills: candidateContext.skills || [],
-              experience: candidateContext.experience,
-              education: candidateContext.education,
-              summary: candidateContext.summary,
-              resumeText: candidateContext.resumeText,
-              resumeSource: candidateContext.resumeSource,
-            }}
-            onComplete={handleCompleteInterview}
-            onInterviewEnd={(data) => {
-              console.log('Interview ended via tool call:', data);
-              // Transition to results screen using the same handler
-              // Use sessionId and conversationId from callback data, with fallbacks
-              handleCompleteInterview({
-                sessionId: data?.sessionId || candidateContext.sessionId || voiceSessionId,
-                conversationId: data?.conversationId || undefined,
-              });
-            }}
-            isActive={currentView === "voice"}
-          />
-        </VoiceInterviewErrorBoundary>
-      )}
-      
-      {currentView === "history" && (
-        <SessionHistory userId={user.id} onBack={() => setCurrentView("roles")} />
-      )}
+      <AnimatePresence mode="wait" initial={false}>
+        {currentView === "roles" && (
+          <motion.div
+            key="roles"
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            variants={viewVariants}
+            transition={viewTransition}
+            style={{ width: "100%", height: "100%" }}
+          >
+            <RoleSelection onSelectRole={handleSelectRole} />
+          </motion.div>
+        )}
+        
+        {currentView === "resume" && (
+          <motion.div
+            key="resume"
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            variants={viewVariants}
+            transition={viewTransition}
+            style={{ width: "100%", height: "100%" }}
+          >
+            <ResumeUpload
+              onResumeUploaded={handleResumeUploaded}
+              onSkip={handleSkipResume}
+              onBack={() => {
+                setCurrentView("roles");
+                setSelectedRole("");
+                setResumeText("");
+              }}
+            />
+          </motion.div>
+        )}
+        
+        {currentView === "voice" && candidateContext && candidateContext.sessionId && (
+          <motion.div
+            key="voice"
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            variants={viewVariants}
+            transition={viewTransition}
+            style={{ width: "100%", height: "100%" }}
+          >
+            {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
+                This prevents unmounting during async operations like getUserMedia.
+                Wrapped in ErrorBoundary to catch any errors and show fallback UI. */}
+            <VoiceInterviewErrorBoundary onReset={() => setCurrentView("voice")}>
+              <VoiceInterviewWebSocket
+                sessionId={candidateContext.sessionId}
+                firstName={candidateContext.firstName}
+                major={candidateContext.major}
+                candidateContext={{
+                  name: candidateContext.name || candidateContext.firstName,
+                  major: candidateContext.major,
+                  year: candidateContext.year,
+                  skills: candidateContext.skills || [],
+                  experience: candidateContext.experience,
+                  education: candidateContext.education,
+                  summary: candidateContext.summary,
+                  resumeText: candidateContext.resumeText,
+                  resumeSource: candidateContext.resumeSource,
+                }}
+                onComplete={handleCompleteInterview}
+                onInterviewEnd={(data) => {
+                  console.log('Interview ended via tool call:', data);
+                  // Transition to results screen using the same handler
+                  // Use sessionId and conversationId from callback data, with fallbacks
+                  handleCompleteInterview({
+                    sessionId: data?.sessionId || candidateContext.sessionId || voiceSessionId,
+                    conversationId: data?.conversationId || undefined,
+                  });
+                }}
+                isActive={currentView === "voice"}
+              />
+            </VoiceInterviewErrorBoundary>
+          </motion.div>
+        )}
+        
+        {currentView === "history" && (
+          <motion.div
+            key="history"
+            initial="initial"
+            animate="animate"
+            exit="exit"
+            variants={viewVariants}
+            transition={viewTransition}
+            style={{ width: "100%", height: "100%" }}
+          >
+            <SessionHistory userId={user.id} onBack={() => setCurrentView("roles")} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </>
   );
