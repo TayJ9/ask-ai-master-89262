@@ -355,6 +355,8 @@ function authenticateToken(req: any, res: any, next: any) {
  * - POST /webhooks/elevenlabs - Receive conversation completion webhooks
  */
 export function registerRoutes(app: Express) {
+  console.log('[ROUTE REGISTRATION] Starting route registration...');
+  
   // Favicon handler - prevent 404 errors
   app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();
@@ -1100,6 +1102,7 @@ const tokenRateLimiter = rateLimit({
   // Note: OPTIONS preflight is handled globally by CORS middleware (see server/index.ts)
   // The logging middleware logs all OPTIONS requests including this route
   // Requires authentication and is rate-limited to 5 requests per hour per user
+  console.log('[ROUTE REGISTRATION] Registering route: GET /api/conversation-token');
   app.get("/api/conversation-token", authenticateToken, tokenRateLimiter, async (req: any, res) => {
     const requestId = req.header('X-Request-Id') || randomUUID();
     const timestamp = new Date().toISOString();
@@ -2187,4 +2190,13 @@ const tokenRateLimiter = rateLimit({
     }
   });
 
+  // Log completion of route registration
+  console.log('[ROUTE REGISTRATION] All routes registered successfully');
+  console.log('[ROUTE REGISTRATION] Available routes include:');
+  console.log('[ROUTE REGISTRATION]   - GET /api/conversation-token (authenticated, rate-limited)');
+  console.log('[ROUTE REGISTRATION]   - GET /health');
+  console.log('[ROUTE REGISTRATION]   - POST /api/auth/signin');
+  console.log('[ROUTE REGISTRATION]   - POST /api/auth/signup');
+  console.log('[ROUTE REGISTRATION]   - POST /webhooks/elevenlabs');
+  console.log('[ROUTE REGISTRATION]   - And other /api/* endpoints');
 }

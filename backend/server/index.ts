@@ -150,7 +150,9 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    log('[SERVER STARTUP] Registering API routes...');
     registerRoutes(app);
+    log('[SERVER STARTUP] API routes registered successfully');
     
     // Root route - provide API information (frontend is deployed separately on Vercel)
     app.get('/', (_req, res) => {
