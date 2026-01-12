@@ -508,11 +508,15 @@ export default function VoiceInterviewWebSocket({
     });
   }, [toast]);
 
-  // Initialize ElevenLabs conversation hook
+  // Initialize ElevenLabs conversation hook with WebRTC for lowest latency
   const conversation = useConversation({
     clientTools: null,
     preferHeadphonesForIosDevices: true,
     useWakeLock: true,
+    // Enable WebRTC transport for superior audio quality and lowest latency
+    connectionType: 'webrtc' as const,
+    // Use US region for optimal latency (can be adjusted based on user location)
+    region: 'us' as const,
     onConnect: handleConnect,
     onDisconnect: handleDisconnect,
     onMessage: handleMessage,
@@ -843,6 +847,12 @@ export default function VoiceInterviewWebSocket({
       const startOptions = {
         signedUrl: signedUrl,
         dynamicVariables,
+        // Enable WebRTC for lowest latency and highest quality audio
+        // WebRTC provides superior audio processing (echo cancellation, noise reduction)
+        // and automatically optimizes audio format for best quality/latency balance
+        connectionType: 'webrtc' as const,
+        // Note: Audio format (e.g., pcm_24000) is typically configured at the agent level
+        // in the ElevenLabs platform. WebRTC will use the optimal format automatically.
       };
 
       lastStartDynamicVarsRef.current = startOptions.dynamicVariables;
