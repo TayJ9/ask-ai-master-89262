@@ -844,8 +844,25 @@ export default function VoiceInterviewWebSocket({
         dynamicVariables.resume_sentinel = elevenDebugConstants.SENTINEL;
       }
 
-      const startOptions = {
-        signedUrl: signedUrl,
+      // For WebRTC, the SDK requires either conversationToken or agentId
+      // The signedUrl from ElevenLabs IS the conversationToken
+      const conversationToken = signedUrl;
+      const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID;
+      
+      // Log token/agentId availability for debugging
+      console.log('[WebRTC] Preparing startSession options:', {
+        hasConversationToken: !!conversationToken,
+        conversationTokenLength: conversationToken?.length || 0,
+        hasAgentId: !!agentId,
+        agentId: agentId || 'not available',
+        connectionType: 'webrtc'
+      });
+      
+      if (!conversationToken && !agentId) {
+        throw new Error('Either conversationToken or agentId is required for WebRTC connection. Token fetch may have failed.');
+      }
+      
+      const startOptions: any = {
         dynamicVariables,
         // Enable WebRTC for lowest latency and highest quality audio
         // WebRTC provides superior audio processing (echo cancellation, noise reduction)
@@ -854,6 +871,16 @@ export default function VoiceInterviewWebSocket({
         // Note: Audio format (e.g., pcm_24000) is typically configured at the agent level
         // in the ElevenLabs platform. WebRTC will use the optimal format automatically.
       };
+      
+      // For WebRTC, pass conversationToken (preferred) or agentId as fallback
+      if (conversationToken) {
+        startOptions.conversationToken = conversationToken;
+        // Also keep signedUrl for backward compatibility if SDK supports both
+        startOptions.signedUrl = signedUrl;
+      } else if (agentId) {
+        startOptions.agentId = agentId;
+        console.warn('[WebRTC] Using agentId instead of conversationToken - token may not have been received');
+      }
 
       lastStartDynamicVarsRef.current = startOptions.dynamicVariables;
       const dynamicKeys = Object.keys(dynamicVariables);
@@ -870,8 +897,17 @@ export default function VoiceInterviewWebSocket({
           sizes: dynamicSizes,
         });
       }
-      console.log('Step 3: Starting ElevenLabs session with option keys:', Object.keys(startOptions));
-      console.log('Start payload values (redacted signedUrl length):', { signedUrlLength: signedUrl?.length || 0, dynamic_keys: dynamicKeys });
+      console.log('[WebRTC] Step 3: Starting ElevenLabs session with option keys:', Object.keys(startOptions));
+      console.log('[WebRTC] Start payload values:', { 
+        hasConversationToken: !!startOptions.conversationToken,
+        conversationTokenLength: startOptions.conversationToken?.length || 0,
+        hasAgentId: !!startOptions.agentId,
+        agentId: startOptions.agentId || 'not set',
+        hasSignedUrl: !!startOptions.signedUrl,
+        signedUrlLength: startOptions.signedUrl?.length || 0,
+        connectionType: startOptions.connectionType,
+        dynamic_keys: dynamicKeys 
+      });
 
       if (shouldDebugEleven()) {
         if (!resumeTextForSession) {
