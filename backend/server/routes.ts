@@ -2067,7 +2067,12 @@ const tokenRateLimiter = rateLimit({
       // Always return 200 OK even if database operations had issues
       // This allows frontend to navigate to results page
       // The webhook will eventually sync the correct state
-      res.json({ success: true });
+      // Return interviewId if available for direct navigation
+      res.json({ 
+        success: true,
+        interviewId: interviewId || null, // Return interviewId for direct lookup
+        sessionId: client_session_id, // Also return sessionId for fallback polling
+      });
     } catch (error: any) {
       console.error('[SAVE-INTERVIEW] Unexpected error processing client end notification:', error);
       // Return 200 OK instead of 500 to allow frontend navigation

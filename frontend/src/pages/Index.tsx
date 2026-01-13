@@ -336,32 +336,43 @@ export default function Index() {
   };
 
   const handleCompleteInterview = (results?: any) => {
-    // Navigate to results page with sessionId and conversationId as query params
+    // Navigate to results page with interviewId in state (preferred) or sessionId as fallback
     const sessionId = voiceSessionId || results?.sessionId;
     const conversationId = results?.conversationId;
+    const interviewId = results?.interviewId; // Database ID from save-interview response
+    
     console.log('[FLIGHT_RECORDER] [TRANSITION] handleCompleteInterview called:', {
       resultsProvided: !!results,
       resultsSessionId: results?.sessionId,
       resultsConversationId: results?.conversationId,
+      resultsInterviewId: results?.interviewId,
       voiceSessionId,
       finalSessionId: sessionId,
       finalConversationId: conversationId,
+      finalInterviewId: interviewId,
       timestamp: new Date().toISOString()
     });
     
-    if (!sessionId) {
-      console.error('No sessionId available for results navigation');
+    if (!sessionId && !interviewId) {
+      console.error('No sessionId or interviewId available for results navigation');
       toast({
         title: "Error",
-        description: "Unable to navigate to results - session ID missing",
+        description: "Unable to navigate to results - session ID or interview ID missing",
         variant: "destructive",
       });
       return;
     }
     
     // Build query params
+    // Prefer interviewId for direct lookup, fallback to sessionId for polling
     const params = new URLSearchParams();
-    params.set('sessionId', sessionId);
+    if (interviewId) {
+      params.set('interviewId', interviewId); // Direct lookup - preferred
+      console.log('[FLIGHT_RECORDER] [TRANSITION] Using interviewId for direct lookup:', interviewId);
+    }
+    if (sessionId) {
+      params.set('sessionId', sessionId); // Fallback for polling
+    }
     if (conversationId) {
       params.set('conversationId', conversationId);
     }
@@ -369,6 +380,7 @@ export default function Index() {
     const resultsUrl = `/results?${params.toString()}`;
     console.log('[FLIGHT_RECORDER] [TRANSITION] Navigating to results URL:', {
       url: resultsUrl,
+      interviewId: interviewId || 'not provided',
       sessionId,
       conversationId: conversationId || 'not provided',
       paramsString: params.toString(),

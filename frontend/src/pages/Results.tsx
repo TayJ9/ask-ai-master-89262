@@ -66,11 +66,12 @@ export default function Results() {
   const { toast } = useToast();
   
   // Parse query params from location
-  // CRITICAL: Ensure we're parsing from the actual URL, not a stale location value
+  // CRITICAL: Check for interviewId first (direct lookup), then fallback to sessionId (polling)
   const urlParts = location.split('?');
   const queryString = urlParts.length > 1 ? urlParts[1] : '';
   const searchParams = new URLSearchParams(queryString);
-  const sessionId = searchParams.get("sessionId");
+  const interviewId = searchParams.get("interviewId"); // Direct lookup - preferred
+  const sessionId = searchParams.get("sessionId"); // Fallback for polling
   const conversationId = searchParams.get("conversationId");
   
   console.log('[FLIGHT_RECORDER] [RESULTS] Page loaded - URL params extracted:', {
@@ -78,6 +79,7 @@ export default function Results() {
     urlParts: urlParts,
     queryString: queryString,
     searchParamsEntries: Array.from(searchParams.entries()),
+    interviewId: interviewId || 'null',
     sessionId: sessionId || 'null',
     conversationId: conversationId || 'null',
     windowLocationSearch: typeof window !== 'undefined' ? window.location.search : 'N/A',
@@ -85,8 +87,9 @@ export default function Results() {
     timestamp: new Date().toISOString()
   });
   
-  // FALLBACK: If sessionId is missing from URL params, try to get it from window.location
+  // FALLBACK: If params are missing from URL params, try to get them from window.location
   // This handles cases where wouter's location might not include query params
+  const finalInterviewId = interviewId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('interviewId') : null);
   const finalSessionId = sessionId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('sessionId') : null);
   const finalConversationId = conversationId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversationId') : null);
   
@@ -243,8 +246,131 @@ export default function Results() {
     }
   }, [minTimeElapsed, results, tempData]);
 
-  // Start polling for interviewId
+  // Direct lookup by interviewId (preferred) or polling by sessionId (fallback)
   useEffect(() => {
+    if (!isMountedRef.current) return;
+    
+    // Strategy 1: Direct lookup by interviewId (if available)
+    if (finalInterviewId) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] Using direct lookup by interviewId:', finalInterviewId);
+      setStatus('loading');
+      
+      const loadResults = async () => {
+        try {
+          const data = await fetchResults(finalInterviewId);
+          if (data) {
+            console.log('[FLIGHT_RECORDER] [RESULTS] Direct lookup successful:', {
+              interviewId: finalInterviewId,
+              hasEvaluation: !!data.evaluation,
+              evaluationStatus: data.evaluation?.status || 'null',
+              timestamp: new Date().toISOString()
+            });
+            setTempData(data);
+            
+            // Check if evaluation is complete
+            const hasEvaluation = data.evaluation !== null;
+            const hasFeedback = data.evaluation?.evaluation !== null;
+            const evalStatus = data.evaluation?.status;
+            const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
+            
+            if (isComplete) {
+              setStatus('evaluating');
+              setCompletedSteps(prev => new Set([...prev, 4]));
+            } else if (!hasEvaluation || !hasFeedback || evalStatus === 'pending') {
+              // Poll for evaluation completion
+              setStatus('evaluating');
+              let evalPollCount = 0;
+              
+              const pollForEvaluation = async () => {
+                while (evalPollCount < MAX_EVAL_POLLS) {
+                  evalPollCount++;
+                  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s
+                  
+                  try {
+                    const updatedResults = await fetchResults(finalInterviewId);
+                    const hasCompleteEvaluation = updatedResults.evaluation?.status === 'complete';
+                    const hasCompleteFeedback = updatedResults.evaluation?.evaluation !== null;
+                    
+                    if (hasCompleteEvaluation && hasCompleteFeedback) {
+                      setTempData(updatedResults);
+                      setCompletedSteps(prev => new Set([...prev, 4]));
+                      return;
+                    }
+                    if (updatedResults.evaluation?.status === 'failed') {
+                      setError('Evaluation failed. Please contact support.');
+                      setStatus('error');
+                      return;
+                    }
+                    
+                    setTempData(updatedResults);
+                  } catch (err) {
+                    console.error('Error polling for evaluation:', err);
+                  }
+                }
+                
+                setError('Evaluation is taking longer than expected. Please refresh in a moment.');
+                setStatus('error');
+              };
+              
+              pollForEvaluation();
+            }
+          } else {
+            console.warn('[FLIGHT_RECORDER] [RESULTS] Direct lookup returned no data, falling back to polling');
+            // Fall through to polling logic
+            setStatus('saving');
+          }
+        } catch (err: any) {
+          console.error('[FLIGHT_RECORDER] [RESULTS] Direct lookup failed:', {
+            interviewId: finalInterviewId,
+            error: err.message || err,
+            status: err.status || 'unknown',
+            timestamp: new Date().toISOString()
+          });
+          
+          // If 404, fall back to polling by sessionId
+          if (err.status === 404 && finalSessionId) {
+            console.log('[FLIGHT_RECORDER] [RESULTS] Interview not found by ID, falling back to polling by sessionId');
+            // Trigger polling by setting a flag - polling logic below will handle it
+            shouldPoll = true;
+          } else {
+            setError(err.message || 'Failed to load results');
+            setStatus('error');
+            return;
+          }
+        }
+      };
+      
+      loadResults().catch((err: any) => {
+        // If direct lookup fails with 404 and we have sessionId, trigger polling
+        if (err?.status === 404 && finalSessionId) {
+          console.log('[FLIGHT_RECORDER] [RESULTS] Direct lookup failed with 404, will use polling fallback');
+          shouldPoll = true;
+          // Continue to polling logic below
+        }
+      });
+      
+      // If direct lookup succeeds, don't start polling
+      if (!shouldPoll) {
+        return; // Exit early - direct lookup handles its own flow
+      }
+    }
+    
+    // Strategy 2: Polling by sessionId (fallback if interviewId not available or direct lookup failed with 404)
+    if (!finalSessionId) {
+      console.error('[FLIGHT_RECORDER] [RESULTS] No interviewId or sessionId available');
+      setError('No interview ID or session ID provided');
+      setStatus('error');
+      return;
+    }
+    
+    if (!finalInterviewId || shouldPoll) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] Using polling fallback by sessionId:', finalSessionId);
+      if (!shouldPoll) {
+        setStatus('saving');
+      }
+    }
+    
+    // Start polling for interviewId
     const activeSessionId = finalSessionId || sessionId;
     if (!activeSessionId) {
       console.error('[FLIGHT_RECORDER] [RESULTS] ERROR: No sessionId available from URL params or window.location');
@@ -360,7 +486,7 @@ export default function Results() {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [finalSessionId, sessionId]); // Depend on both to re-run if either changes
+  }, [finalInterviewId, finalSessionId, sessionId]); // Depend on interviewId and sessionId to re-run if either changes
 
   const handleRetry = () => {
     pollCountRef.current = 0;

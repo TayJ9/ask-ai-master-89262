@@ -169,8 +169,12 @@ export default function VoiceInterviewWebSocket({
       console.log('[FLIGHT_RECORDER] [INTERVIEW] Save complete - response:', {
         status: response.status,
         responseData,
+        interviewId: responseData.interviewId || 'not provided',
         timestamp: new Date().toISOString()
       });
+      
+      // Return the response data including interviewId for direct navigation
+      return responseData;
     } catch (error: any) {
       console.error('Error saving interview end state:', error);
       toast({
@@ -178,6 +182,8 @@ export default function VoiceInterviewWebSocket({
         description: "Interview end state may not have been saved. Results may be delayed.",
         variant: "destructive",
       });
+      // Return null on error - frontend will use fallback polling
+      return null;
     }
   }, [sessionId, toast]);
 
@@ -292,7 +298,17 @@ export default function VoiceInterviewWebSocket({
         isAgentDisconnect,
         timestamp: new Date().toISOString()
       });
-      saveInterview(conversationIdForSave, 'disconnect').catch((error) => {
+      saveInterview(conversationIdForSave, 'disconnect').then((saveResponse) => {
+        // If save returned interviewId, update completeData for better navigation
+        if (saveResponse?.interviewId) {
+          console.log('[FLIGHT_RECORDER] [INTERVIEW] Background save returned interviewId:', {
+            interviewId: saveResponse.interviewId,
+            sessionId,
+            timestamp: new Date().toISOString()
+          });
+          // Note: Navigation already happened, but Results page can use polling fallback
+        }
+      }).catch((error) => {
         console.error('[FLIGHT_RECORDER] [INTERVIEW] Background save failed:', {
           error,
           sessionId,
@@ -326,14 +342,19 @@ export default function VoiceInterviewWebSocket({
           timestamp: new Date().toISOString()
         });
         // Await save to complete before navigating for normal disconnects
-        await saveInterview(conversationIdForSave, 'disconnect');
+        const saveResponse = await saveInterview(conversationIdForSave, 'disconnect');
         console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - interview saved, navigating to results:', { 
           sessionId,
           conversationId: conversationIdRef.current || 'null',
+          interviewId: saveResponse?.interviewId || 'not provided',
           timestamp: new Date().toISOString()
         });
         isInterviewCompleteRef.current = true;
-        const completeData = { sessionId, conversationId: conversationIdRef.current };
+        const completeData = { 
+          sessionId, 
+          conversationId: conversationIdRef.current,
+          interviewId: saveResponse?.interviewId || null // Include interviewId for direct lookup
+        };
         console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete with:', completeData);
         onComplete(completeData);
       } catch (error) {
@@ -986,15 +1007,20 @@ export default function VoiceInterviewWebSocket({
             conversationId: conversationId || 'null',
             timestamp: new Date().toISOString()
           });
-          await saveInterview(conversationId, 'user');
+          const saveResponse = await saveInterview(conversationId, 'user');
           console.log('[FLIGHT_RECORDER] [INTERVIEW] User click End - interview saved, navigating to results:', {
             sessionId,
             conversationId: conversationId || 'null',
+            interviewId: saveResponse?.interviewId || 'not provided',
             timestamp: new Date().toISOString()
           });
           // Mark as complete before navigation to prevent cleanup from interfering
           isInterviewCompleteRef.current = true;
-          const completeData = { sessionId, conversationId };
+          const completeData = { 
+            sessionId, 
+            conversationId,
+            interviewId: saveResponse?.interviewId || null // Include interviewId for direct lookup
+          };
           console.log('[FLIGHT_RECORDER] [TRANSITION] User click End - calling onComplete with:', completeData);
           onComplete(completeData);
         } catch (saveError) {
