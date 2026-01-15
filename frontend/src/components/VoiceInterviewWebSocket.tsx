@@ -125,19 +125,30 @@ export default function VoiceInterviewWebSocket({
     // Always call save-interview with sessionId (always available)
     // conversationId is optional (may not be available)
     const authToken = localStorage.getItem('auth_token');
-    const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID || (() => {
-      if (import.meta.env.PROD) {
-        console.error('VITE_ELEVENLABS_AGENT_ID must be set in production');
-        throw new Error('Agent ID not configured');
-      }
-      return "agent_8601kavsezrheczradx9qmz8qp3e"; // Dev fallback
-    })();
+    // Get agentId with graceful fallback - don't throw error, just warn
+    // Backend can handle missing agentId gracefully using getAgentId() fallback
+    const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID;
     
-    const payload = {
+    if (!agentId) {
+      if (import.meta.env.PROD) {
+        console.warn('[SAVE-INTERVIEW] VITE_ELEVENLABS_AGENT_ID is missing in production, but attempting to save interview anyway. Backend will use default agent.');
+      } else {
+        console.log('[SAVE-INTERVIEW] VITE_ELEVENLABS_AGENT_ID is missing in dev mode. Backend will use default agent.');
+      }
+    }
+    
+    // Make agent_id optional - backend can infer it if missing
+    const payload: {
+      client_session_id: string;
+      conversation_id?: string;
+      ended_by: string;
+      agent_id?: string;
+    } = {
       client_session_id: sessionId, // Always available
       conversation_id: convId || undefined, // Optional - may be null
       ended_by: endedBy,
-      agent_id: agentId,
+      // Include agent_id only if available - backend will use getAgentId() fallback if missing
+      ...(agentId ? { agent_id: agentId } : {}),
     };
 
     try {
