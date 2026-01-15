@@ -1550,132 +1550,197 @@ const tokenRateLimiter = rateLimit({
       });
 
       if (existingInterview) {
-        console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists, skipping`);
+        console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists (id: ${existingInterview.id})`);
         
-        // Link to session if not already linked
-        const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-          where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
-        });
-        
-        if (sessionByConversationId && !sessionByConversationId.interviewId) {
-          await db.update(elevenLabsInterviewSessions)
-            .set({
-              interviewId: existingInterview.id,
-              status: 'completed',
-              updatedAt: new Date(),
-            })
-            .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
-          console.log(`[WEBHOOK] Linked existing interview ${existingInterview.id} to session ${sessionByConversationId.id}`);
+        // Verify transcript hasn't changed (if webhook fires twice with different data)
+        if (transcript && existingInterview.transcript !== transcript) {
+          console.warn(`[WEBHOOK] Transcript mismatch for existing interview - updating`);
+          try {
+            await db.update(interviews)
+              .set({ transcript })
+              .where(eq(interviews.id, existingInterview.id));
+          } catch (updateError: any) {
+            console.error(`[WEBHOOK] Failed to update transcript for existing interview:`, updateError);
+            // Don't fail - transcript update is non-critical
+          }
         }
         
-        // Check if evaluation exists, and enqueue if not
-        const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
-          where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, existingInterview.id),
-        });
-        
-        if (!existingEvaluation || existingEvaluation.status === 'failed') {
-          console.log(`[WEBHOOK] Enqueuing evaluation for existing interview ${existingInterview.id}`);
-          evaluationQueue.enqueue(existingInterview.id, conversation_id).catch((error: any) => {
-            console.error(`[WEBHOOK] Failed to enqueue evaluation for existing interview ${existingInterview.id}:`, error);
+        // Link to session if not already linked (idempotent)
+        try {
+          const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+            where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
           });
+          
+          if (sessionByConversationId && !sessionByConversationId.interviewId) {
+            await db.update(elevenLabsInterviewSessions)
+              .set({
+                interviewId: existingInterview.id,
+                status: 'completed',
+                updatedAt: new Date(),
+              })
+              .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
+            console.log(`[WEBHOOK] Linked existing interview ${existingInterview.id} to session ${sessionByConversationId.id}`);
+          } else if (sessionByConversationId && sessionByConversationId.status !== 'completed') {
+            // Update status if not already completed
+            await db.update(elevenLabsInterviewSessions)
+              .set({
+                status: 'completed',
+                updatedAt: new Date(),
+              })
+              .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
+            console.log(`[WEBHOOK] Updated session ${sessionByConversationId.id} status to completed`);
+          }
+        } catch (linkError: any) {
+          // Don't fail if link already exists or other non-critical error
+          if (!linkError.message?.includes('duplicate')) {
+            console.error(`[WEBHOOK] Error linking existing interview (non-critical):`, linkError);
+          }
         }
         
-        return res.json({ success: true, message: 'Interview already exists' });
+        // Enqueue evaluation if not already complete
+        try {
+          const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
+            where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, existingInterview.id),
+          });
+          
+          if (!existingEvaluation || existingEvaluation.status === 'failed') {
+            console.log(`[WEBHOOK] Enqueuing evaluation for existing interview ${existingInterview.id}`);
+            evaluationQueue.enqueue(existingInterview.id, conversation_id).catch((error: any) => {
+              console.error(`[WEBHOOK] Failed to enqueue evaluation for existing interview ${existingInterview.id}:`, error);
+            });
+          }
+        } catch (evalCheckError: any) {
+          console.error(`[WEBHOOK] Error checking evaluation status (non-critical):`, evalCheckError);
+        }
+        
+        // Always return success for idempotent operations
+        return res.json({ 
+          success: true, 
+          message: 'Interview already exists',
+          interviewId: existingInterview.id 
+        });
       }
 
       // Parse timestamps if provided as strings
       const startedAt = started_at ? new Date(started_at) : null;
       const endedAt = ended_at ? new Date(ended_at) : null;
 
-      // Insert interview record
-      const interviewData = insertInterviewSchema.parse({
-        userId: user_id,
-        conversationId: conversation_id,
-        agentId: agent_id || getAgentId(),
-        transcript: transcript || null,
-        durationSeconds: duration ? Math.round(duration) : null,
-        startedAt: startedAt,
-        endedAt: endedAt,
-        status: status || "completed",
-      });
-
-      const [interview] = await db.insert(interviews).values(interviewData as any).returning();
-
-      console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
-
-      // Link this interview to any existing elevenlabs_interview_sessions record
-      // Try by conversation_id first (most reliable)
-      const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-        where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
-      });
-
-      if (sessionByConversationId) {
-        await db.update(elevenLabsInterviewSessions)
-          .set({
-            interviewId: interview.id,
-            status: 'completed',
-            updatedAt: new Date(),
-          })
-          .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
-        console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${sessionByConversationId.id} (by conversation_id)`);
-      } else {
-        // Try to find by user_id + agent_id + time window (last 10 minutes)
-        // This handles cases where conversation_id wasn't set in session yet
-        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
-        const recentSessions = await (db.query as any).elevenLabsInterviewSessions?.findMany({
-          where: (sessions: any, { eq, and, gte }: any) => and(
-            eq(sessions.userId, user_id),
-            eq(sessions.agentId, agent_id || getAgentId()),
-            eq(sessions.interviewId, null), // Not already linked
-            gte(sessions.startedAt, tenMinutesAgo) // Started within last 10 minutes
-          ),
+      // Insert interview record (with error handling for duplicates)
+      let interview;
+      try {
+        const interviewData = insertInterviewSchema.parse({
+          userId: user_id,
+          conversationId: conversation_id,
+          agentId: agent_id || getAgentId(),
+          transcript: transcript || null,
+          durationSeconds: duration ? Math.round(duration) : null,
+          startedAt: startedAt,
+          endedAt: endedAt,
+          status: status || "completed",
         });
 
-        // Link to the most recent unlinked session
-        if (recentSessions && recentSessions.length > 0) {
-          const mostRecentSession = recentSessions.sort((a: any, b: any) => 
-            new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
-          )[0];
-          
-          await db.update(elevenLabsInterviewSessions)
-            .set({
-              conversationId: conversation_id,
-              interviewId: interview.id,
-              status: 'completed',
-              updatedAt: new Date(),
-            })
-            .where(eq(elevenLabsInterviewSessions.id, mostRecentSession.id));
-          console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
+        const [insertedInterview] = await db.insert(interviews).values(interviewData as any).returning();
+        interview = insertedInterview;
+        console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
+      } catch (dbError: any) {
+        // Check for duplicate (idempotency - webhook may fire twice)
+        if (dbError.message?.includes('duplicate') || dbError.code === '23505') {
+          const existingInterview = await (db.query as any).interviews?.findFirst({
+            where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
+          });
+          if (existingInterview) {
+            interview = existingInterview;
+            console.log(`[WEBHOOK] Interview already exists (duplicate insert prevented): ${interview.id}`);
+          } else {
+            throw dbError; // Re-throw if not a duplicate
+          }
         } else {
-          // Create a new session record for this webhook (fallback)
-          const agentId = agent_id || getAgentId();
-          const sessionData = insertElevenLabsInterviewSessionSchema.parse({
-            userId: user_id,
-            agentId,
-            clientSessionId: `webhook-${conversation_id}`, // Fallback ID
-            conversationId: conversation_id,
-            interviewId: interview.id,
-            status: 'completed',
-            startedAt: startedAt || new Date(),
-            endedAt: endedAt || new Date(),
-          });
-          await db.insert(elevenLabsInterviewSessions).values(sessionData as any).catch((err: any) => {
-            // Ignore duplicate errors (conversation_id unique constraint)
-            if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
-              console.error('[WEBHOOK] Error creating session record:', err);
-            }
-          });
-          console.log(`[WEBHOOK] Created session record for interview ${interview.id}`);
+          throw dbError; // Re-throw other errors
         }
       }
 
-      // Enqueue evaluation job asynchronously (non-blocking)
-      evaluationQueue.enqueue(interview.id, conversation_id).catch((error: any) => {
-        console.error(`[WEBHOOK] Failed to enqueue evaluation for interview ${interview.id}:`, error);
-        // Don't fail the webhook - evaluation can be retried later
-      });
+      // Link this interview to any existing elevenlabs_interview_sessions record (non-critical)
+      // Try by conversation_id first (most reliable)
+      try {
+        const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+          where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
+        });
 
-      console.log(`[WEBHOOK] Enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
+        if (sessionByConversationId) {
+          // Only update if status is not already completed (idempotency)
+          if (sessionByConversationId.status !== 'completed' || !sessionByConversationId.interviewId) {
+            await db.update(elevenLabsInterviewSessions)
+              .set({
+                interviewId: interview.id,
+                status: 'completed',
+                updatedAt: new Date(),
+              })
+              .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
+            console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${sessionByConversationId.id} (by conversation_id)`);
+          }
+        } else {
+          // Try to find by user_id + agent_id + time window (last 10 minutes)
+          // This handles cases where conversation_id wasn't set in session yet
+          const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+          const recentSessions = await (db.query as any).elevenLabsInterviewSessions?.findMany({
+            where: (sessions: any, { eq, and, gte }: any) => and(
+              eq(sessions.userId, user_id),
+              eq(sessions.agentId, agent_id || getAgentId()),
+              eq(sessions.interviewId, null), // Not already linked
+              gte(sessions.startedAt, tenMinutesAgo) // Started within last 10 minutes
+            ),
+          });
+
+          // Link to the most recent unlinked session
+          if (recentSessions && recentSessions.length > 0) {
+            const mostRecentSession = recentSessions.sort((a: any, b: any) => 
+              new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
+            )[0];
+            
+            await db.update(elevenLabsInterviewSessions)
+              .set({
+                conversationId: conversation_id,
+                interviewId: interview.id,
+                status: 'completed',
+                updatedAt: new Date(),
+              })
+              .where(eq(elevenLabsInterviewSessions.id, mostRecentSession.id));
+            console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
+          } else {
+            // Create a new session record for this webhook (fallback)
+            const agentId = agent_id || getAgentId();
+            const sessionData = insertElevenLabsInterviewSessionSchema.parse({
+              userId: user_id,
+              agentId,
+              clientSessionId: `webhook-${conversation_id}`, // Fallback ID
+              conversationId: conversation_id,
+              interviewId: interview.id,
+              status: 'completed',
+              startedAt: startedAt || new Date(),
+              endedAt: endedAt || new Date(),
+            });
+            await db.insert(elevenLabsInterviewSessions).values(sessionData as any).catch((err: any) => {
+              // Ignore duplicate errors (conversation_id unique constraint)
+              if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
+                console.error('[WEBHOOK] Error creating session record:', err);
+              }
+            });
+            console.log(`[WEBHOOK] Created session record for interview ${interview.id}`);
+          }
+        }
+      } catch (linkError: any) {
+        // Log but don't fail - interview is saved, linking can be retried
+        console.error(`[WEBHOOK] Failed to link interview to session (non-critical):`, linkError);
+      }
+
+      // Enqueue evaluation job asynchronously (non-critical - don't fail webhook if this fails)
+      try {
+        await evaluationQueue.enqueue(interview.id, conversation_id);
+        console.log(`[WEBHOOK] Enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
+      } catch (evalError: any) {
+        console.error(`[WEBHOOK] Failed to enqueue evaluation (non-critical):`, evalError);
+        // Don't fail webhook - evaluation can be retried later
+      }
 
       res.json({ success: true, interviewId: interview.id });
     } catch (error: any) {

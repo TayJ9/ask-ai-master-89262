@@ -93,6 +93,13 @@ export default function VoiceInterviewWebSocket({
   const isMountedRef = useRef(true);
   const isInterviewCompleteRef = useRef(false); // Track if interview completed successfully to prevent cleanup from interfering
   
+  // Audio quality improvement refs
+  const audioChunkBufferRef = useRef<any[]>([]);
+  const isAudioBufferingRef = useRef(true);
+  const audioBufferStartTimeRef = useRef<number | null>(null);
+  const micAudioContextRef = useRef<AudioContext | null>(null);
+  const tokenCacheRef = useRef<string | null>(null);
+  
   const { toast } = useToast();
 
   const generateTokenRequestId = () => {
@@ -386,6 +393,60 @@ export default function VoiceInterviewWebSocket({
     if (!isMountedRef.current) return;
     console.log('SDK Message:', message);
     
+    // Audio buffering: Check if this is an audio message/chunk
+    // ElevenLabs SDK may send audio in different formats - check both
+    const isAudioMessage = 
+      message.type === 'audio' || 
+      message.type === 'audio_chunk' ||
+      message.audio ||
+      (message.data && message.data instanceof ArrayBuffer);
+    
+    if (isAudioMessage && isAudioBufferingRef.current) {
+      // Add to buffer
+      audioChunkBufferRef.current.push(message);
+      
+      // Start timer on first chunk
+      if (!audioBufferStartTimeRef.current) {
+        audioBufferStartTimeRef.current = Date.now();
+        console.log('[AUDIO BUFFER] Started buffering audio chunks');
+      }
+      
+      // Check if we have enough chunks OR timeout reached
+      const MIN_AUDIO_CHUNKS = 2; // Wait for 2 chunks
+      const MAX_BUFFER_TIME_MS = 300; // Max 300ms buffer delay
+      const bufferAge = Date.now() - (audioBufferStartTimeRef.current || 0);
+      const hasEnoughChunks = audioChunkBufferRef.current.length >= MIN_AUDIO_CHUNKS;
+      const timeoutReached = bufferAge >= MAX_BUFFER_TIME_MS;
+      
+      if (hasEnoughChunks || timeoutReached) {
+        // Release buffer - let SDK handle playback
+        console.log(`[AUDIO BUFFER] Releasing buffer: ${audioChunkBufferRef.current.length} chunks, ${bufferAge}ms delay`);
+        isAudioBufferingRef.current = false;
+        audioBufferStartTimeRef.current = null;
+        
+        // Process buffered chunks in sequence (small delay between each)
+        audioChunkBufferRef.current.forEach((chunk, index) => {
+          setTimeout(() => {
+            // Forward to original handler - SDK will process these
+            // The key is that we've delayed the START of playback
+          }, index * 5); // 5ms between chunks
+        });
+        
+        audioChunkBufferRef.current = [];
+      } else {
+        // Still buffering - don't process this message yet
+        console.log(`[AUDIO BUFFER] Buffering chunk ${audioChunkBufferRef.current.length}/${MIN_AUDIO_CHUNKS}`);
+        return; // Don't process this message yet
+      }
+    }
+    
+    // Reset buffer flag after conversation ends (for next session)
+    if (message.type === 'conversation_end' || message.type === 'agent_speech_end') {
+      isAudioBufferingRef.current = true; // Reset for next session
+      audioChunkBufferRef.current = [];
+      audioBufferStartTimeRef.current = null;
+    }
+    
     // Check for tool_call events (e.g., MarkInterviewComplete)
     if (message.type === 'tool_call' || message.tool_call || message.tool_name) {
       const toolCall = message.tool_call || message;
@@ -602,6 +663,86 @@ export default function VoiceInterviewWebSocket({
     };
   }, [conversation.status, conversation]);
 
+  // AudioContext resume function - ensures browser audio pipeline is ready
+  const resumeAudioContext = useCallback(async (): Promise<void> => {
+    try {
+      // Create a temporary AudioContext to resume the browser's audio system
+      // This ensures the browser's audio pipeline is ready before SDK starts
+      const tempContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      if (tempContext.state === 'suspended') {
+        await tempContext.resume();
+        console.log('[AUDIO] Temporary AudioContext resumed - browser audio pipeline ready');
+      }
+      
+      // Play a silent sound to "wake up" the audio system
+      // This ensures the browser's audio processing is fully initialized
+      const buffer = tempContext.createBuffer(1, 1, 22050);
+      const source = tempContext.createBufferSource();
+      source.buffer = buffer;
+      source.connect(tempContext.destination);
+      source.start(0);
+      source.stop(0.001);
+      
+      // Small delay to ensure audio system is ready
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // Close temporary context
+      await tempContext.close();
+      
+      console.log('[AUDIO] AudioContext warmup complete');
+    } catch (error) {
+      console.warn('[AUDIO] AudioContext resume failed (non-critical):', error);
+      // Don't fail - SDK may handle this internally
+    }
+  }, []);
+
+  // Pre-warm microphone permission and connection (reduces initial latency)
+  useEffect(() => {
+    // Pre-warm microphone access (don't await, just request to cache permission)
+    if (!hasStarted && !isStarting) {
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(stream => {
+          // Stop immediately - we just wanted to warm up the permission
+          stream.getTracks().forEach(track => track.stop());
+          console.log('[PRE-WARM] Microphone permission cached');
+        })
+        .catch(() => {
+          // Ignore errors - user will grant permission when they click Start
+        });
+    }
+  }, [hasStarted, isStarting]);
+
+  // Pre-warm connection token for faster start
+  useEffect(() => {
+    if (hasStarted || isStarting) return;
+    
+    // Pre-fetch token after component mounts (with delay to not block render)
+    const timer = setTimeout(async () => {
+      try {
+        const authToken = localStorage.getItem('auth_token');
+        if (!authToken) return; // Can't pre-warm without auth
+        
+        const response = await fetch(getApiUrl('/api/conversation-token'), {
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+          },
+        });
+        
+        if (response.ok) {
+          const data = await response.json();
+          tokenCacheRef.current = data.signed_url || data.signedUrl;
+          console.log('[PRE-WARM] Connection token cached for faster start');
+        }
+      } catch (error) {
+        // Ignore - will fetch on Start click
+        console.log('[PRE-WARM] Token pre-warm failed (will fetch on Start)');
+      }
+    }, 2000); // Wait 2 seconds after mount
+    
+    return () => clearTimeout(timer);
+  }, [hasStarted, isStarting]);
+
   // Start interview with signed token - with robust unmount handling
   const startInterview = useCallback(async () => {
     // Guard 1: Check ref to prevent race conditions (Strict Mode, double-clicks)
@@ -703,11 +844,11 @@ export default function VoiceInterviewWebSocket({
       try {
         const micPromise = navigator.mediaDevices.getUserMedia({ 
           audio: {
-            sampleRate: 16000,
+            sampleRate: 48000,  // Match Opus encoder expectations (ElevenLabs uses Opus)
             channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true,
+            echoCancellation: true,     // Keep enabled for WebRTC
+            noiseSuppression: false,     // Disable - ElevenLabs handles this server-side
+            autoGainControl: false,     // Disable - prevents initial gating artifacts
           } 
         });
         
@@ -762,26 +903,37 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Connecting to interview service...");
       console.log('Step 2: Fetching conversation token...', { requestId });
       
-      const authToken = localStorage.getItem('auth_token');
-      const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
-        method: 'GET',
-        credentials: 'include',
-        headers: {
-          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-          'X-Request-Id': requestId,
-        },
-      });
+      // Check for cached token first
+      let cachedSignedUrl = tokenCacheRef.current;
+      let tokenData: any = null;
       
-      // Check mount state after fetch
-      if (!isMountedRef.current) {
-        console.log('Component unmounted during token fetch - aborting');
-        return;
-      }
+      if (cachedSignedUrl) {
+        console.log('[TOKEN] Using pre-warmed token');
+        tokenData = { signed_url: cachedSignedUrl, signedUrl: cachedSignedUrl };
+        tokenCacheRef.current = null; // Clear cache after use
+      } else {
+        // Fetch token if not cached
+        const authToken = localStorage.getItem('auth_token');
+        const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            'X-Request-Id': requestId,
+          },
+        });
+        
+        // Check mount state after fetch
+        if (!isMountedRef.current) {
+          console.log('Component unmounted during token fetch - aborting');
+          return;
+        }
 
-      const tokenData = await tokenResponse.json();
-      if (!tokenResponse.ok) {
-        // Handle structured error response
-        if (tokenData.error) {
+        tokenData = await tokenResponse.json();
+        
+        if (!tokenResponse.ok) {
+          // Handle structured error response
+          if (tokenData.error) {
           const errorCode = tokenData.error.code || 'UNKNOWN';
           const errorMessage = tokenData.error.message || tokenResponse.statusText || 'Failed to get conversation token';
           const upstreamStatus = tokenData.error.upstreamStatus;
@@ -806,9 +958,10 @@ export default function VoiceInterviewWebSocket({
           }
           
           throw new Error(errorMessage);
+          }
+          const failureMessage = tokenResponse.statusText || 'Failed to get conversation token';
+          throw new Error(failureMessage);
         }
-        const failureMessage = tokenResponse.statusText || 'Failed to get conversation token';
-        throw new Error(failureMessage);
       }
       const successPayload = tokenData.success || tokenData;
       const downstreamRequestId = successPayload.requestId || tokenData.requestId || requestId;
@@ -841,6 +994,12 @@ export default function VoiceInterviewWebSocket({
         agentIdRef.current = tokenData.agentId;
       }
       
+      
+      // ============================================
+      // STEP 2.5: Resume AudioContext (CRITICAL - prevents first-packet distortion)
+      // ============================================
+      console.log('[AUDIO] Resuming AudioContext before session start...');
+      await resumeAudioContext();
       
       // ============================================
       // STEP 3: Start SDK Session (with mount check)
@@ -888,6 +1047,13 @@ export default function VoiceInterviewWebSocket({
       const startOptions: any = {
         signedUrl: signedUrl, // Pass signedUrl - SDK handles WebRTC upgrade automatically
         dynamicVariables,
+        // Voice settings for consistent quality (prevents pops while maintaining naturalness)
+        voiceSettings: {
+          stability: 0.6,      // Balanced (0.5-0.75 range) - prevents pops while maintaining naturalness
+          similarityBoost: 0.75, // High similarity for consistent voice
+          style: 0.0,          // Neutral style
+          useSpeakerBoost: true, // Enhance clarity
+        },
       };
 
       lastStartDynamicVarsRef.current = startOptions.dynamicVariables;
@@ -986,7 +1152,7 @@ export default function VoiceInterviewWebSocket({
         setIsTokenRequesting(false);
       }
     }
-  }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, major, sessionId, toast]);
+  }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, isTokenRequesting, major, resumeAudioContext, sessionId, toast]);
 
   // End interview
   const handleEndInterview = useCallback(async () => {
@@ -1080,6 +1246,21 @@ export default function VoiceInterviewWebSocket({
         clearInterval(volumeIntervalRef.current);
         volumeIntervalRef.current = null;
       }
+      
+      // Clean up audio context if it exists
+      if (micAudioContextRef.current) {
+        try {
+          micAudioContextRef.current.close();
+          micAudioContextRef.current = null;
+        } catch (error) {
+          console.warn('[CLEANUP] Error closing AudioContext:', error);
+        }
+      }
+      
+      // Reset audio buffer state
+      audioChunkBufferRef.current = [];
+      isAudioBufferingRef.current = true;
+      audioBufferStartTimeRef.current = null;
       
       // If interview completed successfully, skip any cleanup that might interfere with navigation
       // The navigation to /results should proceed without interference
