@@ -134,8 +134,15 @@ export async function apiFetch(
   };
   
   if (token) {
+    // Ensure token doesn't already include "Bearer" prefix (safety check)
+    let cleanToken = token.trim();
+    if (cleanToken.toLowerCase().startsWith('bearer ')) {
+      console.warn('[API] Token already includes Bearer prefix, removing it');
+      cleanToken = cleanToken.replace(/^bearer\s+/i, '').trim();
+    }
+    
     // Ensure proper format: "Bearer <token>" (no double Bearer, proper spacing)
-    headers['Authorization'] = `Bearer ${token}`;
+    headers['Authorization'] = `Bearer ${cleanToken}`;
   } else if (path !== '/api/auth/signin' && path !== '/api/auth/signup') {
     // Log missing token for non-auth endpoints
     console.warn('[API] No token found for authenticated endpoint:', path);
@@ -247,17 +254,25 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
   const headers: HeadersInit = {};
   // Don't set Content-Type for FormData - browser will set it with boundary
   if (token) {
+    // Ensure token doesn't already include "Bearer" prefix (safety check)
+    let cleanToken = token.trim();
+    if (cleanToken.toLowerCase().startsWith('bearer ')) {
+      console.warn('[API] Token already includes Bearer prefix, removing it');
+      cleanToken = cleanToken.replace(/^bearer\s+/i, '').trim();
+    }
+    
     // Ensure proper format: "Bearer <token>" (no double Bearer, proper spacing)
-    const authHeader = `Bearer ${token}`;
+    const authHeader = `Bearer ${cleanToken}`;
     headers['Authorization'] = authHeader;
     
     // Log header format for debugging
     console.log('[API] Authorization header set:', {
       format: 'Bearer <token>',
       headerLength: authHeader.length,
-      tokenLength: token.length,
+      tokenLength: cleanToken.length,
       startsWithBearer: authHeader.startsWith('Bearer '),
-      hasDoubleBearer: authHeader.includes('Bearer Bearer')
+      hasDoubleBearer: authHeader.includes('Bearer Bearer'),
+      originalTokenLength: token.length
     });
   } else {
     console.warn('[API] No Authorization header will be sent - token is missing');
@@ -278,12 +293,24 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
     
     // Log response status for debugging
     if (!response.ok) {
-      console.error('[API] Upload request failed:', {
+      const errorDetails: any = {
         status: response.status,
         statusText: response.statusText,
         path: path,
         hasAuthHeader: !!headers['Authorization']
-      });
+      };
+      
+      // For 403 errors, provide helpful debugging info
+      if (response.status === 403) {
+        console.error('[API] Upload request failed with 403 Forbidden:', errorDetails);
+        console.error('[API] Possible causes:');
+        console.error('[API]   1. Token is invalid or expired - try signing in again');
+        console.error('[API]   2. JWT secret mismatch between frontend/backend environments');
+        console.error('[API]   3. Token format issue - check Authorization header format');
+        console.error('[API]   4. CORS issue - check if backend allows your origin');
+      } else {
+        console.error('[API] Upload request failed:', errorDetails);
+      }
     }
     
     return handleApiResponse(response);

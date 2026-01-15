@@ -273,7 +273,8 @@ interface AuthRequest extends Express.Request {
 
 function authenticateToken(req: any, res: any, next: any) {
   try {
-    const authHeader = req.headers['authorization'];
+    // Express normalizes headers to lowercase, but check both for robustness
+    const authHeader = req.headers['authorization'] || req.headers['Authorization'];
     
     // Log auth header for debugging (masked)
     if (authHeader) {
@@ -282,24 +283,48 @@ function authenticateToken(req: any, res: any, next: any) {
         exists: true,
         length: authHeader.length,
         preview: headerPreview,
-        startsWithBearer: authHeader.startsWith('Bearer '),
-        hasDoubleBearer: authHeader.includes('Bearer Bearer')
+        startsWithBearer: authHeader.startsWith('Bearer ') || authHeader.startsWith('bearer '),
+        hasDoubleBearer: authHeader.includes('Bearer Bearer') || authHeader.includes('bearer bearer')
       });
     } else {
       console.error('[Auth] No Authorization header found for path:', req.path);
       console.error('[Auth] Available headers:', Object.keys(req.headers));
+      return res.status(401).json({ error: 'No authorization header provided' });
     }
     
-    // Authentication check
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-      console.error('[Auth] No token provided for:', req.path);
-      console.error('[Auth] Auth header value:', authHeader || 'null');
-      return res.status(401).json({ error: 'No token provided' });
+    // Robust token extraction - handle various formats
+    let token: string | null = null;
+    
+    if (typeof authHeader === 'string') {
+      // Trim the header first
+      const trimmedHeader = authHeader.trim();
+      
+      // Check for "Bearer " prefix (case-insensitive)
+      const bearerPrefix = /^bearer\s+/i;
+      if (bearerPrefix.test(trimmedHeader)) {
+        // Extract token after "Bearer " prefix
+        token = trimmedHeader.replace(bearerPrefix, '').trim();
+      } else {
+        // If no Bearer prefix, try splitting by space (fallback)
+        const parts = trimmedHeader.split(/\s+/);
+        if (parts.length >= 2 && parts[0].toLowerCase() === 'bearer') {
+          token = parts.slice(1).join(' ').trim();
+        } else if (parts.length === 1) {
+          // No Bearer prefix, assume entire string is token (for compatibility)
+          console.warn('[Auth] No Bearer prefix found, treating entire header as token');
+          token = trimmedHeader;
+        }
+      }
     }
 
-    // Trim token to handle any whitespace issues
+    if (!token) {
+      console.error('[Auth] No token extracted from header for path:', req.path);
+      console.error('[Auth] Auth header value:', authHeader || 'null');
+      console.error('[Auth] Auth header type:', typeof authHeader);
+      return res.status(401).json({ error: 'Invalid authorization header format. Expected: Bearer <token>' });
+    }
+
+    // Trim token to handle any remaining whitespace issues
     const trimmedToken = token.trim();
     if (!trimmedToken) {
       console.error('[Auth] Token is empty after trimming for path:', req.path);
