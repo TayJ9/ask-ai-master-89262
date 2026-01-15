@@ -119,6 +119,7 @@ export default function Results() {
   const isMountedRef = useRef(true);
   const stepTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
   const minTimeElapsedRef = useRef(false);
+  const shouldPollRef = useRef<boolean>(!finalInterviewId && !!finalSessionId);
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
@@ -331,7 +332,7 @@ export default function Results() {
           if (err.status === 404 && finalSessionId) {
             console.log('[FLIGHT_RECORDER] [RESULTS] Interview not found by ID, falling back to polling by sessionId');
             // Trigger polling by setting a flag - polling logic below will handle it
-            shouldPoll = true;
+            shouldPollRef.current = true;
           } else {
             setError(err.message || 'Failed to load results');
             setStatus('error');
@@ -344,13 +345,13 @@ export default function Results() {
         // If direct lookup fails with 404 and we have sessionId, trigger polling
         if (err?.status === 404 && finalSessionId) {
           console.log('[FLIGHT_RECORDER] [RESULTS] Direct lookup failed with 404, will use polling fallback');
-          shouldPoll = true;
+          shouldPollRef.current = true;
           // Continue to polling logic below
         }
       });
       
       // If direct lookup succeeds, don't start polling
-      if (!shouldPoll) {
+      if (!shouldPollRef.current) {
         return; // Exit early - direct lookup handles its own flow
       }
     }
@@ -363,9 +364,9 @@ export default function Results() {
       return;
     }
     
-    if (!finalInterviewId || shouldPoll) {
+    if (!finalInterviewId || shouldPollRef.current) {
       console.log('[FLIGHT_RECORDER] [RESULTS] Using polling fallback by sessionId:', finalSessionId);
-      if (!shouldPoll) {
+      if (!shouldPollRef.current) {
         setStatus('saving');
       }
     }
