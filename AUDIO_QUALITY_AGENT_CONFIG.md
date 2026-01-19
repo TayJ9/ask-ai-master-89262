@@ -32,13 +32,13 @@ The frontend is configured with the following audio constraints:
 
 ### 2. Sample Rate Configuration
 
-**Recommended:** 16kHz
+**Recommended:** 48kHz
 - **Why:** Matches frontend constraints and provides studio-quality audio
-- **Note:** Must match frontend `getUserMedia` sampleRate setting (currently 16kHz)
+- **Note:** Must match frontend `getUserMedia` sampleRate setting (currently 48kHz)
 
 **Configuration Steps:**
 1. In Agent Settings, locate "Sample Rate" or "Audio Quality"
-2. Set to **16000 Hz** (16kHz)
+2. Set to **48000 Hz** (48kHz)
 3. Verify this matches the frontend configuration
 
 ### 3. Voice Model Quality Settings
@@ -159,7 +159,9 @@ After configuring the agent:
 
 ## Notes
 
-- Browser may resample audio if hardware doesn't support 16kHz natively
+- Browser may resample audio if hardware doesn't support 16kHz natively (rare)
 - Some browsers may ignore `sampleSize` constraint (not all browsers support it)
 - Voice settings can be adjusted per voice model for optimal results
 - Agent dashboard settings take precedence over API parameters for some configurations
+- Frontend uses graceful fallback: if browser rejects 16kHz constraints, falls back to minimal audio constraints
+- AudioContext is reused to prevent multiple initializations that cause crackling
