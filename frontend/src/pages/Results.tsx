@@ -773,31 +773,33 @@ export default function Results() {
     timestamp: new Date().toISOString()
   });
   
-  // Safely handle partial records - evaluation may be null or incomplete
-  const evaluation = displayResults?.evaluation;
-  const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
-  const overallScore = hasCompleteFeedback 
-    ? (evaluation?.overallScore || evaluation?.evaluation?.overall_score || null)
-    : null;
-
   // Render both loading and results with fade transitions
   // Use ref as fallback to handle remounts where state hasn't updated yet
   const shouldShow = showResults || shouldShowResultsRef.current;
   
+  // Ensure displayResults is always available from ref if results state is null
+  // This provides an extra safety layer for edge cases
+  const effectiveDisplayResults = displayResults || resultsDataRef.current;
+  
+  // Safely handle partial records - evaluation may be null or incomplete
+  const evaluation = effectiveDisplayResults?.evaluation;
+  const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
+  const overallScore = hasCompleteFeedback 
+    ? (evaluation?.overallScore || evaluation?.evaluation?.overall_score || null)
+    : null;
+  
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
-      {/* Loading Screen - fades out when showResults is true */}
-      <div className={`absolute inset-0 transition-opacity duration-500 ${
-        shouldShow ? 'opacity-0 pointer-events-none' : 'opacity-100'
-      }`}>
-        {renderLoadingScreen()}
-      </div>
+      {/* Loading Screen - conditionally render instead of just hiding */}
+      {!shouldShow && (
+        <div className="absolute inset-0 z-10 transition-opacity duration-500 opacity-100">
+          {renderLoadingScreen()}
+        </div>
+      )}
       
-      {/* Results Screen - fades in when showResults is true */}
-      {displayResults && (
-        <div className={`relative transition-opacity duration-500 py-8 px-4 ${
-          shouldShow ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        }`}>
+      {/* Results Screen - only render when we have data and should show */}
+      {effectiveDisplayResults && shouldShow && (
+        <div className="relative z-20 transition-opacity duration-500 py-8 px-4 opacity-100">
       <div className="max-w-4xl mx-auto">
         <Card className="mb-6">
           <CardHeader>
@@ -814,17 +816,17 @@ export default function Results() {
           <CardContent>
             {/* Show interview ID for debugging */}
             <p className="text-gray-500 text-xs mb-2 font-mono">
-              Interview ID: {displayResults.interview.id}
+              Interview ID: {effectiveDisplayResults.interview.id}
             </p>
             
-            {displayResults.interview.durationSeconds && (
+            {effectiveDisplayResults.interview.durationSeconds && (
               <p className="text-gray-600 text-sm mb-4">
-                Duration: {Math.floor(displayResults.interview.durationSeconds / 60)}m {displayResults.interview.durationSeconds % 60}s
+                Duration: {Math.floor(effectiveDisplayResults.interview.durationSeconds / 60)}m {effectiveDisplayResults.interview.durationSeconds % 60}s
               </p>
             )}
             
             {/* Show status message if no content yet */}
-            {!displayResults.interview.durationSeconds && !displayResults.interview.transcript && !evaluation && (
+            {!effectiveDisplayResults.interview.durationSeconds && !effectiveDisplayResults.interview.transcript && !evaluation && (
               <p className="text-gray-600 text-sm mb-4">
                 Interview saved successfully. Processing your results...
               </p>
@@ -936,14 +938,14 @@ export default function Results() {
           </Card>
         )}
 
-        {displayResults.interview.transcript && (
+        {effectiveDisplayResults.interview.transcript && (
           <Card>
             <CardHeader>
               <CardTitle>Transcript</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="whitespace-pre-wrap text-sm text-gray-700">
-                {displayResults.interview.transcript}
+                {effectiveDisplayResults.interview.transcript}
               </div>
             </CardContent>
           </Card>
