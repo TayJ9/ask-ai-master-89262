@@ -203,10 +203,19 @@ export default function Results() {
   // Helper function to check if data is ready and complete
   const isDataReady = (data: InterviewResults | null): boolean => {
     if (!data) return false;
+    
+    // If we have interview data, we can show it (even without complete evaluation)
+    // The UI already handles showing "Processing..." when evaluation is pending/null
+    const hasInterviewData = data.interview !== null && data.interview.id !== null;
+    
+    // If evaluation is complete, that's also ready
     const hasEvaluation = data.evaluation !== null;
     const hasFeedback = data.evaluation?.evaluation !== null;
     const evalStatus = data.evaluation?.status;
-    return hasEvaluation && hasFeedback && evalStatus === 'complete';
+    const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
+    
+    // Show results if we have interview data OR complete evaluation
+    return hasInterviewData || isComplete;
   };
 
   // Minimum time timer - ensures loading screen shows for at least 2500ms
@@ -253,7 +262,8 @@ export default function Results() {
     
     if (minTimeElapsed && dataReady) {
       // If we have tempData and timer is done, move it to results
-      if (tempData && !isDataReady(results)) {
+      // This works even if evaluation is not complete yet
+      if (tempData && !results) {
         setResults(tempData);
         setTempData(null);
         // Mark step 4 as completed when moving data

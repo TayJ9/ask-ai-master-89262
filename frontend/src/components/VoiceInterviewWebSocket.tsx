@@ -92,6 +92,7 @@ export default function VoiceInterviewWebSocket({
   const volumeIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
   const isInterviewCompleteRef = useRef(false); // Track if interview completed successfully to prevent cleanup from interfering
+  const hasSavedInterviewRef = useRef(false); // Track if interview has been saved to prevent duplicate saves
   
   // Audio quality improvement refs
   const audioChunkBufferRef = useRef<any[]>([]);
@@ -128,6 +129,18 @@ export default function VoiceInterviewWebSocket({
   
   // Save interview to backend
   const saveInterview = useCallback(async (convId: string | null, endedBy: 'user' | 'disconnect' = 'disconnect') => {
+    // Prevent duplicate saves - if we've already saved, return early
+    if (hasSavedInterviewRef.current) {
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Interview already saved, skipping duplicate save call:', {
+        sessionId,
+        conversationId: convId || 'null',
+        endedBy,
+        timestamp: new Date().toISOString()
+      });
+      // Return a mock response with the sessionId - frontend will use polling fallback
+      return { interviewId: null, sessionId };
+    }
+    
     // Always call save-interview with sessionId (always available)
     // conversationId is optional (may not be available)
     const authToken = localStorage.getItem('auth_token');
@@ -196,6 +209,11 @@ export default function VoiceInterviewWebSocket({
         interviewId: responseData.interviewId || 'not provided',
         timestamp: new Date().toISOString()
       });
+      
+      // Mark as saved only after successful save (status 200 and success: true)
+      if (response.ok && responseData.success) {
+        hasSavedInterviewRef.current = true;
+      }
       
       // Return the response data including interviewId for direct navigation
       return responseData;
