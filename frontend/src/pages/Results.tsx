@@ -5,7 +5,7 @@
  * Handles polling for webhook delay and evaluation completion.
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useLocation, useRoute } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -67,41 +67,62 @@ export default function Results() {
   
   // Parse query params from location
   // CRITICAL: Check for interviewId first (direct lookup), then fallback to sessionId (polling)
-  const urlParts = location.split('?');
-  const queryString = urlParts.length > 1 ? urlParts[1] : '';
-  const searchParams = new URLSearchParams(queryString);
-  const interviewId = searchParams.get("interviewId"); // Direct lookup - preferred
-  const sessionId = searchParams.get("sessionId"); // Fallback for polling
-  const conversationId = searchParams.get("conversationId");
-  
-  console.log('[FLIGHT_RECORDER] [RESULTS] Page loaded - URL params extracted:', {
-    fullLocation: location,
-    urlParts: urlParts,
-    queryString: queryString,
-    searchParamsEntries: Array.from(searchParams.entries()),
-    interviewId: interviewId || 'null',
-    sessionId: sessionId || 'null',
-    conversationId: conversationId || 'null',
-    windowLocationSearch: typeof window !== 'undefined' ? window.location.search : 'N/A',
-    windowLocationHref: typeof window !== 'undefined' ? window.location.href : 'N/A',
-    timestamp: new Date().toISOString()
-  });
-  
-  // FALLBACK: If params are missing from URL params, try to get them from window.location
-  // This handles cases where wouter's location might not include query params
-  const finalInterviewId = interviewId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('interviewId') : null);
-  const finalSessionId = sessionId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('sessionId') : null);
-  const finalConversationId = conversationId || (typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('conversationId') : null);
-  
-  if (finalSessionId !== sessionId || finalConversationId !== conversationId) {
-    console.warn('[FLIGHT_RECORDER] [RESULTS] Query params mismatch - using window.location fallback:', {
-      wouterSessionId: sessionId,
-      windowSessionId: finalSessionId,
-      wouterConversationId: conversationId,
-      windowConversationId: finalConversationId,
+  // Memoize URL params extraction to prevent infinite re-renders
+  // Always use window.location as source of truth since wouter may not preserve query params
+  const { finalInterviewId, finalSessionId, finalConversationId } = useMemo(() => {
+    // Try wouter's location first
+    const urlParts = location.split('?');
+    const queryString = urlParts.length > 1 ? urlParts[1] : '';
+    const wouterParams = new URLSearchParams(queryString);
+    const wouterInterviewId = wouterParams.get("interviewId");
+    const wouterSessionId = wouterParams.get("sessionId");
+    const wouterConversationId = wouterParams.get("conversationId");
+    
+    // Always use window.location as source of truth (wouter may strip query params)
+    const windowParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const windowInterviewId = windowParams?.get('interviewId') || null;
+    const windowSessionId = windowParams?.get('sessionId') || null;
+    const windowConversationId = windowParams?.get('conversationId') || null;
+    
+    // Prefer window.location, fallback to wouter
+    const finalInterviewId = windowInterviewId || wouterInterviewId;
+    const finalSessionId = windowSessionId || wouterSessionId;
+    const finalConversationId = windowConversationId || wouterConversationId;
+    
+    console.log('[FLIGHT_RECORDER] [RESULTS] Page loaded - URL params extracted:', {
+      fullLocation: location,
+      wouterParams: {
+        interviewId: wouterInterviewId || 'null',
+        sessionId: wouterSessionId || 'null',
+        conversationId: wouterConversationId || 'null',
+      },
+      windowParams: {
+        interviewId: windowInterviewId || 'null',
+        sessionId: windowSessionId || 'null',
+        conversationId: windowConversationId || 'null',
+      },
+      finalParams: {
+        interviewId: finalInterviewId || 'null',
+        sessionId: finalSessionId || 'null',
+        conversationId: finalConversationId || 'null',
+      },
+      windowLocationSearch: typeof window !== 'undefined' ? window.location.search : 'N/A',
+      windowLocationHref: typeof window !== 'undefined' ? window.location.href : 'N/A',
       timestamp: new Date().toISOString()
     });
-  }
+    
+    if (wouterInterviewId !== windowInterviewId || wouterSessionId !== windowSessionId) {
+      console.warn('[FLIGHT_RECORDER] [RESULTS] Query params mismatch - using window.location as source of truth:', {
+        wouterInterviewId: wouterInterviewId || 'null',
+        windowInterviewId: windowInterviewId || 'null',
+        wouterSessionId: wouterSessionId || 'null',
+        windowSessionId: windowSessionId || 'null',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    return { finalInterviewId, finalSessionId, finalConversationId };
+  }, [location]);
   
   const [status, setStatus] = useState<'loading' | 'saving' | 'evaluating' | 'complete' | 'error'>('loading');
   const [results, setResults] = useState<InterviewResults | null>(null);
@@ -118,6 +139,9 @@ export default function Results() {
   const pollCountRef = useRef(0);
   const isMountedRef = useRef(true);
   const stepTimeoutsRef = useRef<NodeJS.Timeout[]>([]);
+  const hasStartedLoadingRef = useRef(false);
+  const prevInterviewIdRef = useRef<string | null>(null);
+  const prevSessionIdRef = useRef<string | null>(null);
   const minTimeElapsedRef = useRef(false);
   const shouldPollRef = useRef<boolean>(!finalInterviewId && !!finalSessionId);
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
@@ -126,7 +150,7 @@ export default function Results() {
   // Poll for interviewId by sessionId
   // CRITICAL: Use finalSessionId (with fallback to window.location) to ensure we get the correct sessionId
   const pollForInterviewId = async (): Promise<string | null> => {
-    const activeSessionId = finalSessionId || sessionId;
+    const activeSessionId = finalSessionId;
     if (!activeSessionId) {
       console.log('[FLIGHT_RECORDER] [RESULTS] pollForInterviewId - no sessionId provided');
       return null;
@@ -247,9 +271,32 @@ export default function Results() {
     }
   }, [minTimeElapsed, results, tempData]);
 
+  // Initialize mounted ref on mount
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Direct lookup by interviewId (preferred) or polling by sessionId (fallback)
   useEffect(() => {
     if (!isMountedRef.current) return;
+    
+    // Prevent duplicate loads - check if we've already started loading with these IDs
+    if (prevInterviewIdRef.current === finalInterviewId && prevSessionIdRef.current === finalSessionId) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] Skipping duplicate load - IDs unchanged:', {
+        interviewId: finalInterviewId,
+        sessionId: finalSessionId,
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+    
+    // Update refs to track current IDs
+    prevInterviewIdRef.current = finalInterviewId;
+    prevSessionIdRef.current = finalSessionId;
+    hasStartedLoadingRef.current = true;
     
     // Strategy 1: Direct lookup by interviewId (if available)
     if (finalInterviewId) {
@@ -482,12 +529,11 @@ export default function Results() {
     startPolling();
 
     return () => {
-      isMountedRef.current = false;
       if (pollingIntervalRef.current) {
         clearInterval(pollingIntervalRef.current);
       }
     };
-  }, [finalInterviewId, finalSessionId, sessionId]); // Depend on interviewId and sessionId to re-run if either changes
+  }, [finalInterviewId, finalSessionId]); // Only depend on memoized values - removed sessionId as it's redundant
 
   const handleRetry = () => {
     pollCountRef.current = 0;
