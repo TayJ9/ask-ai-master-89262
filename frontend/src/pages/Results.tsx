@@ -202,11 +202,24 @@ export default function Results() {
 
   // Helper function to check if data is ready and complete
   const isDataReady = (data: InterviewResults | null): boolean => {
-    if (!data) return false;
+    if (!data) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] isDataReady: data is null');
+      return false;
+    }
     
     // If we have interview data, we can show it (even without complete evaluation)
     // The UI already handles showing "Processing..." when evaluation is pending/null
-    const hasInterviewData = data.interview !== null && data.interview.id !== null;
+    const hasInterviewData = data.interview !== null && data.interview !== undefined && data.interview.id !== null && data.interview.id !== undefined;
+    
+    console.log('[FLIGHT_RECORDER] [RESULTS] isDataReady check:', {
+      hasData: !!data,
+      hasInterview: !!data.interview,
+      interviewId: data.interview?.id || 'null',
+      hasEvaluation: !!data.evaluation,
+      evaluationStatus: data.evaluation?.status || 'null',
+      hasInterviewData,
+      timestamp: new Date().toISOString()
+    });
     
     // If evaluation is complete, that's also ready
     const hasEvaluation = data.evaluation !== null;
@@ -215,7 +228,9 @@ export default function Results() {
     const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
     
     // Show results if we have interview data OR complete evaluation
-    return hasInterviewData || isComplete;
+    const result = hasInterviewData || isComplete;
+    console.log('[FLIGHT_RECORDER] [RESULTS] isDataReady result:', result);
+    return result;
   };
 
   // Minimum time timer - ensures loading screen shows for at least 2500ms
@@ -260,21 +275,34 @@ export default function Results() {
   useEffect(() => {
     const dataReady = isDataReady(results) || isDataReady(tempData);
     
+    console.log('[FLIGHT_RECORDER] [RESULTS] Effect check:', {
+      minTimeElapsed,
+      dataReady,
+      hasResults: !!results,
+      hasTempData: !!tempData,
+      resultsReady: isDataReady(results),
+      tempDataReady: isDataReady(tempData),
+      timestamp: new Date().toISOString()
+    });
+    
     if (minTimeElapsed && dataReady) {
       // If we have tempData and timer is done, move it to results
       // This works even if evaluation is not complete yet
       if (tempData && !results) {
+        console.log('[FLIGHT_RECORDER] [RESULTS] Moving tempData to results');
         setResults(tempData);
         setTempData(null);
         // Mark step 4 as completed when moving data
         setCompletedSteps(prev => new Set([...prev, 4]));
       } else if (isDataReady(results)) {
         // Results already ready, just mark step 4 as completed
+        console.log('[FLIGHT_RECORDER] [RESULTS] Results already ready');
         setCompletedSteps(prev => new Set([...prev, 4]));
       }
       
       // Show results with fade transition
       setTimeout(() => {
+        console.log('[FLIGHT_RECORDER] [RESULTS] Showing results');
         setShowResults(true);
         setStatus('complete');
       }, 100); // Small delay for smooth transition

@@ -93,6 +93,7 @@ export default function VoiceInterviewWebSocket({
   const isMountedRef = useRef(true);
   const isInterviewCompleteRef = useRef(false); // Track if interview completed successfully to prevent cleanup from interfering
   const hasSavedInterviewRef = useRef(false); // Track if interview has been saved to prevent duplicate saves
+  const saveInterviewPromiseRef = useRef<Promise<any> | null>(null); // Store in-flight promise to prevent duplicate saves
   
   // Audio quality improvement refs
   const audioChunkBufferRef = useRef<any[]>([]);
@@ -129,7 +130,18 @@ export default function VoiceInterviewWebSocket({
   
   // Save interview to backend
   const saveInterview = useCallback(async (convId: string | null, endedBy: 'user' | 'disconnect' = 'disconnect') => {
-    // Prevent duplicate saves - if we've already saved, return early
+    // If we already have a save in progress, return that promise instead of starting a new one
+    if (saveInterviewPromiseRef.current) {
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Save already in progress, reusing existing promise:', {
+        sessionId,
+        conversationId: convId || 'null',
+        endedBy,
+        timestamp: new Date().toISOString()
+      });
+      return saveInterviewPromiseRef.current;
+    }
+    
+    // If we've already successfully saved, return early
     if (hasSavedInterviewRef.current) {
       console.log('[FLIGHT_RECORDER] [INTERVIEW] Interview already saved, skipping duplicate save call:', {
         sessionId,
@@ -141,7 +153,9 @@ export default function VoiceInterviewWebSocket({
       return { interviewId: null, sessionId };
     }
     
-    // Always call save-interview with sessionId (always available)
+    // Create the save promise and store it
+    const savePromise = (async () => {
+      // Always call save-interview with sessionId (always available)
     // conversationId is optional (may not be available)
     const authToken = localStorage.getItem('auth_token');
     // Get agentId with graceful fallback - don't throw error, just warn
@@ -224,9 +238,20 @@ export default function VoiceInterviewWebSocket({
         description: "Interview end state may not have been saved. Results may be delayed.",
         variant: "destructive",
       });
+      // Reset the promise ref on error so we can retry
+      saveInterviewPromiseRef.current = null;
       // Return null on error - frontend will use fallback polling
       return null;
+    } finally {
+      // Clear the promise ref after completion (success or failure)
+      saveInterviewPromiseRef.current = null;
     }
+    })();
+    
+    // Store the promise so concurrent calls can reuse it
+    saveInterviewPromiseRef.current = savePromise;
+    
+    return savePromise;
   }, [sessionId, toast]);
 
   // Stable callbacks for useConversation (prevents hook re-initialization on re-render)
