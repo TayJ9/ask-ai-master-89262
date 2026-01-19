@@ -276,6 +276,9 @@ function authenticateToken(req: any, res: any, next: any) {
     // Express normalizes headers to lowercase, but check both for robustness
     const authHeader = req.headers['authorization'] || req.headers['Authorization'];
     
+    // Enhanced debug logging as requested
+    console.log('[Auth] Header present:', !!authHeader);
+    
     // Log auth header for debugging (masked)
     if (authHeader) {
       const headerPreview = authHeader.length > 30 ? `${authHeader.substring(0, 30)}...` : authHeader;
@@ -341,7 +344,8 @@ function authenticateToken(req: any, res: any, next: any) {
 
     jwt.verify(trimmedToken, getJWTSecret(), (err: any, decoded: any) => {
       if (err) {
-        console.error('[Auth] Token verification failed:', {
+        console.error('[Auth] Token verified: false');
+        console.error('[Auth] Error:', {
           error: err.message,
           name: err.name,
           path: req.path,
@@ -350,6 +354,7 @@ function authenticateToken(req: any, res: any, next: any) {
         return res.status(403).json({ error: 'Invalid token' });
       }
       
+      console.log('[Auth] Token verified: true');
       console.log('[Auth] Token verified successfully:', {
         userId: decoded.userId,
         path: req.path
@@ -670,7 +675,46 @@ export function registerRoutes(app: Express) {
   // Alternative upload endpoint that matches frontend expectations (/api/upload-resume)
   // This endpoint accepts FormData with 'resume', 'name', 'major', 'year' fields
   // SECURITY: Requires authentication and validates file types/sizes
-  app.post("/api/upload-resume", authenticateToken, upload.single('resume'), async (req: any, res) => {
+  // Middleware order: authenticateToken -> multer wrapper -> route handler
+  app.post("/api/upload-resume", authenticateToken, (req: any, res: any, next: any) => {
+    // Custom wrapper to catch Multer errors before they become 403/500
+    upload.single('resume')(req, res, (err: any) => {
+      if (err) {
+        console.error('[UPLOAD-RESUME] Multer Error:', {
+          error: err.message,
+          code: err.code,
+          field: err.field,
+          name: err.name
+        });
+        
+        // Handle specific Multer error codes
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          const fileSizeMB = err.limit ? (err.limit / (1024 * 1024)).toFixed(2) : '10';
+          return res.status(413).json({ 
+            error: 'File too large',
+            message: `File size exceeds ${fileSizeMB}MB limit. Please compress your PDF or use a smaller file.`
+          });
+        }
+        
+        // Handle file filter errors (invalid file type)
+        if (err.message && err.message.includes('Only PDF')) {
+          return res.status(400).json({ 
+            error: 'Invalid file type',
+            message: 'Only PDF files are allowed' 
+          });
+        }
+        
+        // Generic Multer error
+        return res.status(400).json({ 
+          error: 'File upload error',
+          message: err.message || 'Failed to process file upload'
+        });
+      }
+      
+      // No error - proceed to route handler
+      next();
+    });
+  }, async (req: any, res) => {
     // Log request received at the very start of route handler
     console.log('[UPLOAD-RESUME] Received resume upload request:', {
       timestamp: new Date().toISOString(),

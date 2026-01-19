@@ -130,6 +130,17 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       formData.append("major", candidateMajor.trim());
       formData.append("year", candidateYear.trim());
 
+      // Log headers being sent (masking token)
+      const tokenForLog = localStorage.getItem('auth_token');
+      const maskedToken = tokenForLog 
+        ? `${tokenForLog.substring(0, 10)}...${tokenForLog.substring(tokenForLog.length - 4)}`
+        : 'MISSING';
+      console.log('[ResumeUpload] Sending upload request to /api/upload-resume with headers:', {
+        hasAuthorization: !!tokenForLog,
+        authorizationPreview: tokenForLog ? `Bearer ${maskedToken}` : 'none',
+        contentType: 'multipart/form-data (set by browser)'
+      });
+      
       console.log('[ResumeUpload] Sending upload request to /api/upload-resume');
       const data = await apiPostFormData('/api/upload-resume', formData);
       console.log('[ResumeUpload] Upload successful:', {
