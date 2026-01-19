@@ -3,6 +3,7 @@ import cors from "cors";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
+import { repairSchema } from "./schema-repair";
 import { createRequire } from "module";
 import { fileURLToPath } from "url";
 import { dirname } from "path";
@@ -150,6 +151,11 @@ app.use((req, res, next) => {
 
 (async () => {
   try {
+    // Run schema repair on startup to ensure all tables exist
+    log('[SERVER STARTUP] Running database schema repair...');
+    await repairSchema();
+    log('[SERVER STARTUP] Schema repair completed');
+    
     log('[SERVER STARTUP] Registering API routes...');
     registerRoutes(app);
     log('[SERVER STARTUP] API routes registered successfully');
