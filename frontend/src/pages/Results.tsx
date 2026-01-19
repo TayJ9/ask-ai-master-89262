@@ -858,6 +858,27 @@ export default function Results() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* DEBUG: Log what we're trying to render */}
+            {(() => {
+              console.log('[FLIGHT_RECORDER] [RESULTS] CardContent render check:', {
+                hasEffectiveDisplayResults: !!effectiveDisplayResults,
+                hasInterview: !!effectiveDisplayResults?.interview,
+                interviewId: effectiveDisplayResults?.interview?.id,
+                hasDurationSeconds: !!effectiveDisplayResults?.interview?.durationSeconds,
+                durationSeconds: effectiveDisplayResults?.interview?.durationSeconds,
+                hasTranscript: !!effectiveDisplayResults?.interview?.transcript,
+                transcriptLength: effectiveDisplayResults?.interview?.transcript?.length || 0,
+                hasEvaluation: !!evaluation,
+                evaluationStatus: evaluation?.status || 'null',
+                evaluationEvaluation: evaluation?.evaluation,
+                condition1_match: !!(effectiveDisplayResults?.interview?.id),
+                condition2_match: !!(effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && !evaluation),
+                condition3_match: !!(effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && evaluation === null),
+                timestamp: new Date().toISOString()
+              });
+              return null;
+            })()}
+            
             {/* Always show interview ID if available */}
             {effectiveDisplayResults?.interview?.id ? (
               <div className="mb-4">
@@ -907,6 +928,23 @@ export default function Results() {
                 <p className="text-gray-600 text-sm">
                   Your interview has been saved. Results are being processed...
                 </p>
+              </div>
+            )}
+            
+            {/* Final fallback: Always show something if we have effectiveDisplayResults */}
+            {effectiveDisplayResults && (
+              <div className="text-center py-4 border-t pt-4 mt-4">
+                <p className="text-gray-600 text-sm mb-2">
+                  Interview ID: {effectiveDisplayResults?.interview?.id || 'Unknown'}
+                </p>
+                <p className="text-gray-500 text-xs mb-2">
+                  Status: {effectiveDisplayResults?.interview?.status || 'Unknown'}
+                </p>
+                {!effectiveDisplayResults?.interview?.transcript && !evaluation && (
+                  <p className="text-gray-500 text-xs mt-2">
+                    Processing your results...
+                  </p>
+                )}
               </div>
             )}
           </CardContent>
