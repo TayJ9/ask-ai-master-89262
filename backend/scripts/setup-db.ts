@@ -12,6 +12,7 @@ import { pool } from '../server/db';
  * 1. Enables UUID extensions (pgcrypto, uuid-ossp)
  * 2. Fixes elevenlabs_interview_sessions.id column DEFAULT value
  * 3. Creates missing interviews table
+ * 4. Creates missing interview_evaluations table
  */
 async function repairSchema() {
   try {
@@ -78,10 +79,30 @@ async function repairSchema() {
     `);
     console.log('✅ Created/verified interviews table');
 
-    // 4. Create indexes for interviews table
+    // 4. Create interview_evaluations table if missing
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS interview_evaluations (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        interview_id UUID NOT NULL REFERENCES interviews(id) ON DELETE CASCADE,
+        status TEXT NOT NULL DEFAULT 'pending',
+        overall_score INTEGER,
+        evaluation_json JSONB,
+        error TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    console.log('✅ Created/verified interview_evaluations table');
+
+    // 5. Create indexes for interviews table
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_interviews_conversation_id ON interviews(conversation_id);`);
     console.log('✅ Created/verified indexes for interviews table');
+
+    // 6. Create indexes for interview_evaluations table
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_evaluations_interview_id ON interview_evaluations(interview_id);`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);`);
+    console.log('✅ Created/verified indexes for interview_evaluations table');
     
     console.log('✅ Schema repair completed successfully!');
   } catch (error: any) {
@@ -142,13 +163,32 @@ async function setupDatabase() {
       }
     };
 
-    // Check if profiles table exists (if it does, all tables likely exist)
-    const tablesExist = await checkTableExists('profiles');
-    if (tablesExist) {
-      console.log('✅ Database tables already exist. Skipping creation.');
+    // Check if all required tables exist (don't assume all tables exist just because profiles does)
+    const requiredTables = [
+      'profiles',
+      'interviews',
+      'interview_evaluations',
+      'elevenlabs_interview_sessions'
+    ];
+    
+    const tableExistence = await Promise.all(
+      requiredTables.map(table => checkTableExists(table))
+    );
+    
+    const allTablesExist = tableExistence.every(exists => exists);
+    
+    if (allTablesExist) {
+      console.log('✅ All required database tables already exist. Skipping creation.');
       console.log('✅ Database setup complete!');
       process.exit(0);
       return;
+    }
+    
+    // Log which tables are missing
+    const missingTables = requiredTables.filter((_, index) => !tableExistence[index]);
+    if (missingTables.length > 0) {
+      console.log(`⚠️  Missing tables detected: ${missingTables.join(', ')}`);
+      console.log('⚠️  Creating missing tables...');
     }
 
     // Create profiles table
