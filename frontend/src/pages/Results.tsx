@@ -384,8 +384,22 @@ export default function Results() {
               evaluationStatus: data.evaluation?.status || 'null',
               timestamp: new Date().toISOString()
             });
+            
+            // CRITICAL: Set ref immediately before any state updates
+            // This ensures data persists even if component remounts
+            resultsDataRef.current = data;
+            
+            // Also set tempData for the useEffect to process
             setTempData(data);
-            resultsDataRef.current = data; // Persist immediately
+            
+            // If minTimeElapsed is already true, move to results immediately
+            if (minTimeElapsedRef.current) {
+              console.log('[FLIGHT_RECORDER] [RESULTS] Min time already elapsed, moving to results immediately');
+              setResults(data);
+              shouldShowResultsRef.current = true;
+              setShowResults(true);
+              setStatus('complete');
+            }
             
             // Check if evaluation is complete
             const hasEvaluation = data.evaluation !== null;
@@ -541,9 +555,21 @@ export default function Results() {
         const evalStatus = resultsData.evaluation?.status;
         const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
         
-        // Always store in tempData first - useEffect will handle moving to results when timer is done
+        // CRITICAL: Set ref immediately before any state updates
+        // This ensures data persists even if component remounts
+        resultsDataRef.current = resultsData;
+        
+        // Also set tempData for the useEffect to process
         setTempData(resultsData);
-        resultsDataRef.current = resultsData; // Persist immediately
+        
+        // If minTimeElapsed is already true, move to results immediately
+        if (minTimeElapsedRef.current) {
+          console.log('[FLIGHT_RECORDER] [RESULTS] Polling: Min time already elapsed, moving to results immediately');
+          setResults(resultsData);
+          shouldShowResultsRef.current = true;
+          setShowResults(true);
+          setStatus('complete');
+        }
         
         // Mark step 4 as completed when data arrives (even if not complete yet)
         if (isComplete) {
@@ -736,6 +762,14 @@ export default function Results() {
     hasEvaluation: !!displayResults?.evaluation,
     evaluationStatus: displayResults?.evaluation?.status || 'null',
     hasEvaluationJson: !!displayResults?.evaluation?.evaluation,
+    // Log the actual data structure for debugging
+    displayResultsStructure: displayResults ? {
+      hasInterview: !!displayResults.interview,
+      interviewId: displayResults.interview?.id,
+      interviewStatus: displayResults.interview?.status,
+      hasEvaluation: !!displayResults.evaluation,
+      evaluationStatus: displayResults.evaluation?.status || 'null',
+    } : null,
     timestamp: new Date().toISOString()
   });
   
