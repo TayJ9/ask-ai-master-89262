@@ -1308,9 +1308,9 @@ const tokenRateLimiter = rateLimit({
         apiKeyLength: apiKey?.length || 0,
         timestamp: new Date().toISOString(),
         audioQuality: {
-          expectedSampleRate: '48000 Hz',
+          expectedSampleRate: '16000 Hz',
           expectedCodec: 'Opus (WebRTC)',
-          note: 'Frontend requests 48kHz sample rate with 16-bit depth. Agent dashboard should be configured for Opus codec and 48kHz sample rate for optimal quality and latency.'
+          note: 'Frontend requests 16kHz sample rate with 16-bit depth for optimal compatibility and reduced crackling. Agent dashboard should be configured for Opus codec and 16kHz sample rate. Frontend uses graceful fallback if browser rejects constraints.'
         }
       });
 
@@ -2096,11 +2096,12 @@ const tokenRateLimiter = rateLimit({
         timestamp: new Date().toISOString()
       });
       
-      const userId = req.userId;
+      const userId = req.userId; // candidate_id is userId from JWT
       const client_session_id = req.body?.client_session_id as string;
       const conversation_id = req.body?.conversation_id as string | undefined;
       const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
       const agent_id = req.body?.agent_id as string | undefined;
+      const resume_text = req.body?.resume_text as string | undefined; // Optional resume text from request
       
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - parsed fields:', { 
         userId, 
@@ -2249,17 +2250,19 @@ const tokenRateLimiter = rateLimit({
         try {
           console.log('[SAVE-INTERVIEW] No existing interview found - creating new interview record synchronously');
           
-          // Get resume text from session if available (optional)
-          let resumeText: string | null = null;
-          try {
-            const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-              where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
-            });
-            // Resume text might be stored elsewhere - for now we'll create without it
-            // It can be updated later via webhook or other means
-          } catch (resumeError) {
-            // Resume lookup is optional - continue without it
-            console.log('[SAVE-INTERVIEW] Resume text lookup skipped (optional)');
+          // Get resume text from request body if provided, otherwise try session lookup
+          let resumeText: string | null = resume_text || null;
+          if (!resumeText) {
+            try {
+              const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+                where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
+              });
+              // Resume text might be stored elsewhere - for now we'll create without it
+              // It can be updated later via webhook or other means
+            } catch (resumeError) {
+              // Resume lookup is optional - continue without it
+              console.log('[SAVE-INTERVIEW] Resume text lookup skipped (optional)');
+            }
           }
           
           // Create interview record with status 'pending'
@@ -2283,8 +2286,22 @@ const tokenRateLimiter = rateLimit({
             conversationId: conversation_id || 'null',
             agentId,
             status: 'pending',
+            hasResumeText: !!resumeText,
+            resumeTextLength: resumeText?.length || 0,
             timestamp: new Date().toISOString()
           });
+          
+          // If resume_text was provided, store it in resumes table asynchronously (non-blocking)
+          if (resumeText && interviewId) {
+            storage.upsertResume(interviewId, resumeText, buildResumeProfile(resumeText))
+              .then(() => {
+                console.log(`[SAVE-INTERVIEW] Successfully stored resume text for interview ${interviewId}`);
+              })
+              .catch((resumeError: any) => {
+                console.error(`[SAVE-INTERVIEW] Error storing resume text:`, resumeError.message || resumeError);
+                // Don't fail - resume can be stored later
+              });
+          }
           
           // If conversation_id is available, try to fetch transcript and enqueue evaluation
           if (conversation_id) {
@@ -2447,11 +2464,28 @@ const tokenRateLimiter = rateLimit({
       });
     } catch (error: any) {
       console.error('[SAVE-INTERVIEW] Unexpected error processing client end notification:', error);
-      // Return 200 OK instead of 500 to allow frontend navigation
-      // Log the error but don't block the user flow
-      res.status(200).json({ 
+      
+      // CRITICAL: Even if there's an error, try to return interviewId if we have it
+      // This ensures frontend can still navigate even if some operations failed
+      if (interviewId) {
+        console.log('[SAVE-INTERVIEW] Error occurred but interviewId exists - returning it for navigation:', {
+          interviewId,
+          error: error.message || error,
+          timestamp: new Date().toISOString()
+        });
+        return res.status(200).json({ 
+          success: true, // Still return success since interview was created
+          interviewId: interviewId, // Return interviewId so frontend can navigate
+          sessionId: client_session_id,
+          warning: 'Some operations may have failed, but interview was created successfully'
+        });
+      }
+      
+      // If interviewId is null, return error (this should be rare since we throw if creation fails)
+      console.error('[SAVE-INTERVIEW] CRITICAL: Error occurred and interviewId is null');
+      res.status(500).json({ 
         success: false,
-        error: 'Some data may not have been saved, but you can still view results',
+        error: 'Failed to create interview record',
         details: process.env.NODE_ENV === 'development' ? error.message : undefined
       });
     }

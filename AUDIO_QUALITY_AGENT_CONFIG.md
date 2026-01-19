@@ -8,10 +8,10 @@ This document outlines the recommended ElevenLabs agent configuration settings t
 
 The frontend is configured with the following audio constraints:
 
-- **Sample Rate:** 48kHz (studio quality, exceeds 24kHz+ requirement)
+- **Sample Rate:** 16kHz (optimal compatibility, reduces crackling and sample rate mismatches)
 - **Bit Depth:** 16-bit
 - **Channels:** Mono (1 channel)
-- **Echo Cancellation:** Enabled
+- **Echo Cancellation:** Enabled (critical for speaker output)
 - **Noise Suppression:** Enabled (can be disabled if audio sounds muffled)
 - **Auto Gain Control:** Enabled (can be disabled if audio sounds muffled)
 
@@ -22,7 +22,7 @@ The frontend is configured with the following audio constraints:
 **Recommended:** Opus codec
 - **Why:** Opus provides excellent quality at low bitrates with minimal latency
 - **Latency:** Typically <100ms encoding/decoding delay
-- **Quality:** Supports up to 48kHz sample rate
+- **Quality:** Supports 16kHz sample rate (matches frontend configuration)
 
 **Configuration Steps:**
 1. Navigate to ElevenLabs Dashboard → Your Agent → Settings
@@ -142,13 +142,14 @@ Check browser console during interviews to verify latency targets.
 After configuring the agent:
 
 - [ ] Agent codec is set to Opus
-- [ ] Agent sample rate is set to 48kHz
+- [ ] Agent sample rate is set to 16kHz
 - [ ] WebRTC is enabled in agent settings
 - [ ] Voice model quality is High/Ultra
-- [ ] Frontend console shows 48kHz sample rate in getUserMedia constraints
+- [ ] Frontend console shows 16kHz sample rate in getUserMedia constraints
 - [ ] Latency logs show <400ms round trip time
 - [ ] Audio quality is clear and natural (no robotic artifacts)
 - [ ] No "popping" on first question
+- [ ] No audio crackling or choppiness
 
 ## Additional Resources
 

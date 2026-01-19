@@ -743,11 +743,32 @@ export default function VoiceInterviewWebSocket({
   }, [conversation.status, conversation]);
 
   // AudioContext resume function - ensures browser audio pipeline is ready
+  // CRITICAL: Prevents multiple AudioContext initializations which cause crackling/choppy audio
   const resumeAudioContext = useCallback(async (): Promise<void> => {
+    // Check if we already have an active AudioContext to prevent multiple initializations
+    if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
+      console.log('[AUDIO] AudioContext already exists, resuming if suspended...');
+      try {
+        if (micAudioContextRef.current.state === 'suspended') {
+          await micAudioContextRef.current.resume();
+          console.log('[AUDIO] Existing AudioContext resumed');
+        }
+        return; // Reuse existing context to prevent multiple initializations
+      } catch (error) {
+        console.warn('[AUDIO] Error resuming existing AudioContext, creating new one:', error);
+        // Continue to create new context if resume fails
+      }
+    }
+    
     try {
       // Create a temporary AudioContext to resume the browser's audio system
-      // This ensures the browser's audio pipeline is ready before SDK starts
-      const tempContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      // Use 16kHz sample rate to match microphone constraints and prevent sample rate mismatch
+      const tempContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+        sampleRate: 16000 // Match microphone sample rate to prevent crackling
+      });
+      
+      // Store reference to prevent multiple initializations
+      micAudioContextRef.current = tempContext;
       
       if (tempContext.state === 'suspended') {
         await tempContext.resume();
@@ -756,7 +777,8 @@ export default function VoiceInterviewWebSocket({
       
       // Play a silent sound to "wake up" the audio system
       // This ensures the browser's audio processing is fully initialized
-      const buffer = tempContext.createBuffer(1, 1, 22050);
+      // Use 16kHz sample rate to match constraints
+      const buffer = tempContext.createBuffer(1, 1, 16000);
       const source = tempContext.createBufferSource();
       source.buffer = buffer;
       source.connect(tempContext.destination);
@@ -766,17 +788,20 @@ export default function VoiceInterviewWebSocket({
       // Small delay to ensure audio system is ready
       await new Promise(resolve => setTimeout(resolve, 50));
       
-      // Close temporary context
-      await tempContext.close();
+      console.log('[AUDIO] AudioContext warmup complete (16kHz sample rate)');
       
-      console.log('[AUDIO] AudioContext warmup complete');
+      // NOTE: Don't close the context here - keep it alive for the session
+      // Closing and reopening causes audio drift and crackling
     } catch (error) {
       console.warn('[AUDIO] AudioContext resume failed (non-critical):', error);
       // Don't fail - SDK may handle this internally
+      // Clear ref if creation failed
+      micAudioContextRef.current = null;
     }
   }, []);
 
   // Pre-warm microphone permission and connection (reduces initial latency)
+  // NOTE: Using minimal constraints to avoid conflicts with later detailed constraints
   useEffect(() => {
     // Pre-warm microphone access (don't await, just request to cache permission)
     if (!hasStarted && !isStarting) {
@@ -912,43 +937,97 @@ export default function VoiceInterviewWebSocket({
     
     try {
       // ============================================
-      // STEP 1: Request Microphone (with mount check and timeout)
+      // STEP 1: Request Microphone (with graceful fallback and mount check)
       // ============================================
-      console.log('Step 1: Requesting microphone access...');
+      console.log('Step 1: Requesting microphone access with optimized constraints...');
       
-      // FIX #2: Timeout guard on getUserMedia (5 seconds)
+      // FIX: Timeout guard on getUserMedia (5 seconds)
       // Browsers can hang indefinitely if permission dialog is ignored
       const MIC_TIMEOUT_MS = 5000;
       
+      // CRITICAL: Request 16kHz sample rate for better compatibility and reduced crackling
+      // Many browsers and audio systems work better with 16kHz, reducing sample rate mismatches
+      const preferredConstraints: MediaTrackConstraints = {
+        echoCancellation: true,      // Critical for speaker output to prevent feedback
+        noiseSuppression: true,       // Enable for cleaner input
+        autoGainControl: true,        // Enable for consistent levels
+        channelCount: 1,              // Mono input
+        sampleRate: 16000,           // 16kHz for better compatibility (reduces crackling)
+        sampleSize: 16               // 16-bit depth
+      };
+      
+      // Fallback constraints if browser rejects preferred settings
+      const fallbackConstraints: MediaTrackConstraints = {
+        echoCancellation: true,      // Keep echo cancellation as minimum requirement
+        channelCount: 1              // Mono input
+      };
+      
+      // Minimal fallback (just audio permission)
+      const minimalConstraints = { audio: true };
+      
       try {
-        const micPromise = navigator.mediaDevices.getUserMedia({ 
-          audio: {
-            echoCancellation: true,     // Keep enabled for speaker output
-            noiseSuppression: true,      // Enable for cleaner input
-            autoGainControl: true,       // Enable for consistent levels
-            channelCount: 1,             // Mono input
-            sampleRate: 48000,          // Studio quality (24kHz+ requirement met)
-            sampleSize: 16              // Explicit 16-bit depth for high fidelity
-            // NOTE: If audio sounds muffled/underwater, revert noiseSuppression and autoGainControl to false to disable browser processing.
-          } 
-        });
+        // Attempt with preferred constraints first
+        let micPromise: Promise<MediaStream>;
         
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          setTimeout(() => {
-            reject(new Error('TIMEOUT'));
-          }, MIC_TIMEOUT_MS);
-        });
-        
-        micStream = await Promise.race([micPromise, timeoutPromise]);
+        try {
+          console.log('[AUDIO] Attempting microphone access with preferred constraints:', preferredConstraints);
+          micPromise = navigator.mediaDevices.getUserMedia({ audio: preferredConstraints });
+          
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
+          });
+          
+          micStream = await Promise.race([micPromise, timeoutPromise]);
+          console.log('[AUDIO] Successfully obtained microphone with preferred constraints');
+        } catch (preferredError: any) {
+          // Check for timeout
+          if (preferredError.message === 'TIMEOUT') {
+            console.error('[AUDIO] Microphone request timeout');
+            throw new Error('Microphone access timed out. Please check your browser settings and allow microphone access.');
+          }
+          
+          // If constraint error, try fallback constraints
+          if (preferredError.name === 'OverconstrainedError' || preferredError.name === 'ConstraintNotSatisfiedError') {
+            console.warn('[AUDIO] Preferred constraints rejected, trying fallback constraints:', preferredError.message);
+            
+            try {
+              micPromise = navigator.mediaDevices.getUserMedia({ audio: fallbackConstraints });
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
+              });
+              
+              micStream = await Promise.race([micPromise, timeoutPromise]);
+              console.log('[AUDIO] Successfully obtained microphone with fallback constraints');
+            } catch (fallbackError: any) {
+              if (fallbackError.message === 'TIMEOUT') {
+                throw new Error('Microphone access timed out. Please check your browser settings and allow microphone access.');
+              }
+              
+              // Last resort: minimal constraints
+              console.warn('[AUDIO] Fallback constraints rejected, trying minimal constraints:', fallbackError.message);
+              micPromise = navigator.mediaDevices.getUserMedia(minimalConstraints);
+              const timeoutPromise = new Promise<never>((_, reject) => {
+                setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
+              });
+              
+              micStream = await Promise.race([micPromise, timeoutPromise]);
+              console.log('[AUDIO] Successfully obtained microphone with minimal constraints');
+            }
+          } else {
+            // Non-constraint error (permission denied, no device, etc.) - rethrow
+            throw preferredError;
+          }
+        }
       } catch (micError: any) {
-        console.error('Microphone access error:', micError);
+        console.error('[AUDIO] Microphone access error:', micError);
         
         // Check for timeout
         if (micError.message === 'TIMEOUT') {
-          console.error('Microphone request timeout - browser may have blocked permission dialog');
+          console.error('[AUDIO] Microphone request timeout - browser may have blocked permission dialog');
           throw new Error('Microphone access timed out. Please check your browser settings and allow microphone access.');
         }
         
+        // User-friendly error messages
         throw new Error(
           micError.name === 'NotAllowedError' 
             ? 'Microphone access denied. Please allow microphone access and try again.'
@@ -1360,13 +1439,18 @@ export default function VoiceInterviewWebSocket({
         volumeIntervalRef.current = null;
       }
       
-      // Clean up audio context if it exists
-      if (micAudioContextRef.current) {
+      // Clean up audio context if it exists (only on unmount, not during session)
+      // CRITICAL: Only close AudioContext on component unmount to prevent audio crackling
+      if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
         try {
-          micAudioContextRef.current.close();
+          console.log('[CLEANUP] Closing AudioContext on component unmount');
+          micAudioContextRef.current.close().catch((error: any) => {
+            console.warn('[CLEANUP] Error closing AudioContext:', error);
+          });
           micAudioContextRef.current = null;
         } catch (error) {
           console.warn('[CLEANUP] Error closing AudioContext:', error);
+          micAudioContextRef.current = null; // Clear ref even if close fails
         }
       }
       
