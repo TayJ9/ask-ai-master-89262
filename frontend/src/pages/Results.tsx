@@ -144,6 +144,7 @@ export default function Results() {
   const prevSessionIdRef = useRef<string | null>(null);
   const minTimeElapsedRef = useRef(false);
   const shouldPollRef = useRef<boolean>(!finalInterviewId && !!finalSessionId);
+  const shouldShowResultsRef = useRef(false); // Track if results should be shown (persists across remounts)
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
@@ -282,6 +283,7 @@ export default function Results() {
       hasTempData: !!tempData,
       resultsReady: isDataReady(results),
       tempDataReady: isDataReady(tempData),
+      shouldShowResultsRef: shouldShowResultsRef.current,
       timestamp: new Date().toISOString()
     });
     
@@ -291,23 +293,39 @@ export default function Results() {
       if (tempData && !results) {
         console.log('[FLIGHT_RECORDER] [RESULTS] Moving tempData to results');
         setResults(tempData);
+        // Clear tempData immediately to prevent duplicate processing
         setTempData(null);
         // Mark step 4 as completed when moving data
         setCompletedSteps(prev => new Set([...prev, 4]));
-      } else if (isDataReady(results)) {
+      } else if (results && isDataReady(results)) {
         // Results already ready, just mark step 4 as completed
         console.log('[FLIGHT_RECORDER] [RESULTS] Results already ready');
         setCompletedSteps(prev => new Set([...prev, 4]));
       }
       
+      // Mark that we should show results (persists across remounts)
+      shouldShowResultsRef.current = true;
+      
       // Show results with fade transition
-      setTimeout(() => {
-        console.log('[FLIGHT_RECORDER] [RESULTS] Showing results');
-        setShowResults(true);
-        setStatus('complete');
-      }, 100); // Small delay for smooth transition
+      // Use a ref check to prevent multiple calls
+      if (!showResults) {
+        setTimeout(() => {
+          console.log('[FLIGHT_RECORDER] [RESULTS] Showing results');
+          setShowResults(true);
+          setStatus('complete');
+        }, 100); // Small delay for smooth transition
+      }
     }
-  }, [minTimeElapsed, results, tempData]);
+  }, [minTimeElapsed, results, tempData, showResults]);
+  
+  // Initialize showResults from ref on mount (handles remounts)
+  useEffect(() => {
+    if (shouldShowResultsRef.current && results && !showResults) {
+      console.log('[FLIGHT_RECORDER] [RESULTS] Restoring showResults from ref after remount');
+      setShowResults(true);
+      setStatus('complete');
+    }
+  }, [results, showResults]);
 
   // Initialize mounted ref on mount
   useEffect(() => {
@@ -683,11 +701,14 @@ export default function Results() {
     : null;
 
   // Render both loading and results with fade transitions
+  // Use ref as fallback to handle remounts where state hasn't updated yet
+  const shouldShow = showResults || shouldShowResultsRef.current;
+  
   return (
     <div className="relative min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100">
       {/* Loading Screen - fades out when showResults is true */}
       <div className={`absolute inset-0 transition-opacity duration-500 ${
-        showResults ? 'opacity-0 pointer-events-none' : 'opacity-100'
+        shouldShow ? 'opacity-0 pointer-events-none' : 'opacity-100'
       }`}>
         {renderLoadingScreen()}
       </div>
@@ -695,7 +716,7 @@ export default function Results() {
       {/* Results Screen - fades in when showResults is true */}
       {results && (
         <div className={`relative transition-opacity duration-500 py-8 px-4 ${
-          showResults ? 'opacity-100' : 'opacity-0 pointer-events-none'
+          shouldShow ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}>
       <div className="max-w-4xl mx-auto">
         <Card className="mb-6">
