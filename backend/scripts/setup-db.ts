@@ -5,6 +5,7 @@
  */
 
 import { repairSchema } from '../server/schema-repair';
+import { pool } from '../server/db';
 
 async function setupDatabase() {
   try {
