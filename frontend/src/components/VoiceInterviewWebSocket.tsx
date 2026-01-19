@@ -301,48 +301,47 @@ export default function VoiceInterviewWebSocket({
       // Mark as complete
       isInterviewCompleteRef.current = true;
       
-      // IMMEDIATE navigation - don't wait for anything
-      const completeData = { sessionId, conversationId: conversationIdRef.current };
-      console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete immediately with:', completeData);
-      onComplete(completeData);
-      
-      // Save interview in background (don't await - let it run asynchronously)
-      // The save-interview endpoint is idempotent, so calling it multiple times is safe
+      // CRITICAL FIX: Save interview FIRST to get interviewId, then navigate immediately
+      // This ensures we always have an interviewId for navigation
       const conversationIdForSave = conversationIdRef.current;
-      if (!conversationIdForSave) {
-        console.warn('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - conversationIdRef is null during agent disconnect save. This is expected if interview ended before conversation_id was assigned.', {
-          sessionId,
-          timestamp: new Date().toISOString()
-        });
-      }
-      console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview in background:', {
+      console.log('[FLIGHT_RECORDER] [INTERVIEW] Disconnect - saving interview to get interviewId:', {
         sessionId,
         conversationId: conversationIdForSave || 'null',
         hasConversationId: !!conversationIdForSave,
         isAgentDisconnect,
         timestamp: new Date().toISOString()
       });
-      saveInterview(conversationIdForSave, 'disconnect').then((saveResponse) => {
-        // If save returned interviewId, update completeData for better navigation
-        if (saveResponse?.interviewId) {
-          console.log('[FLIGHT_RECORDER] [INTERVIEW] Background save returned interviewId:', {
-            interviewId: saveResponse.interviewId,
-            sessionId,
-            timestamp: new Date().toISOString()
-          });
-          // Note: Navigation already happened, but Results page can use polling fallback
+      
+      // Save interview synchronously to get interviewId before navigation
+      try {
+        const saveResponse = await saveInterview(conversationIdForSave, 'disconnect');
+        const interviewId = saveResponse?.interviewId;
+        
+        if (!interviewId) {
+          console.error('[FLIGHT_RECORDER] [INTERVIEW] CRITICAL: saveInterview returned null interviewId');
+          // Still navigate but log error
         }
-      }).catch((error) => {
-        console.error('[FLIGHT_RECORDER] [INTERVIEW] Background save failed:', {
-          error,
+        
+        // Navigate immediately with interviewId
+        const completeData = { 
+          sessionId, 
+          conversationId: conversationIdRef.current,
+          interviewId: interviewId || null
+        };
+        console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - calling onComplete with interviewId:', completeData);
+        onComplete(completeData);
+      } catch (saveError) {
+        console.error('[FLIGHT_RECORDER] [INTERVIEW] Background save failed, navigating anyway:', {
+          error: saveError,
           sessionId,
           conversationId: conversationIdForSave || 'null',
-          hasConversationId: !!conversationIdForSave,
           timestamp: new Date().toISOString()
         });
-        // Don't show error to user - they're already on results page
-        // The results page polling will handle finding the interview
-      });
+        // Still navigate even if save fails - backend should have created interview
+        const completeData = { sessionId, conversationId: conversationIdRef.current };
+        console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - error path, calling onComplete:', completeData);
+        onComplete(completeData);
+      }
       
       return; // Exit early - navigation already triggered
     }
@@ -388,10 +387,24 @@ export default function VoiceInterviewWebSocket({
           conversationId: conversationIdRef.current || 'null',
           timestamp: new Date().toISOString()
         });
-        // Still navigate even if save fails - user should see results
+        // Still navigate even if save fails - backend should have created interview
         // The save-interview endpoint is idempotent and can be retried
         isInterviewCompleteRef.current = true;
-        const completeData = { sessionId, conversationId: conversationIdRef.current };
+        // Try to get interviewId from error response if available
+        let errorInterviewId = null;
+        if (error && typeof error === 'object' && 'response' in error) {
+          try {
+            const errorResponse = await (error as any).response?.json?.();
+            errorInterviewId = errorResponse?.interviewId || null;
+          } catch {
+            // Ignore JSON parse errors
+          }
+        }
+        const completeData = { 
+          sessionId, 
+          conversationId: conversationIdRef.current,
+          interviewId: errorInterviewId || null
+        };
         console.log('[FLIGHT_RECORDER] [TRANSITION] Disconnect - error path, calling onComplete with:', completeData);
         onComplete(completeData);
       }
@@ -1264,10 +1277,24 @@ export default function VoiceInterviewWebSocket({
             conversationId: conversationId || 'null',
             timestamp: new Date().toISOString()
           });
-          // Still navigate even if save fails - user should see results
+          // Still navigate even if save fails - backend should have created interview
           // The save-interview endpoint is idempotent and can be retried
           isInterviewCompleteRef.current = true;
-          const completeData = { sessionId, conversationId };
+          // Try to get interviewId from error response if available
+          let errorInterviewId = null;
+          if (saveError && typeof saveError === 'object' && 'response' in saveError) {
+            try {
+              const errorResponse = await (saveError as any).response?.json?.();
+              errorInterviewId = errorResponse?.interviewId || null;
+            } catch {
+              // Ignore JSON parse errors
+            }
+          }
+          const completeData = { 
+            sessionId, 
+            conversationId,
+            interviewId: errorInterviewId || null
+          };
           console.log('[FLIGHT_RECORDER] [TRANSITION] User click End - error path, calling onComplete with:', completeData);
           onComplete(completeData);
         }
@@ -1276,13 +1303,31 @@ export default function VoiceInterviewWebSocket({
         // Still try to save and complete even if endSession fails
         try {
           setStatusMessage("Saving interview...");
-          await saveInterview(conversationId, 'user');
+          const saveResponse = await saveInterview(conversationId, 'user');
           isInterviewCompleteRef.current = true;
-          onComplete({ sessionId, conversationId });
+          onComplete({ 
+            sessionId, 
+            conversationId,
+            interviewId: saveResponse?.interviewId || null
+          });
         } catch (saveError) {
           console.error('Error saving interview:', saveError);
           isInterviewCompleteRef.current = true;
-          onComplete({ sessionId, conversationId });
+          // Try to get interviewId from error response if available
+          let errorInterviewId = null;
+          if (saveError && typeof saveError === 'object' && 'response' in saveError) {
+            try {
+              const errorResponse = await (saveError as any).response?.json?.();
+              errorInterviewId = errorResponse?.interviewId || null;
+            } catch {
+              // Ignore JSON parse errors
+            }
+          }
+          onComplete({ 
+            sessionId, 
+            conversationId,
+            interviewId: errorInterviewId || null
+          });
         }
       }
     }

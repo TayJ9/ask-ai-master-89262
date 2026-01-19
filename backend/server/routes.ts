@@ -2151,10 +2151,13 @@ const tokenRateLimiter = rateLimit({
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - All validations passed');
 
       const clientEndedAt = new Date();
-
-      // Try to find existing interview by conversation_id first (if provided)
-      // conversation_id is optional - agent may hang up before it's available
+      const agentId = agent_id || getAgentId();
+      
+      // CRITICAL FIX: Always create interview record synchronously if it doesn't exist
+      // This ensures interviewId is always returned, preventing frontend hang
       let interviewId: string | null = null;
+      
+      // Step 1: Check if interview already exists by conversation_id (if provided)
       if (conversation_id) {
         try {
           const existingInterview = await (db.query as any).interviews?.findFirst({
@@ -2162,13 +2165,11 @@ const tokenRateLimiter = rateLimit({
           });
           if (existingInterview) {
             interviewId = existingInterview.id;
+            console.log(`[SAVE-INTERVIEW] Found existing interview ${interviewId} by conversation_id: ${conversation_id}`);
             
-            // Optimization: Skip update if interview already completed (idempotency check)
+            // Update interview status if not already completed
             const isAlreadyCompleted = existingInterview.status === 'completed' && existingInterview.endedAt;
-            if (isAlreadyCompleted) {
-              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already completed (status: ${existingInterview.status}, endedAt: ${existingInterview.endedAt}), skipping status update`);
-            } else {
-              // Update interview status
+            if (!isAlreadyCompleted) {
               await db.update(interviews)
                 .set({
                   status: 'completed',
@@ -2178,11 +2179,8 @@ const tokenRateLimiter = rateLimit({
               console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
             }
             
-            // Fetch and save transcript from ElevenLabs API (non-blocking)
-            // Only fetch if transcript is not already set (avoid overwriting webhook data)
+            // Fetch transcript asynchronously (non-blocking)
             if (!existingInterview.transcript && conversation_id) {
-              // Fire-and-forget: Start transcript fetch but don't await it
-              // This ensures the main response is not delayed
               fetchTranscriptFromElevenLabs(conversation_id)
                 .then(async (transcript) => {
                   if (transcript) {
@@ -2191,26 +2189,169 @@ const tokenRateLimiter = rateLimit({
                         .set({ transcript })
                         .where(eq(interviews.id, interviewId));
                       console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for interview ${interviewId}`);
+                      
+                      // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
+                      try {
+                        const { parseTranscript } = await import('./evaluation');
+                        const qaPairs = parseTranscript(transcript);
+                        if (qaPairs.length > 0) {
+                          console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
+                          await evaluationQueue.enqueue(interviewId, conversation_id);
+                          console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
+                        } else {
+                          console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+                        }
+                      } catch (evalError: any) {
+                        console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
+                        // Don't fail - evaluation can be triggered later via webhook
+                      }
                     } catch (updateError: any) {
-                      console.error(`[SAVE-INTERVIEW] Error updating transcript for interview ${interviewId}:`, updateError.message || updateError);
+                      console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
                     }
-                  } else {
-                    console.log(`[SAVE-INTERVIEW] Transcript not available yet for interview ${interviewId} - will be available via webhook or can be retried`);
                   }
                 })
                 .catch((transcriptError: any) => {
-                  // Don't fail the request if transcript fetch fails
-                  console.error(`[SAVE-INTERVIEW] Error fetching transcript for interview ${interviewId}:`, transcriptError.message || transcriptError);
-                  // Transcript may be available later via webhook
+                  console.error(`[SAVE-INTERVIEW] Error fetching transcript:`, transcriptError.message || transcriptError);
                 });
             } else if (existingInterview.transcript) {
-              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, skipping fetch`);
+              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, checking if evaluation needed`);
+              
+              // If transcript already exists, check if evaluation is needed
+              try {
+                const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
+                  where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
+                });
+                
+                // Only enqueue if no evaluation exists or it failed
+                if (!existingEvaluation || existingEvaluation.status === 'failed') {
+                  const { parseTranscript } = await import('./evaluation');
+                  const qaPairs = parseTranscript(existingInterview.transcript);
+                  if (qaPairs.length > 0) {
+                    console.log(`[SAVE-INTERVIEW] Existing transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
+                    await evaluationQueue.enqueue(interviewId, conversation_id || '');
+                    console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
+                  }
+                }
+              } catch (evalError: any) {
+                console.error(`[SAVE-INTERVIEW] Error checking/enqueuing evaluation:`, evalError.message || evalError);
+                // Don't fail - evaluation can be triggered later
+              }
             }
           }
         } catch (dbError: any) {
           console.error('[SAVE-INTERVIEW] Error finding interview by conversation_id:', dbError);
-          // Continue execution - don't fail if conversation_id lookup fails
+          // Continue to create new interview
         }
+      }
+      
+      // Step 2: If no interview found, CREATE ONE SYNCHRONOUSLY
+      if (!interviewId) {
+        try {
+          console.log('[SAVE-INTERVIEW] No existing interview found - creating new interview record synchronously');
+          
+          // Get resume text from session if available (optional)
+          let resumeText: string | null = null;
+          try {
+            const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+              where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
+            });
+            // Resume text might be stored elsewhere - for now we'll create without it
+            // It can be updated later via webhook or other means
+          } catch (resumeError) {
+            // Resume lookup is optional - continue without it
+            console.log('[SAVE-INTERVIEW] Resume text lookup skipped (optional)');
+          }
+          
+          // Create interview record with status 'pending'
+          const interviewData = insertInterviewSchema.parse({
+            userId: userId, // candidate_id is userId in schema
+            conversationId: conversation_id || null,
+            agentId: agentId,
+            transcript: null, // Will be populated by webhook or async fetch
+            durationSeconds: null,
+            startedAt: null, // Will be populated by webhook if available
+            endedAt: clientEndedAt,
+            status: 'pending', // Set to 'pending' initially as requested
+          });
+          
+          const [newInterview] = await db.insert(interviews).values(interviewData as any).returning();
+          interviewId = newInterview.id;
+          
+          console.log('[SAVE-INTERVIEW] Created new interview record synchronously:', {
+            interviewId,
+            userId,
+            conversationId: conversation_id || 'null',
+            agentId,
+            status: 'pending',
+            timestamp: new Date().toISOString()
+          });
+          
+          // If conversation_id is available, try to fetch transcript and enqueue evaluation
+          if (conversation_id) {
+            fetchTranscriptFromElevenLabs(conversation_id)
+              .then(async (transcript) => {
+                if (transcript) {
+                  try {
+                    await db.update(interviews)
+                      .set({ transcript })
+                      .where(eq(interviews.id, interviewId));
+                    console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for newly created interview ${interviewId}`);
+                    
+                    // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
+                    try {
+                      const { parseTranscript } = await import('./evaluation');
+                      const qaPairs = parseTranscript(transcript);
+                      if (qaPairs.length > 0) {
+                        console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for newly created interview ${interviewId}`);
+                        await evaluationQueue.enqueue(interviewId, conversation_id);
+                        console.log(`[SAVE-INTERVIEW] Evaluation enqueued for newly created interview ${interviewId}`);
+                      } else {
+                        console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+                      }
+                    } catch (evalError: any) {
+                      console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation for newly created interview:`, evalError.message || evalError);
+                      // Don't fail - evaluation can be triggered later via webhook
+                    }
+                  } catch (updateError: any) {
+                    console.error(`[SAVE-INTERVIEW] Error updating transcript for newly created interview:`, updateError.message || updateError);
+                  }
+                } else {
+                  console.log(`[SAVE-INTERVIEW] Transcript not available yet for newly created interview ${interviewId} - will be available via webhook`);
+                }
+              })
+              .catch((transcriptError: any) => {
+                console.error(`[SAVE-INTERVIEW] Error fetching transcript for newly created interview:`, transcriptError.message || transcriptError);
+                // Transcript may be available later via webhook
+              });
+          }
+        } catch (createError: any) {
+          // Handle conflict: if conversation_id already exists (race condition)
+          if (createError.code === '23505' || createError.message?.includes('duplicate') || createError.message?.includes('unique')) {
+            console.log('[SAVE-INTERVIEW] Conflict detected - interview may have been created concurrently, attempting to find it');
+            if (conversation_id) {
+              try {
+                const conflictInterview = await (db.query as any).interviews?.findFirst({
+                  where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
+                });
+                if (conflictInterview) {
+                  interviewId = conflictInterview.id;
+                  console.log(`[SAVE-INTERVIEW] Found interview ${interviewId} after conflict - returning existing ID`);
+                }
+              } catch (findError) {
+                console.error('[SAVE-INTERVIEW] Error finding interview after conflict:', findError);
+              }
+            }
+          } else {
+            console.error('[SAVE-INTERVIEW] Error creating interview:', createError);
+            throw createError; // Re-throw if it's not a conflict error
+          }
+        }
+      }
+      
+      // Ensure we have an interviewId at this point
+      if (!interviewId) {
+        console.error('[SAVE-INTERVIEW] CRITICAL: Failed to create or find interview - interviewId is still null');
+        throw new Error('Failed to create interview record');
       }
 
       // Find or create elevenlabs_interview_sessions record
@@ -2225,8 +2366,8 @@ const tokenRateLimiter = rateLimit({
           try {
             const updateData = {
               conversationId: conversation_id || existingSession.conversationId,
-              interviewId: interviewId || existingSession.interviewId,
-              status: interviewId ? 'completed' : 'ended_pending_webhook',
+              interviewId: interviewId, // Always set since we guarantee interviewId exists
+              status: 'completed', // Interview exists, so status is completed
               endedBy: ended_by || existingSession.endedBy,
               endedAt: clientEndedAt,
               clientEndedAt: clientEndedAt,
@@ -2260,8 +2401,8 @@ const tokenRateLimiter = rateLimit({
               agentId,
               clientSessionId: client_session_id,
               conversationId: conversation_id || null, // conversation_id is optional
-              interviewId: interviewId || null,
-              status: interviewId ? 'completed' : 'ended_pending_webhook',
+              interviewId: interviewId, // Always set since we guarantee interviewId exists
+              status: 'completed', // Interview exists, so status is completed
               endedBy: ended_by || null,
               endedAt: clientEndedAt,
               clientEndedAt: clientEndedAt,
@@ -2291,14 +2432,18 @@ const tokenRateLimiter = rateLimit({
         // Continue - don't fail the request
       }
 
-      // Always return 200 OK even if database operations had issues
-      // This allows frontend to navigate to results page
-      // The webhook will eventually sync the correct state
-      // Return interviewId if available for direct navigation
+      // CRITICAL: Always return interviewId - we guarantee it exists at this point
+      // This prevents frontend from hanging due to null interviewId
+      console.log('[SAVE-INTERVIEW] Returning response with interviewId:', {
+        interviewId,
+        sessionId: client_session_id,
+        timestamp: new Date().toISOString()
+      });
+      
       res.json({ 
         success: true,
-        interviewId: interviewId || null, // Return interviewId for direct lookup
-        sessionId: client_session_id, // Also return sessionId for fallback polling
+        interviewId: interviewId, // Always present - guaranteed by synchronous creation
+        sessionId: client_session_id, // Also return sessionId for reference
       });
     } catch (error: any) {
       console.error('[SAVE-INTERVIEW] Unexpected error processing client end notification:', error);

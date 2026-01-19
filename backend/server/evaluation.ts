@@ -195,7 +195,7 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
  * - Speaker labels (AI:, User:, Interviewer:, Candidate:)
  * - Plain text with line breaks
  */
-function parseTranscript(transcript: string): Array<{ question: string; answer: string }> {
+export function parseTranscript(transcript: string): Array<{ question: string; answer: string }> {
   const pairs: Array<{ question: string; answer: string }> = [];
   
   // Try to detect speaker labels
