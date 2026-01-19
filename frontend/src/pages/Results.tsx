@@ -291,14 +291,21 @@ export default function Results() {
     if (minTimeElapsed && dataReady) {
       // If we have tempData and timer is done, move it to results
       // This works even if evaluation is not complete yet
-      if (tempData && !results) {
-        console.log('[FLIGHT_RECORDER] [RESULTS] Moving tempData to results');
-        setResults(tempData);
-        resultsDataRef.current = tempData; // Persist in ref
-        // Clear tempData immediately to prevent duplicate processing
-        setTempData(null);
-        // Mark step 4 as completed when moving data
-        setCompletedSteps(prev => new Set([...prev, 4]));
+      if (tempData) {
+        // Always update results if tempData exists (even if results already exists)
+        // This ensures polling updates are reflected in the UI
+        if (!results || JSON.stringify(tempData) !== JSON.stringify(results)) {
+          console.log('[FLIGHT_RECORDER] [RESULTS] Moving tempData to results');
+          setResults(tempData);
+          resultsDataRef.current = tempData; // Persist in ref
+          // Clear tempData immediately to prevent duplicate processing
+          setTempData(null);
+          // Mark step 4 as completed when moving data
+          setCompletedSteps(prev => new Set([...prev, 4]));
+        } else {
+          // tempData same as results, just clear it
+          setTempData(null);
+        }
       } else if (results && isDataReady(results)) {
         // Results already ready, just mark step 4 as completed
         console.log('[FLIGHT_RECORDER] [RESULTS] Results already ready');
@@ -405,7 +412,9 @@ export default function Results() {
                     const hasCompleteFeedback = updatedResults.evaluation?.evaluation !== null;
                     
                     if (hasCompleteEvaluation && hasCompleteFeedback) {
+                      // Update both tempData and results to ensure UI updates
                       setTempData(updatedResults);
+                      setResults(updatedResults); // Update results directly so displayResults picks it up
                       resultsDataRef.current = updatedResults; // Persist immediately
                       setCompletedSteps(prev => new Set([...prev, 4]));
                       return;
@@ -416,7 +425,9 @@ export default function Results() {
                       return;
                     }
                     
+                    // Update both tempData and results to ensure UI updates
                     setTempData(updatedResults);
+                    setResults(updatedResults); // Update results directly so displayResults picks it up
                     resultsDataRef.current = updatedResults; // Persist immediately
                   } catch (err) {
                     console.error('Error polling for evaluation:', err);
@@ -557,8 +568,9 @@ export default function Results() {
                 const hasCompleteFeedback = updatedResults.evaluation?.evaluation !== null;
                 
                 if (hasCompleteEvaluation && hasCompleteFeedback) {
-                  // Store in tempData - useEffect will handle showing when timer is done
+                  // Update both tempData and results to ensure UI updates
                   setTempData(updatedResults);
+                  setResults(updatedResults); // Update results directly so displayResults picks it up
                   resultsDataRef.current = updatedResults; // Persist immediately
                   // Mark step 4 as completed
                   setCompletedSteps(prev => new Set([...prev, 4]));
@@ -570,8 +582,9 @@ export default function Results() {
                   return;
                 }
                 
-                // Update tempData with partial data
+                // Update both tempData and results to ensure UI updates
                 setTempData(updatedResults);
+                setResults(updatedResults); // Update results directly so displayResults picks it up
                 resultsDataRef.current = updatedResults; // Persist immediately
               } catch (err) {
                 console.error('Error polling for evaluation:', err);
@@ -710,6 +723,22 @@ export default function Results() {
   // Use ref as fallback for results data
   const displayResults = results || resultsDataRef.current;
   
+  // Add debug logging
+  console.log('[FLIGHT_RECORDER] [RESULTS] Render check:', {
+    hasDisplayResults: !!displayResults,
+    hasResults: !!results,
+    hasResultsDataRef: !!resultsDataRef.current,
+    showResults,
+    shouldShowResultsRef: shouldShowResultsRef.current,
+    interviewId: displayResults?.interview?.id,
+    hasTranscript: !!displayResults?.interview?.transcript,
+    transcriptLength: displayResults?.interview?.transcript?.length || 0,
+    hasEvaluation: !!displayResults?.evaluation,
+    evaluationStatus: displayResults?.evaluation?.status || 'null',
+    hasEvaluationJson: !!displayResults?.evaluation?.evaluation,
+    timestamp: new Date().toISOString()
+  });
+  
   // Safely handle partial records - evaluation may be null or incomplete
   const evaluation = displayResults?.evaluation;
   const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
@@ -749,13 +778,40 @@ export default function Results() {
             </div>
           </CardHeader>
           <CardContent>
+            {/* Show interview ID for debugging */}
+            <p className="text-gray-500 text-xs mb-2 font-mono">
+              Interview ID: {displayResults.interview.id}
+            </p>
+            
             {displayResults.interview.durationSeconds && (
               <p className="text-gray-600 text-sm mb-4">
                 Duration: {Math.floor(displayResults.interview.durationSeconds / 60)}m {displayResults.interview.durationSeconds % 60}s
               </p>
             )}
+            
+            {/* Show status message if no content yet */}
+            {!displayResults.interview.durationSeconds && !displayResults.interview.transcript && !evaluation && (
+              <p className="text-gray-600 text-sm mb-4">
+                Interview saved successfully. Processing your results...
+              </p>
+            )}
           </CardContent>
         </Card>
+
+        {/* Show processing message if no evaluation record exists yet */}
+        {!evaluation && (
+          <Card className="mb-6">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold mb-2">Processing your interview...</h3>
+                  <p className="text-gray-600 text-sm">Your interview has been saved. Evaluation is being prepared.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {evaluation && !hasCompleteFeedback && (
           <Card className="mb-6">
