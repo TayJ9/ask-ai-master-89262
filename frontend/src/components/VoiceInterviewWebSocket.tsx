@@ -100,6 +100,12 @@ export default function VoiceInterviewWebSocket({
   const micAudioContextRef = useRef<AudioContext | null>(null);
   const tokenCacheRef = useRef<string | null>(null);
   
+  // Latency monitoring refs
+  const lastUserSpeechEndTimeRef = useRef<number | null>(null);
+  const firstAudioChunkTimeRef = useRef<number | null>(null);
+  const lastInputVolumeRef = useRef<number>(0);
+  const userSpeechEndTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
   const { toast } = useToast();
 
   const generateTokenRequestId = () => {
@@ -412,6 +418,23 @@ export default function VoiceInterviewWebSocket({
       message.audio ||
       (message.data && message.data instanceof ArrayBuffer);
     
+    // Latency tracking: Record when first audio chunk arrives
+    if (isAudioMessage && !firstAudioChunkTimeRef.current) {
+      const audioStartTime = Date.now();
+      firstAudioChunkTimeRef.current = audioStartTime;
+      
+      // Calculate round trip latency if we have user speech end time
+      if (lastUserSpeechEndTimeRef.current) {
+        const roundTripLatency = audioStartTime - lastUserSpeechEndTimeRef.current;
+        console.log(`[Audio Latency] Round Trip: ${roundTripLatency} ms (User stopped speaking → AI audio started)`);
+        
+        // Reset for next measurement
+        lastUserSpeechEndTimeRef.current = null;
+      } else {
+        console.log('[Audio Latency] AI audio started (no user speech end time available)');
+      }
+    }
+    
     if (isAudioMessage && isAudioBufferingRef.current) {
       // Add to buffer
       audioChunkBufferRef.current.push(message);
@@ -456,6 +479,9 @@ export default function VoiceInterviewWebSocket({
       isAudioBufferingRef.current = true; // Reset for next session
       audioChunkBufferRef.current = [];
       audioBufferStartTimeRef.current = null;
+      // Reset latency tracking for next session
+      firstAudioChunkTimeRef.current = null;
+      lastUserSpeechEndTimeRef.current = null;
     }
     
     // Check for tool_call events (e.g., MarkInterviewComplete)
@@ -655,7 +681,7 @@ export default function VoiceInterviewWebSocket({
     }
   }, [conversationMode, hasStarted, conversation.status]);
 
-  // Poll volume levels for visualization
+  // Poll volume levels for visualization and latency tracking
   useEffect(() => {
     if (conversation.status === 'connected' && !volumeIntervalRef.current) {
       volumeIntervalRef.current = setInterval(() => {
@@ -663,6 +689,31 @@ export default function VoiceInterviewWebSocket({
         const output = conversation.getOutputVolume();
         setInputVolume(input);
         setOutputVolume(output);
+        
+        // Latency tracking: Detect when user stops speaking
+        const SPEECH_END_THRESHOLD = 0.03; // Same threshold as conversation mode detection
+        const SPEECH_END_DELAY_MS = 300; // Wait 300ms of silence before considering speech ended
+        
+        if (input > SPEECH_END_THRESHOLD) {
+          // User is speaking - clear any pending timeout
+          if (userSpeechEndTimeoutRef.current) {
+            clearTimeout(userSpeechEndTimeoutRef.current);
+            userSpeechEndTimeoutRef.current = null;
+          }
+          lastInputVolumeRef.current = input;
+        } else if (lastInputVolumeRef.current > SPEECH_END_THRESHOLD) {
+          // User was speaking but now stopped - set up delayed detection
+          if (!userSpeechEndTimeoutRef.current) {
+            userSpeechEndTimeoutRef.current = setTimeout(() => {
+              const speechEndTime = Date.now();
+              lastUserSpeechEndTimeRef.current = speechEndTime;
+              console.log('[Audio Latency] User stopped speaking at:', speechEndTime);
+              userSpeechEndTimeoutRef.current = null;
+            }, SPEECH_END_DELAY_MS);
+          }
+        }
+        
+        lastInputVolumeRef.current = input;
       }, 50); // 20fps for smooth visualization
     }
     
@@ -670,6 +721,10 @@ export default function VoiceInterviewWebSocket({
       if (volumeIntervalRef.current) {
         clearInterval(volumeIntervalRef.current);
         volumeIntervalRef.current = null;
+      }
+      if (userSpeechEndTimeoutRef.current) {
+        clearTimeout(userSpeechEndTimeoutRef.current);
+        userSpeechEndTimeoutRef.current = null;
       }
     };
   }, [conversation.status, conversation]);
@@ -855,11 +910,13 @@ export default function VoiceInterviewWebSocket({
       try {
         const micPromise = navigator.mediaDevices.getUserMedia({ 
           audio: {
-            sampleRate: 48000,  // Match Opus encoder expectations (ElevenLabs uses Opus)
-            channelCount: 1,
-            echoCancellation: true,     // Keep enabled for WebRTC
-            noiseSuppression: false,     // Disable - ElevenLabs handles this server-side
-            autoGainControl: false,     // Disable - prevents initial gating artifacts
+            echoCancellation: true,     // Keep enabled for speaker output
+            noiseSuppression: true,      // Enable for cleaner input
+            autoGainControl: true,       // Enable for consistent levels
+            channelCount: 1,             // Mono input
+            sampleRate: 48000,          // Studio quality (24kHz+ requirement met)
+            sampleSize: 16              // Explicit 16-bit depth for high fidelity
+            // NOTE: If audio sounds muffled/underwater, revert noiseSuppression and autoGainControl to false to disable browser processing.
           } 
         });
         
@@ -1058,11 +1115,11 @@ export default function VoiceInterviewWebSocket({
       const startOptions: any = {
         signedUrl: signedUrl, // Pass signedUrl - SDK handles WebRTC upgrade automatically
         dynamicVariables,
-        // Voice settings for consistent quality (prevents pops while maintaining naturalness)
+        // Voice settings optimized for expressiveness and naturalness
         voiceSettings: {
-          stability: 0.6,      // Balanced (0.5-0.75 range) - prevents pops while maintaining naturalness
-          similarityBoost: 0.75, // High similarity for consistent voice
-          style: 0.0,          // Neutral style
+          stability: 0.5,      // Lower for more expressiveness (prioritizes naturalness over consistency)
+          similarityBoost: 0.75, // Balanced similarity (prevents high-similarity artifacts)
+          style: 0.0,          // Neutral style for professional interviews
           useSpeakerBoost: true, // Enhance clarity
         },
       };
@@ -1272,6 +1329,15 @@ export default function VoiceInterviewWebSocket({
       audioChunkBufferRef.current = [];
       isAudioBufferingRef.current = true;
       audioBufferStartTimeRef.current = null;
+      
+      // Reset latency tracking state
+      firstAudioChunkTimeRef.current = null;
+      lastUserSpeechEndTimeRef.current = null;
+      lastInputVolumeRef.current = 0;
+      if (userSpeechEndTimeoutRef.current) {
+        clearTimeout(userSpeechEndTimeoutRef.current);
+        userSpeechEndTimeoutRef.current = null;
+      }
       
       // If interview completed successfully, skip any cleanup that might interfere with navigation
       // The navigation to /results should proceed without interference

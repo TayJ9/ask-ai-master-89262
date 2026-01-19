@@ -1263,6 +1263,11 @@ const tokenRateLimiter = rateLimit({
         apiKeyMasked: maskedApiKey,
         apiKeyLength: apiKey?.length || 0,
         timestamp: new Date().toISOString(),
+        audioQuality: {
+          expectedSampleRate: '48000 Hz',
+          expectedCodec: 'Opus (WebRTC)',
+          note: 'Frontend requests 48kHz sample rate with 16-bit depth. Agent dashboard should be configured for Opus codec and 48kHz sample rate for optimal quality and latency.'
+        }
       });
 
       // Use GET /v1/convai/conversation/get_signed_url - this is the standard entry point
