@@ -30,10 +30,48 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     const file = event.target.files?.[0];
     if (!file) return;
 
+    // Log file details before upload for debugging
+    console.log('Uploading file:', {
+      name: file.name,
+      size: file.size,
+      type: file.type,
+      lastModified: new Date(file.lastModified).toISOString()
+    });
+
+    // Client-side file type validation
     if (file.type !== "application/pdf") {
+      console.error('[ResumeUpload] Invalid file type:', file.type);
       toast({
         title: "Invalid file type",
         description: "Please upload a PDF file.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Client-side file size validation (10MB max, matching backend)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+      console.error('[ResumeUpload] File too large:', {
+        fileSize: file.size,
+        fileSizeMB: fileSizeMB,
+        maxSizeMB: 10
+      });
+      toast({
+        title: "File too large",
+        description: `File size (${fileSizeMB}MB) exceeds the 10MB limit. Please compress your PDF or use a smaller file.`,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Additional validation: check file extension as fallback
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      console.warn('[ResumeUpload] File extension mismatch:', file.name);
+      toast({
+        title: "Invalid file type",
+        description: "Please upload a PDF file (.pdf extension required).",
         variant: "destructive",
       });
       return;
@@ -75,6 +113,16 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     setUploadedFileName(file.name);
 
     try {
+      // Log FormData contents before sending (file details only, not file content)
+      console.log('[ResumeUpload] Preparing FormData:', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileType: file.type,
+        candidateName: candidateFirstName.trim(),
+        major: candidateMajor.trim(),
+        year: candidateYear.trim()
+      });
+
       const formData = new FormData();
       formData.append("resume", file);
       // Backend expects "name", send first name there for compatibility
@@ -82,7 +130,13 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       formData.append("major", candidateMajor.trim());
       formData.append("year", candidateYear.trim());
 
+      console.log('[ResumeUpload] Sending upload request to /api/upload-resume');
       const data = await apiPostFormData('/api/upload-resume', formData);
+      console.log('[ResumeUpload] Upload successful:', {
+        sessionId: data.sessionId,
+        hasResumeText: !!data.resumeText,
+        resumeTextLength: data.resumeText?.length || 0
+      });
       
       // Store sessionId and candidate info
       const candidateInfo = {
@@ -107,6 +161,15 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       // Call callback with resume text and candidate info
       onResumeUploaded(extractedResumeText, candidateInfo);
     } catch (error: any) {
+      // Enhanced error logging
+      console.error('[ResumeUpload] Upload failed:', {
+        error: error.message || error,
+        errorType: error instanceof ApiError ? 'ApiError' : typeof error,
+        statusCode: error instanceof ApiError ? error.statusCode : undefined,
+        fileName: file.name,
+        fileSize: file.size
+      });
+      
       const errorMessage = error instanceof ApiError 
         ? error.message 
         : (error.message || "Failed to process resume. Please try again.");
@@ -117,6 +180,11 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
         variant: "destructive",
       });
       setUploadedFileName(null);
+      
+      // Reset file input on error
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
     } finally {
       setIsUploading(false);
     }

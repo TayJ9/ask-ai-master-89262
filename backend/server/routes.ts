@@ -671,21 +671,70 @@ export function registerRoutes(app: Express) {
   // This endpoint accepts FormData with 'resume', 'name', 'major', 'year' fields
   // SECURITY: Requires authentication and validates file types/sizes
   app.post("/api/upload-resume", authenticateToken, upload.single('resume'), async (req: any, res) => {
+    // Log request received at the very start of route handler
+    console.log('[UPLOAD-RESUME] Received resume upload request:', {
+      timestamp: new Date().toISOString(),
+      userId: req.userId || 'unknown',
+      hasFile: !!req.file,
+      fileInfo: req.file ? {
+        fieldname: req.file.fieldname,
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        encoding: req.file.encoding
+      } : null,
+      formFields: {
+        name: req.body?.name || 'missing',
+        major: req.body?.major || 'missing',
+        year: req.body?.year || 'missing'
+      },
+      headers: {
+        'content-type': req.headers['content-type'],
+        'content-length': req.headers['content-length']
+      }
+    });
+
     try {
       // Validate file was uploaded
       if (!req.file) {
+        console.error('[UPLOAD-RESUME] No file provided in request');
+        console.error('[UPLOAD-RESUME] Request body keys:', Object.keys(req.body || {}));
+        console.error('[UPLOAD-RESUME] Multer error:', (req as any).multerError);
         return res.status(400).json({ error: 'No resume file provided' });
       }
 
       // Validate file size (additional check)
-      if (req.file.size > 10 * 1024 * 1024) {
-        return res.status(400).json({ error: 'File size exceeds 10MB limit' });
+      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
+      if (req.file.size > MAX_FILE_SIZE) {
+        const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
+        console.error('[UPLOAD-RESUME] File size exceeds limit:', {
+          fileSize: req.file.size,
+          fileSizeMB: fileSizeMB,
+          maxSizeMB: 10,
+          fileName: req.file.originalname
+        });
+        return res.status(400).json({ 
+          error: 'File size exceeds 10MB limit',
+          message: `File size (${fileSizeMB}MB) exceeds the 10MB limit. Please compress your PDF or use a smaller file.`
+        });
       }
 
       // Validate and sanitize form fields
       const { name, major, year } = req.body;
       
+      console.log('[UPLOAD-RESUME] Validating form fields:', {
+        name: name || 'missing',
+        major: major || 'missing',
+        year: year || 'missing',
+        allFieldsPresent: !!(name && major && year)
+      });
+      
       if (!name || !major || !year) {
+        console.error('[UPLOAD-RESUME] Missing required fields:', {
+          hasName: !!name,
+          hasMajor: !!major,
+          hasYear: !!year
+        });
         return res.status(400).json({ 
           error: 'Missing required fields',
           message: 'Name, major, and year are required' 
@@ -709,9 +758,19 @@ export function registerRoutes(app: Express) {
       try {
         const pdfBuffer = req.file.buffer;
         
+        console.log('[UPLOAD-RESUME] Parsing PDF:', {
+          bufferSize: pdfBuffer.length,
+          fileName: req.file.originalname
+        });
+        
         // Additional validation: Check PDF magic bytes
         const pdfMagicBytes = pdfBuffer.slice(0, 4).toString();
         if (pdfMagicBytes !== '%PDF') {
+          console.error('[UPLOAD-RESUME] Invalid PDF magic bytes:', {
+            magicBytes: pdfMagicBytes,
+            expected: '%PDF',
+            fileName: req.file.originalname
+          });
           return res.status(400).json({ 
             error: 'Invalid PDF file',
             message: 'File does not appear to be a valid PDF' 
@@ -720,6 +779,11 @@ export function registerRoutes(app: Express) {
 
         const pdfData = await pdfParse(pdfBuffer);
         resumeText = pdfData.text;
+        
+        console.log('[UPLOAD-RESUME] PDF parsed successfully:', {
+          textLength: resumeText.length,
+          pages: pdfData.numpages || 'unknown'
+        });
         
         // Limit extracted text length for security
         const maxTextLength = 50000; // 50k characters max
@@ -747,23 +811,43 @@ export function registerRoutes(app: Express) {
       // Persist resume content keyed by sessionId (interviewid)
       try {
         await storage.upsertResume(sessionId, resumeFulltext, resumeProfile);
+        console.log('[UPLOAD-RESUME] Resume persisted successfully:', {
+          sessionId,
+          resumeTextLength: resumeFulltext.length,
+          hasProfile: !!resumeProfile
+        });
       } catch (persistError) {
         console.error("[UPLOAD-RESUME] Failed to persist resume text/profile:", persistError);
         // Continue to return success so the user flow is not blocked; downstream tool calls will 404 if missing.
       }
 
       // Return response matching what frontend expects
+      console.log('[UPLOAD-RESUME] Upload completed successfully:', {
+        sessionId,
+        candidateName: sanitizedName,
+        resumeTextLength: resumeFulltext.length
+      });
+      
       res.json({
         sessionId,
         resumeText: resumeFulltext,
         candidateName: sanitizedName
       });
     } catch (error: any) {
-      // Log error server-side but don't expose details to client
-      console.error("Resume upload error:", error);
+      // Enhanced error logging
+      console.error("[UPLOAD-RESUME] Error processing resume upload:", {
+        error: error.message || error,
+        errorName: error.name,
+        errorCode: error.code,
+        errorStack: error.stack,
+        userId: req.userId || 'unknown',
+        fileName: req.file?.originalname || 'unknown',
+        timestamp: new Date().toISOString()
+      });
       
       // Handle multer errors specifically
       if (error && typeof error === 'object' && 'code' in error && error.code === 'LIMIT_FILE_SIZE') {
+        console.error('[UPLOAD-RESUME] Multer file size limit exceeded');
         return res.status(400).json({ 
           error: 'File too large',
           message: 'File size exceeds 10MB limit' 
@@ -773,6 +857,10 @@ export function registerRoutes(app: Express) {
       // Handle multer file filter errors
       if (error && typeof error === 'object' && 'message' in error && 
           typeof error.message === 'string' && error.message.includes('Only PDF')) {
+        console.error('[UPLOAD-RESUME] Multer file filter rejected file:', {
+          fileName: req.file?.originalname,
+          mimetype: req.file?.mimetype
+        });
         return res.status(400).json({ 
           error: 'Invalid file type',
           message: 'Only PDF files are allowed' 
