@@ -145,6 +145,7 @@ export default function Results() {
   const minTimeElapsedRef = useRef(false);
   const shouldPollRef = useRef<boolean>(!finalInterviewId && !!finalSessionId);
   const shouldShowResultsRef = useRef(false); // Track if results should be shown (persists across remounts)
+  const resultsDataRef = useRef<InterviewResults | null>(null); // Persist results data across remounts
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
   const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
 
@@ -293,6 +294,7 @@ export default function Results() {
       if (tempData && !results) {
         console.log('[FLIGHT_RECORDER] [RESULTS] Moving tempData to results');
         setResults(tempData);
+        resultsDataRef.current = tempData; // Persist in ref
         // Clear tempData immediately to prevent duplicate processing
         setTempData(null);
         // Mark step 4 as completed when moving data
@@ -300,6 +302,7 @@ export default function Results() {
       } else if (results && isDataReady(results)) {
         // Results already ready, just mark step 4 as completed
         console.log('[FLIGHT_RECORDER] [RESULTS] Results already ready');
+        resultsDataRef.current = results; // Persist in ref
         setCompletedSteps(prev => new Set([...prev, 4]));
       }
       
@@ -320,8 +323,13 @@ export default function Results() {
   
   // Initialize showResults from ref on mount (handles remounts)
   useEffect(() => {
-    if (shouldShowResultsRef.current && results && !showResults) {
+    if (shouldShowResultsRef.current && (results || resultsDataRef.current) && !showResults) {
       console.log('[FLIGHT_RECORDER] [RESULTS] Restoring showResults from ref after remount');
+      // Restore results from ref if state was reset
+      if (!results && resultsDataRef.current) {
+        console.log('[FLIGHT_RECORDER] [RESULTS] Restoring results data from ref');
+        setResults(resultsDataRef.current);
+      }
       setShowResults(true);
       setStatus('complete');
     }
@@ -370,6 +378,7 @@ export default function Results() {
               timestamp: new Date().toISOString()
             });
             setTempData(data);
+            resultsDataRef.current = data; // Persist immediately
             
             // Check if evaluation is complete
             const hasEvaluation = data.evaluation !== null;
@@ -397,6 +406,7 @@ export default function Results() {
                     
                     if (hasCompleteEvaluation && hasCompleteFeedback) {
                       setTempData(updatedResults);
+                      resultsDataRef.current = updatedResults; // Persist immediately
                       setCompletedSteps(prev => new Set([...prev, 4]));
                       return;
                     }
@@ -407,6 +417,7 @@ export default function Results() {
                     }
                     
                     setTempData(updatedResults);
+                    resultsDataRef.current = updatedResults; // Persist immediately
                   } catch (err) {
                     console.error('Error polling for evaluation:', err);
                   }
@@ -521,6 +532,7 @@ export default function Results() {
         
         // Always store in tempData first - useEffect will handle moving to results when timer is done
         setTempData(resultsData);
+        resultsDataRef.current = resultsData; // Persist immediately
         
         // Mark step 4 as completed when data arrives (even if not complete yet)
         if (isComplete) {
@@ -547,6 +559,7 @@ export default function Results() {
                 if (hasCompleteEvaluation && hasCompleteFeedback) {
                   // Store in tempData - useEffect will handle showing when timer is done
                   setTempData(updatedResults);
+                  resultsDataRef.current = updatedResults; // Persist immediately
                   // Mark step 4 as completed
                   setCompletedSteps(prev => new Set([...prev, 4]));
                   return;
@@ -559,6 +572,7 @@ export default function Results() {
                 
                 // Update tempData with partial data
                 setTempData(updatedResults);
+                resultsDataRef.current = updatedResults; // Persist immediately
               } catch (err) {
                 console.error('Error polling for evaluation:', err);
               }
@@ -693,8 +707,11 @@ export default function Results() {
     );
   }
 
+  // Use ref as fallback for results data
+  const displayResults = results || resultsDataRef.current;
+  
   // Safely handle partial records - evaluation may be null or incomplete
-  const evaluation = results?.evaluation;
+  const evaluation = displayResults?.evaluation;
   const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
   const overallScore = hasCompleteFeedback 
     ? (evaluation?.overallScore || evaluation?.evaluation?.overall_score || null)
@@ -714,7 +731,7 @@ export default function Results() {
       </div>
       
       {/* Results Screen - fades in when showResults is true */}
-      {results && (
+      {displayResults && (
         <div className={`relative transition-opacity duration-500 py-8 px-4 ${
           shouldShow ? 'opacity-100' : 'opacity-0 pointer-events-none'
         }`}>
@@ -732,9 +749,9 @@ export default function Results() {
             </div>
           </CardHeader>
           <CardContent>
-            {results.interview.durationSeconds && (
+            {displayResults.interview.durationSeconds && (
               <p className="text-gray-600 text-sm mb-4">
-                Duration: {Math.floor(results.interview.durationSeconds / 60)}m {results.interview.durationSeconds % 60}s
+                Duration: {Math.floor(displayResults.interview.durationSeconds / 60)}m {displayResults.interview.durationSeconds % 60}s
               </p>
             )}
           </CardContent>
@@ -829,14 +846,14 @@ export default function Results() {
           </Card>
         )}
 
-        {results.interview.transcript && (
+        {displayResults.interview.transcript && (
           <Card>
             <CardHeader>
               <CardTitle>Transcript</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="whitespace-pre-wrap text-sm text-gray-700">
-                {results.interview.transcript}
+                {displayResults.interview.transcript}
               </div>
             </CardContent>
           </Card>
