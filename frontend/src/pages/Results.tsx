@@ -861,7 +861,7 @@ export default function Results() {
             {/* Show interview ID for debugging */}
             {effectiveDisplayResults?.interview?.id && (
               <p className="text-gray-500 text-xs mb-2 font-mono">
-                Interview ID: {effectiveDisplayResults.interview.id}
+                Interview ID: {effectiveDisplayResults?.interview?.id}
               </p>
             )}
             
@@ -879,12 +879,12 @@ export default function Results() {
             
             {effectiveDisplayResults?.interview?.durationSeconds && (
               <p className="text-gray-600 text-sm mb-4">
-                Duration: {Math.floor(effectiveDisplayResults.interview.durationSeconds / 60)}m {effectiveDisplayResults.interview.durationSeconds % 60}s
+                Duration: {Math.floor((effectiveDisplayResults?.interview?.durationSeconds || 0) / 60)}m {(effectiveDisplayResults?.interview?.durationSeconds || 0) % 60}s
               </p>
             )}
             
             {/* Show status message if no content yet */}
-            {effectiveDisplayResults && !effectiveDisplayResults.interview.durationSeconds && !effectiveDisplayResults.interview.transcript && !evaluation && (
+            {effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && !evaluation && (
               <p className="text-gray-600 text-sm mb-4">
                 Interview saved successfully. Processing your results...
               </p>
@@ -1003,7 +1003,7 @@ export default function Results() {
             </CardHeader>
             <CardContent>
               <div className="whitespace-pre-wrap text-sm text-gray-700">
-                {effectiveDisplayResults.interview.transcript}
+                {effectiveDisplayResults?.interview?.transcript}
               </div>
             </CardContent>
           </Card>
