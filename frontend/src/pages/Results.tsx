@@ -948,9 +948,9 @@ export default function Results() {
             </CardHeader>
             <CardContent>
               {/* Overall Strengths and Improvements */}
-              {(evaluation.evaluation.overall_strengths?.length || evaluation.evaluation.overall_improvements?.length) && (
+              {(evaluation?.evaluation?.overall_strengths?.length || evaluation?.evaluation?.overall_improvements?.length) && (
                 <div className="mb-6 space-y-4">
-                  {evaluation.evaluation.overall_strengths && evaluation.evaluation.overall_strengths.length > 0 && (
+                  {evaluation?.evaluation?.overall_strengths && evaluation.evaluation.overall_strengths.length > 0 && (
                     <div>
                       <h4 className="text-sm font-semibold text-green-700 mb-2">Overall Strengths:</h4>
                       <ul className="list-disc list-inside text-sm text-gray-700">
@@ -960,7 +960,7 @@ export default function Results() {
                       </ul>
                     </div>
                   )}
-                  {evaluation.evaluation.overall_improvements && evaluation.evaluation.overall_improvements.length > 0 && (
+                  {evaluation?.evaluation?.overall_improvements && evaluation.evaluation.overall_improvements.length > 0 && (
                     <div>
                       <h4 className="text-sm font-semibold text-orange-700 mb-2">Overall Areas for Improvement:</h4>
                       <ul className="list-disc list-inside text-sm text-gray-700">
@@ -975,7 +975,7 @@ export default function Results() {
 
               {/* Per-Question Evaluation */}
               <div className="space-y-6">
-                {evaluation.evaluation.questions.map((qa, index) => (
+                {evaluation?.evaluation?.questions?.map((qa, index) => (
                   <div key={index} className="border-b pb-4 last:border-b-0">
                     <h3 className="font-semibold mb-2">Question {index + 1}</h3>
                     <p className="text-gray-700 mb-2">{qa.question}</p>
@@ -983,7 +983,7 @@ export default function Results() {
                     <div className="flex items-center gap-4 mb-3">
                       <span className="text-sm font-medium">Score: {qa.score}/100</span>
                     </div>
-                    {qa.strengths.length > 0 && (
+                    {qa.strengths?.length > 0 && (
                       <div className="mb-2">
                         <h4 className="text-sm font-semibold text-green-700 mb-1">Strengths:</h4>
                         <ul className="list-disc list-inside text-sm text-gray-700">
@@ -993,7 +993,7 @@ export default function Results() {
                         </ul>
                       </div>
                     )}
-                    {qa.improvements.length > 0 && (
+                    {qa.improvements?.length > 0 && (
                       <div className="mb-2">
                         <h4 className="text-sm font-semibold text-orange-700 mb-1">Areas for Improvement:</h4>
                         <ul className="list-disc list-inside text-sm text-gray-700">

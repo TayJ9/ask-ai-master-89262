@@ -2054,7 +2054,7 @@ const tokenRateLimiter = rateLimit({
         evaluation: evaluation ? {
           status: evaluation.status,
           overallScore: evaluation.overallScore,
-          evaluation: evaluation.evaluationJson,
+          evaluation: evaluation.evaluationJson || null, // Explicitly set to null if falsy
           error: evaluation.error,
           createdAt: evaluation.createdAt,
           updatedAt: evaluation.updatedAt,
