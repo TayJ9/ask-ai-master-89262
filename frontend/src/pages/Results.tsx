@@ -858,13 +858,16 @@ export default function Results() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Show interview ID for debugging */}
-            {effectiveDisplayResults?.interview?.id && (
-              <p className="text-gray-500 text-xs mb-2 font-mono">
-                Interview ID: {effectiveDisplayResults?.interview?.id}
-              </p>
-            )}
+            {/* Always show interview ID if available */}
+            {effectiveDisplayResults?.interview?.id ? (
+              <div className="mb-4">
+                <p className="text-gray-500 text-xs mb-2 font-mono">
+                  Interview ID: {effectiveDisplayResults.interview.id}
+                </p>
+              </div>
+            ) : null}
             
+            {/* Show loading state if no data yet */}
             {!effectiveDisplayResults && finalInterviewId && (
               <div className="text-center py-8">
                 <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
@@ -877,17 +880,34 @@ export default function Results() {
               </div>
             )}
             
-            {effectiveDisplayResults?.interview?.durationSeconds && (
+            {/* Show duration if available */}
+            {effectiveDisplayResults?.interview?.durationSeconds ? (
               <p className="text-gray-600 text-sm mb-4">
-                Duration: {Math.floor((effectiveDisplayResults?.interview?.durationSeconds || 0) / 60)}m {(effectiveDisplayResults?.interview?.durationSeconds || 0) % 60}s
+                Duration: {Math.floor((effectiveDisplayResults.interview.durationSeconds || 0) / 60)}m {(effectiveDisplayResults.interview.durationSeconds || 0) % 60}s
               </p>
-            )}
+            ) : null}
             
-            {/* Show status message if no content yet */}
-            {effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && !evaluation && (
-              <p className="text-gray-600 text-sm mb-4">
-                Interview saved successfully. Processing your results...
-              </p>
+            {/* Always show status message when we have data but no transcript/duration/evaluation */}
+            {effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && !evaluation ? (
+              <div className="text-center py-4">
+                <p className="text-gray-600 text-sm mb-2">
+                  Interview saved successfully. Processing your results...
+                </p>
+                {effectiveDisplayResults?.interview?.id && (
+                  <p className="text-gray-500 text-xs font-mono">
+                    Interview ID: {effectiveDisplayResults.interview.id}
+                  </p>
+                )}
+              </div>
+            ) : null}
+            
+            {/* Fallback: If we have effectiveDisplayResults but none of the above matched, show something */}
+            {effectiveDisplayResults && !effectiveDisplayResults?.interview?.durationSeconds && !effectiveDisplayResults?.interview?.transcript && evaluation === null && (
+              <div className="text-center py-4">
+                <p className="text-gray-600 text-sm">
+                  Your interview has been saved. Results are being processed...
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
