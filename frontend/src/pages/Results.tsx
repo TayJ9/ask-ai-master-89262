@@ -392,27 +392,35 @@ export default function Results() {
             // Also set tempData for the useEffect to process
             setTempData(data);
             
-            // If minTimeElapsed is already true, move to results immediately
-            if (minTimeElapsedRef.current) {
-              console.log('[FLIGHT_RECORDER] [RESULTS] Min time already elapsed, moving to results immediately');
-              setResults(data);
-              shouldShowResultsRef.current = true;
-              setShowResults(true);
-              setStatus('complete');
-            }
-            
             // Check if evaluation is complete
             const hasEvaluation = data.evaluation !== null;
             const hasFeedback = data.evaluation?.evaluation !== null;
             const evalStatus = data.evaluation?.status;
             const isComplete = hasEvaluation && hasFeedback && evalStatus === 'complete';
             
+            // If minTimeElapsed is already true, move to results immediately
+            // This ensures data is shown even if evaluation is pending
+            if (minTimeElapsedRef.current) {
+              console.log('[FLIGHT_RECORDER] [RESULTS] Min time already elapsed, moving to results immediately');
+              setResults(data);
+              shouldShowResultsRef.current = true;
+              setShowResults(true);
+              // Set status based on evaluation state - show data even if evaluation is pending
+              if (isComplete) {
+                setStatus('complete');
+              } else {
+                setStatus('evaluating'); // Show data but indicate evaluation is pending
+              }
+            }
+            
             if (isComplete) {
-              setStatus('evaluating');
               setCompletedSteps(prev => new Set([...prev, 4]));
             } else if (!hasEvaluation || !hasFeedback || evalStatus === 'pending') {
               // Poll for evaluation completion
-              setStatus('evaluating');
+              // Don't override status if we already set it above
+              if (!minTimeElapsedRef.current) {
+                setStatus('evaluating');
+              }
               let evalPollCount = 0;
               
               const pollForEvaluation = async () => {
@@ -448,8 +456,19 @@ export default function Results() {
                   }
                 }
                 
-                setError('Evaluation is taking longer than expected. Please refresh in a moment.');
-                setStatus('error');
+                // Timeout reached - but we have interview data, so don't show error
+                // Just stop polling and let the user see the interview data
+                console.log('[FLIGHT_RECORDER] [RESULTS] Evaluation polling timeout - showing interview data without evaluation');
+                // Ensure we have the latest data displayed
+                if (results || resultsDataRef.current) {
+                  setStatus('complete');
+                  shouldShowResultsRef.current = true;
+                  setShowResults(true);
+                } else {
+                  // Only show error if we truly don't have any data
+                  setError('Evaluation is taking longer than expected. Please refresh in a moment.');
+                  setStatus('error');
+                }
               };
               
               pollForEvaluation();
@@ -617,9 +636,19 @@ export default function Results() {
               }
             }
             
-            // Timeout after 30 seconds (10 polls * 3s)
-            setError('Evaluation is taking longer than expected. Please refresh in a moment.');
-            setStatus('error');
+            // Timeout reached - but we have interview data, so don't show error
+            // Just stop polling and let the user see the interview data
+            console.log('[FLIGHT_RECORDER] [RESULTS] Evaluation polling timeout (polling path) - showing interview data without evaluation');
+            // Ensure we have the latest data displayed
+            if (results || resultsDataRef.current) {
+              setStatus('complete');
+              shouldShowResultsRef.current = true;
+              setShowResults(true);
+            } else {
+              // Only show error if we truly don't have any data
+              setError('Evaluation is taking longer than expected. Please refresh in a moment.');
+              setStatus('error');
+            }
           };
           
           pollForEvaluation();
@@ -781,6 +810,21 @@ export default function Results() {
   // This provides an extra safety layer for edge cases
   const effectiveDisplayResults = displayResults || resultsDataRef.current;
   
+  // Debug logging for render conditions
+  console.log('[FLIGHT_RECORDER] [RESULTS] Render conditions:', {
+    shouldShow,
+    showResults,
+    shouldShowResultsRef: shouldShowResultsRef.current,
+    hasEffectiveDisplayResults: !!effectiveDisplayResults,
+    hasDisplayResults: !!displayResults,
+    hasResults: !!results,
+    hasResultsDataRef: !!resultsDataRef.current,
+    effectiveDisplayResultsInterviewId: effectiveDisplayResults?.interview?.id,
+    willRenderLoading: !shouldShow,
+    willRenderResults: !!(effectiveDisplayResults && shouldShow),
+    timestamp: new Date().toISOString()
+  });
+  
   // Safely handle partial records - evaluation may be null or incomplete
   const evaluation = effectiveDisplayResults?.evaluation;
   const hasCompleteFeedback = evaluation?.evaluation !== null && evaluation?.evaluation !== undefined;
@@ -797,8 +841,8 @@ export default function Results() {
         </div>
       )}
       
-      {/* Results Screen - only render when we have data and should show */}
-      {effectiveDisplayResults && shouldShow && (
+      {/* Results Screen - render when we have data and should show, OR when we should show but data is loading */}
+      {(effectiveDisplayResults && shouldShow) || (shouldShow && finalInterviewId && !effectiveDisplayResults) ? (
         <div className="relative z-20 transition-opacity duration-500 py-8 px-4 opacity-100">
       <div className="max-w-4xl mx-auto">
         <Card className="mb-6">
@@ -815,18 +859,32 @@ export default function Results() {
           </CardHeader>
           <CardContent>
             {/* Show interview ID for debugging */}
-            <p className="text-gray-500 text-xs mb-2 font-mono">
-              Interview ID: {effectiveDisplayResults.interview.id}
-            </p>
+            {effectiveDisplayResults?.interview?.id && (
+              <p className="text-gray-500 text-xs mb-2 font-mono">
+                Interview ID: {effectiveDisplayResults.interview.id}
+              </p>
+            )}
             
-            {effectiveDisplayResults.interview.durationSeconds && (
+            {!effectiveDisplayResults && finalInterviewId && (
+              <div className="text-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600 mx-auto mb-4" />
+                <p className="text-gray-600 text-sm">
+                  Loading interview results...
+                </p>
+                <p className="text-gray-500 text-xs mt-2 font-mono">
+                  Interview ID: {finalInterviewId}
+                </p>
+              </div>
+            )}
+            
+            {effectiveDisplayResults?.interview?.durationSeconds && (
               <p className="text-gray-600 text-sm mb-4">
                 Duration: {Math.floor(effectiveDisplayResults.interview.durationSeconds / 60)}m {effectiveDisplayResults.interview.durationSeconds % 60}s
               </p>
             )}
             
             {/* Show status message if no content yet */}
-            {!effectiveDisplayResults.interview.durationSeconds && !effectiveDisplayResults.interview.transcript && !evaluation && (
+            {effectiveDisplayResults && !effectiveDisplayResults.interview.durationSeconds && !effectiveDisplayResults.interview.transcript && !evaluation && (
               <p className="text-gray-600 text-sm mb-4">
                 Interview saved successfully. Processing your results...
               </p>
@@ -835,7 +893,7 @@ export default function Results() {
         </Card>
 
         {/* Show processing message if no evaluation record exists yet */}
-        {!evaluation && (
+        {effectiveDisplayResults && !evaluation && (
           <Card className="mb-6">
             <CardContent className="pt-6">
               <div className="flex flex-col items-center gap-4">
@@ -849,7 +907,7 @@ export default function Results() {
           </Card>
         )}
 
-        {evaluation && !hasCompleteFeedback && (
+        {effectiveDisplayResults && evaluation && !hasCompleteFeedback && (
           <Card className="mb-6">
             <CardContent className="pt-6">
               <div className="flex flex-col items-center gap-4">
@@ -863,7 +921,7 @@ export default function Results() {
           </Card>
         )}
 
-        {hasCompleteFeedback && (
+        {effectiveDisplayResults && hasCompleteFeedback && (
           <Card className="mb-6">
             <CardHeader>
               <CardTitle>Evaluation</CardTitle>
@@ -938,7 +996,7 @@ export default function Results() {
           </Card>
         )}
 
-        {effectiveDisplayResults.interview.transcript && (
+        {effectiveDisplayResults?.interview?.transcript && (
           <Card>
             <CardHeader>
               <CardTitle>Transcript</CardTitle>
