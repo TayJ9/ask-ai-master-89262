@@ -147,7 +147,8 @@ export default function Results() {
   const shouldShowResultsRef = useRef(false); // Track if results should be shown (persists across remounts)
   const resultsDataRef = useRef<InterviewResults | null>(null); // Persist results data across remounts
   const MAX_POLLS = 60; // 60 seconds max (1s intervals)
-  const MAX_EVAL_POLLS = 10; // 10 polls = 30 seconds total (3s intervals)
+  const MAX_EVAL_POLLS = 20; // 20 polls = 60 seconds total (3s intervals) - increased for slower evaluations
+  const EVAL_POLL_INTERVAL = 3000; // 3 seconds between polls
 
   // Poll for interviewId by sessionId
   // CRITICAL: Use finalSessionId (with fallback to window.location) to ensure we get the correct sessionId
@@ -426,7 +427,7 @@ export default function Results() {
               const pollForEvaluation = async () => {
                 while (evalPollCount < MAX_EVAL_POLLS) {
                   evalPollCount++;
-                  await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s
+                  await new Promise(resolve => setTimeout(resolve, EVAL_POLL_INTERVAL));
                   
                   try {
                     const updatedResults = await fetchResults(finalInterviewId);
@@ -442,8 +443,13 @@ export default function Results() {
                       return;
                     }
                     if (updatedResults.evaluation?.status === 'failed') {
-                      setError('Evaluation failed. Please contact support.');
-                      setStatus('error');
+                      // Show interview data even if evaluation failed
+                      setTempData(updatedResults);
+                      setResults(updatedResults);
+                      resultsDataRef.current = updatedResults;
+                      setStatus('complete'); // Show results with error message
+                      shouldShowResultsRef.current = true;
+                      setShowResults(true);
                       return;
                     }
                     
@@ -464,6 +470,7 @@ export default function Results() {
                   setStatus('complete');
                   shouldShowResultsRef.current = true;
                   setShowResults(true);
+                  // Note: Evaluation may still be processing - user will see "Processing..." card
                 } else {
                   // Only show error if we truly don't have any data
                   setError('Evaluation is taking longer than expected. Please refresh in a moment.');
@@ -530,16 +537,16 @@ export default function Results() {
     }
     
     // Start polling for interviewId
-    const activeSessionId = finalSessionId || sessionId;
-    if (!activeSessionId) {
+    // Use finalSessionId directly (already extracted from URL params)
+    if (!finalSessionId) {
       console.error('[FLIGHT_RECORDER] [RESULTS] ERROR: No sessionId available from URL params or window.location');
       setError('Session ID is required');
       setStatus('error');
       return;
     }
     
-    // Use the active sessionId for all operations
-    const effectiveSessionId = activeSessionId;
+    // Use the finalSessionId for all operations
+    const effectiveSessionId = finalSessionId;
 
     let interviewId: string | null = null;
     let evalPollCount = 0;
@@ -603,7 +610,7 @@ export default function Results() {
           const pollForEvaluation = async () => {
             while (evalPollCount < MAX_EVAL_POLLS) {
               evalPollCount++;
-              await new Promise(resolve => setTimeout(resolve, 3000)); // Wait 3s
+              await new Promise(resolve => setTimeout(resolve, EVAL_POLL_INTERVAL));
               
               try {
                 const updatedResults = await fetchResults(interviewId!);
@@ -622,8 +629,13 @@ export default function Results() {
                   return;
                 }
                 if (updatedResults.evaluation?.status === 'failed') {
-                  setError('Evaluation failed. Please contact support.');
-                  setStatus('error');
+                  // Show interview data even if evaluation failed
+                  setTempData(updatedResults);
+                  setResults(updatedResults);
+                  resultsDataRef.current = updatedResults;
+                  setStatus('complete'); // Show results with error message
+                  shouldShowResultsRef.current = true;
+                  setShowResults(true);
                   return;
                 }
                 
@@ -644,6 +656,7 @@ export default function Results() {
               setStatus('complete');
               shouldShowResultsRef.current = true;
               setShowResults(true);
+              // Note: Evaluation may still be processing - user will see "Processing..." card
             } else {
               // Only show error if we truly don't have any data
               setError('Evaluation is taking longer than expected. Please refresh in a moment.');
@@ -841,8 +854,8 @@ export default function Results() {
         </div>
       )}
       
-      {/* Results Screen - render when we have data and should show, OR when we should show but data is loading */}
-      {(effectiveDisplayResults && shouldShow) || (shouldShow && finalInterviewId && !effectiveDisplayResults) ? (
+      {/* Results Screen - render when we have data and should show */}
+      {effectiveDisplayResults && shouldShow ? (
         <div className="relative z-20 transition-opacity duration-500 py-8 px-4 opacity-100">
       <div className="max-w-4xl mx-auto">
         <Card className="mb-6">
@@ -965,7 +978,45 @@ export default function Results() {
           </Card>
         )}
 
-        {effectiveDisplayResults && evaluation && !hasCompleteFeedback && (
+        {effectiveDisplayResults && evaluation && evaluation.status === 'failed' && (
+          <Card className="mb-6 border-orange-200 bg-orange-50">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center gap-4">
+                <AlertCircle className="h-8 w-8 text-orange-600" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold mb-2 text-orange-800">Evaluation Unavailable</h3>
+                  <p className="text-gray-700 text-sm mb-2">
+                    We encountered an issue generating your feedback. Your interview transcript is available below.
+                  </p>
+                  {evaluation.error && (
+                    <p className="text-gray-600 text-xs font-mono bg-white p-2 rounded border border-orange-200">
+                      {evaluation.error}
+                    </p>
+                  )}
+                  <p className="text-gray-600 text-xs mt-2">
+                    Please contact support if you need assistance.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {effectiveDisplayResults && evaluation && evaluation.status === 'pending' && !hasCompleteFeedback && (
+          <Card className="mb-6">
+            <CardContent className="pt-6">
+              <div className="flex flex-col items-center gap-4">
+                <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold mb-2">Processing your interview...</h3>
+                  <p className="text-gray-600 text-sm">Feedback and scores are being generated. This may take a few moments.</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {effectiveDisplayResults && evaluation && evaluation.status !== 'failed' && evaluation.status !== 'pending' && !hasCompleteFeedback && (
           <Card className="mb-6">
             <CardContent className="pt-6">
               <div className="flex flex-col items-center gap-4">

@@ -184,67 +184,119 @@ export default function VoiceInterviewWebSocket({
       ...(agentId ? { agent_id: agentId } : {}),
     };
 
-    try {
-      console.log('[FLIGHT_RECORDER] [INTERVIEW] Preparing to save interview - payload:', {
-        client_session_id: payload.client_session_id,
-        conversation_id: payload.conversation_id || 'null/undefined',
-        ended_by: payload.ended_by,
-        agent_id: payload.agent_id,
-        timestamp: new Date().toISOString()
-      });
-      console.log('[FLIGHT_RECORDER] [INTERVIEW] Waiting for saveInterview() to complete...');
-      const response = await fetch(
-        getApiUrl(`/api/save-interview`),
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-          },
-          body: JSON.stringify(payload),
+    // Retry configuration
+    const MAX_RETRIES = 3;
+    const RETRY_DELAYS = [1000, 2000, 4000]; // Exponential backoff: 1s, 2s, 4s
+    
+    let lastError: any = null;
+    
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        if (attempt > 0) {
+          console.log(`[FLIGHT_RECORDER] [INTERVIEW] Retry attempt ${attempt}/${MAX_RETRIES} for save-interview`);
+          await new Promise(resolve => setTimeout(resolve, RETRY_DELAYS[attempt - 1]));
         }
-      );
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ error: response.statusText }));
-        console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED:', {
-          status: response.status,
-          statusText: response.statusText,
-          error: errorData.error || response.statusText,
+        
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Preparing to save interview - payload:', {
+          client_session_id: payload.client_session_id,
+          conversation_id: payload.conversation_id || 'null/undefined',
+          ended_by: payload.ended_by,
+          agent_id: payload.agent_id,
+          attempt: attempt + 1,
           timestamp: new Date().toISOString()
         });
-        throw new Error(errorData.error || `Failed to save interview: ${response.statusText}`);
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Waiting for saveInterview() to complete...');
+        
+        const response = await fetch(
+          getApiUrl(`/api/save-interview`),
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+            },
+            body: JSON.stringify(payload),
+          }
+        );
+        
+        if (!response.ok) {
+          const errorData = await response.json().catch(() => ({ error: response.statusText }));
+          const error = new Error(errorData.error || `Failed to save interview: ${response.statusText}`);
+          
+          // Don't retry on 4xx errors (client errors) except 429 (rate limit)
+          if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED (client error, no retry):', {
+              status: response.status,
+              statusText: response.statusText,
+              error: errorData.error || response.statusText,
+              timestamp: new Date().toISOString()
+            });
+            throw error;
+          }
+          
+          // Retry on 5xx errors or 429 (rate limit)
+          console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED (will retry):', {
+            status: response.status,
+            statusText: response.statusText,
+            error: errorData.error || response.statusText,
+            attempt: attempt + 1,
+            timestamp: new Date().toISOString()
+          });
+          lastError = error;
+          continue; // Retry
+        }
+        
+        const responseData = await response.json().catch(() => ({}));
+        console.log('[FLIGHT_RECORDER] [INTERVIEW] Save complete - response:', {
+          status: response.status,
+          responseData,
+          interviewId: responseData.interviewId || 'not provided',
+          attempt: attempt + 1,
+          timestamp: new Date().toISOString()
+        });
+        
+        // Mark as saved only after successful save (status 200 and success: true)
+        if (response.ok && responseData.success) {
+          hasSavedInterviewRef.current = true;
+        }
+        
+        // Return the response data including interviewId for direct navigation
+        return responseData;
+      } catch (error: any) {
+        lastError = error;
+        
+        // If this is the last attempt, don't continue
+        if (attempt === MAX_RETRIES) {
+          console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED after all retries:', {
+            error: error.message || error,
+            attempts: attempt + 1,
+            timestamp: new Date().toISOString()
+          });
+          break;
+        }
+        
+        // Log retry attempt
+        console.warn(`[FLIGHT_RECORDER] [INTERVIEW] Save interview failed, will retry (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message || error);
       }
-      
-      const responseData = await response.json().catch(() => ({}));
-      console.log('[FLIGHT_RECORDER] [INTERVIEW] Save complete - response:', {
-        status: response.status,
-        responseData,
-        interviewId: responseData.interviewId || 'not provided',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Mark as saved only after successful save (status 200 and success: true)
-      if (response.ok && responseData.success) {
-        hasSavedInterviewRef.current = true;
-      }
-      
-      // Return the response data including interviewId for direct navigation
-      return responseData;
-    } catch (error: any) {
-      console.error('Error saving interview end state:', error);
-      toast({
-        title: "Warning",
-        description: "Interview end state may not have been saved. Results may be delayed.",
-        variant: "destructive",
-      });
-      // Reset the promise ref on error so we can retry
-      saveInterviewPromiseRef.current = null;
-      // Return null on error - frontend will use fallback polling
-      return null;
+    }
+    
+    // All retries exhausted
+    console.error('Error saving interview end state after retries:', lastError);
+    toast({
+      title: "Warning",
+      description: "Interview end state may not have been saved. Results may be delayed.",
+      variant: "destructive",
+    });
+    // Reset the promise ref on error so we can retry
+    saveInterviewPromiseRef.current = null;
+    // Return null on error - frontend will use fallback polling
+    return null;
     } finally {
       // Clear the promise ref after completion (success or failure)
-      saveInterviewPromiseRef.current = null;
+      // Note: This runs even if we return early from the try block
+      if (saveInterviewPromiseRef.current === savePromise) {
+        saveInterviewPromiseRef.current = null;
+      }
     }
     })();
     

@@ -2054,7 +2054,10 @@ const tokenRateLimiter = rateLimit({
         evaluation: evaluation ? {
           status: evaluation.status,
           overallScore: evaluation.overallScore,
-          evaluation: evaluation.evaluationJson || null, // Explicitly set to null if falsy
+          // Explicitly check for null/undefined - empty objects should also be treated as null
+          evaluation: (evaluation.evaluationJson && typeof evaluation.evaluationJson === 'object' && Object.keys(evaluation.evaluationJson).length > 0) 
+            ? evaluation.evaluationJson 
+            : null,
           error: evaluation.error,
           createdAt: evaluation.createdAt,
           updatedAt: evaluation.updatedAt,

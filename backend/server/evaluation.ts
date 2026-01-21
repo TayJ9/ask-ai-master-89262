@@ -25,6 +25,90 @@ class EvaluationQueue {
   private queue: EvaluationJob[] = [];
   private processing = false;
   private activeJobs = 0;
+  private healthCheckInterval: NodeJS.Timeout | null = null;
+  
+  // Stalled evaluation threshold: 5 minutes
+  private readonly STALLED_THRESHOLD_MS = 5 * 60 * 1000;
+
+  constructor() {
+    // Start health check on initialization
+    this.startHealthCheck();
+  }
+
+  /**
+   * Health check: Find and retry stalled evaluations
+   */
+  private async checkStalledEvaluations(): Promise<void> {
+    try {
+      const cutoffTime = new Date(Date.now() - this.STALLED_THRESHOLD_MS);
+      
+      // Find evaluations that have been pending for too long
+      const stalledEvaluations = await (db.query as any).interviewEvaluations?.findMany({
+        where: (evaluations: any, { eq, and, lt }: any) => and(
+          eq(evaluations.status, 'pending'),
+          lt(evaluations.createdAt, cutoffTime)
+        ),
+      }) || [];
+
+      if (stalledEvaluations.length > 0) {
+        console.log(`[EVALUATION] Health check found ${stalledEvaluations.length} stalled evaluation(s)`);
+        
+        for (const evaluationRecord of stalledEvaluations) {
+          // Check if interview still exists and has transcript
+          const interview = await (db.query as any).interviews?.findFirst({
+            where: (interviews: any, { eq }: any) => eq(interviews.id, evaluationRecord.interviewId),
+          });
+          
+          if (interview && interview.transcript) {
+            console.log(`[EVALUATION] Retrying stalled evaluation for interview ${evaluationRecord.interviewId}`);
+            // Re-enqueue the stalled evaluation
+            await this.enqueue(evaluationRecord.interviewId, interview.conversationId || '');
+          } else {
+            // Interview doesn't exist or has no transcript - mark as failed
+            console.log(`[EVALUATION] Marking stalled evaluation as failed (no transcript): ${evaluationRecord.interviewId}`);
+            await db.update(interviewEvaluations)
+              .set({
+                status: 'failed',
+                error: 'Evaluation stalled - interview missing or no transcript available',
+                updatedAt: new Date(),
+              })
+              .where(eq(interviewEvaluations.interviewId, evaluationRecord.interviewId));
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('[EVALUATION] Error in health check:', error);
+    }
+  }
+
+  /**
+   * Start periodic health check (runs every 2 minutes)
+   */
+  private startHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+    }
+    
+    // Run health check every 2 minutes
+    this.healthCheckInterval = setInterval(() => {
+      this.checkStalledEvaluations();
+    }, 2 * 60 * 1000);
+    
+    // Run initial health check after 1 minute
+    setTimeout(() => {
+      this.checkStalledEvaluations();
+    }, 60 * 1000);
+  }
+
+  /**
+   * Stop health check (for cleanup)
+   */
+  public stopHealthCheck(): void {
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
+  }
 
   async enqueue(interviewId: string, conversationId: string): Promise<void> {
     // Check if evaluation already exists or is pending
@@ -38,8 +122,17 @@ class EvaluationQueue {
         return;
       }
       if (existing.status === 'pending') {
-        console.log(`[EVALUATION] Evaluation already pending for interview ${interviewId}`);
-        return;
+        // Check if it's stalled (pending for too long)
+        const createdAt = new Date(existing.createdAt);
+        const ageMs = Date.now() - createdAt.getTime();
+        
+        if (ageMs > this.STALLED_THRESHOLD_MS) {
+          console.log(`[EVALUATION] Found stalled pending evaluation for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - retrying`);
+          // Don't return - continue to re-enqueue
+        } else {
+          console.log(`[EVALUATION] Evaluation already pending for interview ${interviewId}`);
+          return;
+        }
       }
     }
 
@@ -53,7 +146,8 @@ class EvaluationQueue {
       console.log(`[EVALUATION] Created pending evaluation for interview ${interviewId}`);
     } catch (error: any) {
       // If it already exists, that's fine - continue
-      if (!error.message?.includes('duplicate') && !error.message?.includes('unique')) {
+      const errorMessage = error?.message || String(error);
+      if (!errorMessage.includes('duplicate') && !errorMessage.includes('unique')) {
         console.error(`[EVALUATION] Error creating evaluation record:`, error);
         throw error;
       }
@@ -194,22 +288,41 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
  * Handles various transcript formats:
  * - Speaker labels (AI:, User:, Interviewer:, Candidate:)
  * - Plain text with line breaks
+ * - Multiple fallback strategies for edge cases
  */
 export function parseTranscript(transcript: string): Array<{ question: string; answer: string }> {
   const pairs: Array<{ question: string; answer: string }> = [];
   
-  // Try to detect speaker labels
+  if (!transcript || transcript.trim().length === 0) {
+    console.log('[PARSE_TRANSCRIPT] Empty transcript provided');
+    return pairs;
+  }
+  
+  const transcriptLength = transcript.length;
+  const hasNewlines = transcript.includes('\n');
+  const hasSpeakerLabels = /^(AI|User|Interviewer|Candidate|Agent):/im.test(transcript);
+  
+  console.log('[PARSE_TRANSCRIPT] Format detection:', {
+    length: transcriptLength,
+    hasNewlines,
+    hasSpeakerLabels,
+    preview: transcript.substring(0, 200),
+  });
+  
+  // Strategy 1: Try to detect speaker labels
   const speakerPattern = /^(AI|User|Interviewer|Candidate|Agent):\s*(.+)$/im;
   const lines = transcript.split(/\n+/).filter(line => line.trim());
   
   let currentQuestion = '';
   let currentAnswer = '';
   let lastSpeaker = '';
+  let speakerLabelCount = 0;
   
   for (const line of lines) {
     const match = line.match(speakerPattern);
     
     if (match) {
+      speakerLabelCount++;
       const [, speaker, text] = match;
       const normalizedSpeaker = speaker.toLowerCase();
       
@@ -269,19 +382,84 @@ export function parseTranscript(transcript: string): Array<{ question: string; a
     });
   }
   
-  // Fallback: if no pairs found, try splitting by question marks
-  if (pairs.length === 0) {
-    const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 10);
-    for (let i = 0; i < sentences.length - 1; i += 2) {
-      const question = sentences[i].trim();
-      const answer = sentences[i + 1].trim();
+  console.log('[PARSE_TRANSCRIPT] Strategy 1 (speaker labels) result:', {
+    pairsFound: pairs.length,
+    speakerLabelCount,
+    lastSpeaker,
+  });
+  
+  // Strategy 2: If no pairs found with speaker labels, try alternating paragraphs
+  if (pairs.length === 0 && hasNewlines) {
+    const paragraphs = transcript.split(/\n\s*\n+/).filter(p => p.trim().length > 10);
+    console.log('[PARSE_TRANSCRIPT] Strategy 2 (alternating paragraphs):', {
+      paragraphCount: paragraphs.length,
+    });
+    
+    // Assume alternating Q&A pattern
+    for (let i = 0; i < paragraphs.length - 1; i += 2) {
+      const question = paragraphs[i].trim();
+      const answer = paragraphs[i + 1].trim();
+      
+      // Heuristic: questions often end with '?' or contain question words
+      const looksLikeQuestion = question.includes('?') || 
+        /\b(what|how|why|when|where|who|can|could|would|should|tell|describe|explain)\b/i.test(question);
+      
       if (question.length > 10 && answer.length > 10) {
-        pairs.push({ question, answer });
+        // If it looks like a question, use as-is; otherwise try to infer
+        if (looksLikeQuestion || i === 0) {
+          pairs.push({ question, answer });
+        }
       }
     }
+    
+    console.log('[PARSE_TRANSCRIPT] Strategy 2 result:', { pairsFound: pairs.length });
   }
   
-  return pairs;
+  // Strategy 3: Fallback - split by sentence endings
+  if (pairs.length === 0) {
+    console.log('[PARSE_TRANSCRIPT] Strategy 3 (sentence splitting)');
+    const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 10);
+    
+    // Try pairing sentences - assume odd-indexed are questions, even-indexed are answers
+    // But only if we have question marks or question words
+    const hasQuestionMarks = transcript.includes('?');
+    
+    if (hasQuestionMarks && sentences.length >= 2) {
+      for (let i = 0; i < sentences.length - 1; i += 2) {
+        const question = sentences[i].trim();
+        const answer = sentences[i + 1].trim();
+        if (question.length > 10 && answer.length > 10 && question.includes('?')) {
+          pairs.push({ question, answer });
+        }
+      }
+    } else if (sentences.length >= 2) {
+      // No question marks - try pairing anyway but be more conservative
+      for (let i = 0; i < sentences.length - 1 && i < 10; i += 2) {
+        const question = sentences[i].trim();
+        const answer = sentences[i + 1].trim();
+        if (question.length > 15 && answer.length > 15) {
+          pairs.push({ question, answer });
+        }
+      }
+    }
+    
+    console.log('[PARSE_TRANSCRIPT] Strategy 3 result:', { pairsFound: pairs.length });
+  }
+  
+  // Final validation: filter out pairs that are too short or invalid
+  const validPairs = pairs.filter(pair => {
+    const qValid = pair.question.trim().length >= 10;
+    const aValid = pair.answer.trim().length >= 10;
+    return qValid && aValid;
+  });
+  
+  console.log('[PARSE_TRANSCRIPT] Final result:', {
+    totalPairs: pairs.length,
+    validPairs: validPairs.length,
+    filteredOut: pairs.length - validPairs.length,
+  });
+  
+  return validPairs;
 }
 
 

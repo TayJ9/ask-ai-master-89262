@@ -171,7 +171,10 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
   try {
     // Use json_object format for compatibility (works with all models)
     // We'll validate with Zod to ensure schema compliance
-    const response = await openai.chat.completions.create({
+    // Add timeout: 60 seconds for OpenAI API call
+    const OPENAI_TIMEOUT_MS = 60000;
+    
+    const apiCall = openai.chat.completions.create({
       model: "gpt-4o-mini", // Cost-effective model suitable for evaluation
       messages: [
         { role: "system", content: systemPrompt },
@@ -181,6 +184,14 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       temperature: 0.2, // Low temperature for determinism
       max_tokens: 2000,
     });
+    
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`OpenAI API call timed out after ${OPENAI_TIMEOUT_MS}ms`));
+      }, OPENAI_TIMEOUT_MS);
+    });
+    
+    const response = await Promise.race([apiCall, timeoutPromise]);
 
     const content = response.choices[0].message.content;
     if (!content) {
