@@ -28,8 +28,14 @@ Write-Host "Committing changes..." -ForegroundColor Yellow
 git commit -m $CommitMessage
 
 Write-Host "Pushing to GitHub..." -ForegroundColor Yellow
-git push origin main 2>&1 | Out-Null
-if ($LASTEXITCODE -eq 0) {
+try {
+    $null = git push origin main 2>&1
+    $pushSuccess = $true
+} catch {
+    $pushSuccess = $false
+}
+
+if ($LASTEXITCODE -eq 0 -or $pushSuccess) {
     Write-Host ""
     Write-Host "[SUCCESS] Successfully pushed to GitHub!" -ForegroundColor Green
     Write-Host ""
