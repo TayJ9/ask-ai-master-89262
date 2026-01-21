@@ -37,20 +37,22 @@ if ($LASTEXITCODE -eq 0) {
     Write-Host "Vercel will auto-deploy frontend" -ForegroundColor Cyan
 } else {
     Write-Host ""
-    Write-Host "[ERROR] Push failed - authentication required" -ForegroundColor Red
+    Write-Host "[ERROR] Push failed - SSH key authentication required" -ForegroundColor Red
     Write-Host ""
-    Write-Host "To enable automatic pushing, set up authentication:" -ForegroundColor Yellow
+    Write-Host "To enable automatic pushing with SSH:" -ForegroundColor Yellow
     Write-Host ""
-    Write-Host "OPTION 1: GitHub Personal Access Token (Recommended)" -ForegroundColor Cyan
-    Write-Host "  1. Create token: https://github.com/settings/tokens/new" -ForegroundColor White
-    Write-Host "     - Name: Auto Push" -ForegroundColor White
-    Write-Host "     - Scopes: repo (all)" -ForegroundColor White
-    Write-Host "  2. Run once: git push origin main" -ForegroundColor White
-    Write-Host "     Username: TayJ9" -ForegroundColor White
-    Write-Host "     Password: [paste token]" -ForegroundColor White
-    Write-Host "  3. Credentials saved - future pushes work automatically!" -ForegroundColor White
+    Write-Host "1. Add your SSH key to GitHub:" -ForegroundColor Cyan
+    Write-Host "   - Go to: https://github.com/settings/ssh/new" -ForegroundColor White
+    Write-Host "   - Paste your public SSH key" -ForegroundColor White
+    Write-Host "   - Click 'Add SSH key'" -ForegroundColor White
     Write-Host ""
-    Write-Host "OPTION 2: Set GITHUB_TOKEN environment variable" -ForegroundColor Cyan
-    Write-Host '  See AUTO_PUSH_GUIDE.md for detailed instructions' -ForegroundColor White
+    Write-Host "2. Test connection:" -ForegroundColor Cyan
+    Write-Host "   ssh -T git@github.com" -ForegroundColor White
+    Write-Host ""
+    Write-Host "3. If key is already added, ensure SSH agent is running:" -ForegroundColor Cyan
+    Write-Host "   Get-Service ssh-agent | Start-Service" -ForegroundColor White
+    Write-Host "   ssh-add ~/.ssh/id_rsa" -ForegroundColor White
+    Write-Host ""
+    Write-Host "See AUTO_PUSH_GUIDE.md for detailed SSH setup instructions" -ForegroundColor White
     exit 1
 }
