@@ -507,101 +507,154 @@ export default function Results() {
 
               {/* Complete Evaluation Results */}
               {hasCompleteFeedback && results.evaluation?.evaluation && (
-                <Card className="mb-6">
-                  <CardHeader>
-                    <CardTitle>Evaluation</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    {/* Overall Strengths and Improvements */}
-                    {(results.evaluation.evaluation.overall_strengths?.length || results.evaluation.evaluation.overall_improvements?.length) && (
-                      <div className="mb-6 space-y-4">
-                        {results.evaluation.evaluation.overall_strengths && results.evaluation.evaluation.overall_strengths.length > 0 && (
-                          <div>
-                            <h4 className="text-sm font-semibold text-green-700 mb-2">Overall Strengths:</h4>
-                            <ul className="list-disc list-inside text-sm text-gray-700">
-                              {results.evaluation.evaluation.overall_strengths.map((strength, i) => (
-                                <li key={i}>{strength}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                        {results.evaluation.evaluation.overall_improvements && results.evaluation.evaluation.overall_improvements.length > 0 && (
-                          <div>
-                            <h4 className="text-sm font-semibold text-orange-700 mb-2">Overall Areas for Improvement:</h4>
-                            <ul className="list-disc list-inside text-sm text-gray-700">
-                              {results.evaluation.evaluation.overall_improvements.map((improvement, i) => (
-                                <li key={i}>{improvement}</li>
-                              ))}
-                            </ul>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Per-Question Evaluation */}
-                    <div className="space-y-6">
-                      {results.evaluation.evaluation.questions?.map((qa, index) => (
-                        <div key={index} className="border-b pb-4 last:border-b-0">
-                          <h3 className="font-semibold mb-2">Question {index + 1}</h3>
-                          <p className="text-gray-700 mb-2">{qa.question}</p>
-                          <p className="text-gray-600 mb-3">{qa.answer}</p>
-                          <div className="flex items-center gap-4 mb-3">
-                            <span className="text-sm font-medium">Score: {qa.score}/100</span>
-                          </div>
-                          {qa.strengths?.length > 0 && (
-                            <div className="mb-2">
-                              <h4 className="text-sm font-semibold text-green-700 mb-1">Strengths:</h4>
-                              <ul className="list-disc list-inside text-sm text-gray-700">
-                                {qa.strengths.map((strength, i) => (
+                <>
+                  {/* Overall Feedback Section */}
+                  {(results.evaluation.evaluation.overall_strengths?.length || results.evaluation.evaluation.overall_improvements?.length) && (
+                    <Card className="mb-6 border-2 border-blue-200 bg-blue-50/30">
+                      <CardHeader>
+                        <CardTitle className="text-xl">Overall Interview Feedback</CardTitle>
+                        <p className="text-sm text-gray-600 mt-1">Summary of your performance across all questions</p>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-4">
+                          {results.evaluation.evaluation.overall_strengths && results.evaluation.evaluation.overall_strengths.length > 0 && (
+                            <div>
+                              <h4 className="text-base font-semibold text-green-700 mb-2">Overall Strengths:</h4>
+                              <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                {results.evaluation.evaluation.overall_strengths.map((strength, i) => (
                                   <li key={i}>{strength}</li>
                                 ))}
                               </ul>
                             </div>
                           )}
-                          {qa.improvements?.length > 0 && (
-                            <div className="mb-2">
-                              <h4 className="text-sm font-semibold text-orange-700 mb-1">Areas for Improvement:</h4>
-                              <ul className="list-disc list-inside text-sm text-gray-700">
-                                {qa.improvements.map((improvement, i) => (
+                          {results.evaluation.evaluation.overall_improvements && results.evaluation.evaluation.overall_improvements.length > 0 && (
+                            <div>
+                              <h4 className="text-base font-semibold text-orange-700 mb-2">Overall Areas for Improvement:</h4>
+                              <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                {results.evaluation.evaluation.overall_improvements.map((improvement, i) => (
                                   <li key={i}>{improvement}</li>
                                 ))}
                               </ul>
                             </div>
                           )}
-                          {qa.sample_better_answer && (
-                            <div className="mt-3 p-3 bg-blue-50 rounded-md">
-                              <h4 className="text-sm font-semibold text-blue-700 mb-1">Sample Better Answer:</h4>
-                              <p className="text-sm text-gray-700">{qa.sample_better_answer}</p>
-                            </div>
-                          )}
                         </div>
-                      ))}
-                    </div>
-                  </CardContent>
-                </Card>
+                      </CardContent>
+                    </Card>
+                  )}
+
+                  {/* Per-Question Evaluation Section */}
+                  {results.evaluation.evaluation.questions && results.evaluation.evaluation.questions.length > 0 && (
+                    <Card className="mb-6">
+                      <CardHeader>
+                        <CardTitle className="text-xl">Question-by-Question Feedback</CardTitle>
+                        <p className="text-sm text-gray-600 mt-1">Detailed feedback for each interview question</p>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="space-y-6">
+                          {results.evaluation.evaluation.questions.map((qa, index) => (
+                            <div key={index} className="border-l-4 border-blue-500 pl-4 pb-4 last:pb-0">
+                              <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-lg font-semibold text-gray-900">Question {index + 1}</h3>
+                                <span className="text-sm font-medium bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
+                                  Score: {qa.score}/100
+                                </span>
+                              </div>
+                              
+                              <div className="mb-3">
+                                <p className="text-sm font-medium text-gray-600 mb-1">Question:</p>
+                                <p className="text-gray-800">{qa.question}</p>
+                              </div>
+                              
+                              <div className="mb-3">
+                                <p className="text-sm font-medium text-gray-600 mb-1">Your Answer:</p>
+                                <p className="text-gray-700">{qa.answer}</p>
+                              </div>
+                              
+                              {qa.strengths?.length > 0 && (
+                                <div className="mb-3">
+                                  <h4 className="text-sm font-semibold text-green-700 mb-1">Strengths:</h4>
+                                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                    {qa.strengths.map((strength, i) => (
+                                      <li key={i}>{strength}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              
+                              {qa.improvements?.length > 0 && (
+                                <div className="mb-3">
+                                  <h4 className="text-sm font-semibold text-orange-700 mb-1">Areas for Improvement:</h4>
+                                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                    {qa.improvements.map((improvement, i) => (
+                                      <li key={i}>{improvement}</li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                              
+                              {qa.sample_better_answer && (
+                                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
+                                  <h4 className="text-sm font-semibold text-blue-700 mb-1">Sample Better Answer:</h4>
+                                  <p className="text-sm text-gray-700">{qa.sample_better_answer}</p>
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </>
               )}
 
               {/* Transcript */}
               {results.interview?.transcript && (
                 <Card>
                   <CardHeader>
-                    <CardTitle>Transcript</CardTitle>
+                    <CardTitle>Interview Transcript</CardTitle>
+                    <p className="text-sm text-gray-600 mt-1">Full conversation transcript with speaker labels</p>
                   </CardHeader>
                   <CardContent>
-                    <div className="whitespace-pre-wrap text-sm text-gray-700 space-y-2">
+                    <div className="space-y-3">
                       {formatTranscript(results.interview.transcript).split('\n\n').map((paragraph, i) => {
                         // Check if this paragraph starts with a speaker label
                         const speakerMatch = paragraph.match(/^(Interviewer|Candidate|User|AI|Agent):\s*(.*)$/i);
                         if (speakerMatch) {
                           const [, speaker, text] = speakerMatch;
+                          // Determine if it's AI/Interviewer or User/Candidate
+                          const isAI = /^(Interviewer|AI|Agent)$/i.test(speaker);
+                          const isUser = /^(Candidate|User)$/i.test(speaker);
+                          
                           return (
-                            <p key={i} className="mb-3">
-                              <strong className="text-gray-900">{speaker}:</strong> {text}
-                            </p>
+                            <div 
+                              key={i} 
+                              className={`p-3 rounded-lg ${
+                                isAI 
+                                  ? 'bg-blue-50 border-l-4 border-blue-500' 
+                                  : isUser 
+                                  ? 'bg-green-50 border-l-4 border-green-500' 
+                                  : 'bg-gray-50 border-l-4 border-gray-400'
+                              }`}
+                            >
+                              <div className="flex items-start gap-2">
+                                <span 
+                                  className={`font-semibold text-sm uppercase tracking-wide ${
+                                    isAI 
+                                      ? 'text-blue-700' 
+                                      : isUser 
+                                      ? 'text-green-700' 
+                                      : 'text-gray-700'
+                                  }`}
+                                >
+                                  {isAI ? '🤖 AI Interviewer' : isUser ? '👤 You' : speaker}:
+                                </span>
+                                <p className="text-sm text-gray-800 flex-1">{text}</p>
+                              </div>
+                            </div>
                           );
                         }
                         return (
-                          <p key={i} className="mb-3">
+                          <p key={i} className="mb-3 text-sm text-gray-700">
                             {paragraph}
                           </p>
                         );
