@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useLocation, useRoute } from "wouter";
+import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, CheckCircle2, AlertCircle, RefreshCw, ArrowLeft } from "lucide-react";
@@ -89,14 +89,13 @@ const formatTranscript = (transcript: string): string => {
 };
 
 export default function Results() {
-  const [location] = useLocation();
-  const [, navigate] = useRoute("/");
+  const [location, setLocation] = useLocation();
   const { toast } = useToast();
   
   // Navigate helper
   const goToDashboard = () => {
     localStorage.removeItem('candidate_context');
-    navigate('/');
+    setLocation('/');
   };
   
   // Parse query params
