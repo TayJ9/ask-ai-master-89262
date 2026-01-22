@@ -180,8 +180,16 @@ export default function Results() {
           setResults(initialData);
           const evalStatus = getEvaluationStatus(initialData);
           
-          // If pending or processing, start polling
-          if (evalStatus === 'pending' || evalStatus === 'processing') {
+          console.log('[RESULTS] Initial fetch:', {
+            interviewId: effectiveInterviewId,
+            hasEvaluation: !!initialData.evaluation,
+            evaluationStatus: initialData.evaluation?.status || 'null',
+            evalStatus,
+            timestamp: new Date().toISOString()
+          });
+          
+          // If pending or processing OR evaluation is null (not created yet), start polling
+          if (evalStatus === 'pending' || evalStatus === 'processing' || !initialData.evaluation) {
             setIsPolling(true);
             setPollStartTime(Date.now());
             

@@ -111,14 +111,27 @@ class EvaluationQueue {
   }
 
   async enqueue(interviewId: string, conversationId: string): Promise<void> {
+    console.log(`[EVALUATION] 🔄 Enqueue request received`, {
+      interviewId,
+      conversationId,
+      timestamp: new Date().toISOString(),
+    });
+
     // Check if evaluation already exists or is pending
     const existing = await (db.query as any).interviewEvaluations?.findFirst({
       where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
     });
 
     if (existing) {
+      console.log(`[EVALUATION] Existing evaluation found`, {
+        interviewId,
+        status: existing.status,
+        createdAt: existing.createdAt,
+        updatedAt: existing.updatedAt,
+      });
+
       if (existing.status === 'complete') {
-        console.log(`[EVALUATION] Evaluation already complete for interview ${interviewId}`);
+        console.log(`[EVALUATION] ✅ Evaluation already complete for interview ${interviewId} - skipping`);
         return;
       }
       if (existing.status === 'pending') {
@@ -127,13 +140,15 @@ class EvaluationQueue {
         const ageMs = Date.now() - createdAt.getTime();
         
         if (ageMs > this.STALLED_THRESHOLD_MS) {
-          console.log(`[EVALUATION] Found stalled pending evaluation for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - retrying`);
+          console.log(`[EVALUATION] ⚠️ Found stalled pending evaluation for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - retrying`);
           // Don't return - continue to re-enqueue
         } else {
-          console.log(`[EVALUATION] Evaluation already pending for interview ${interviewId}`);
+          console.log(`[EVALUATION] ⏳ Evaluation already pending for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - skipping duplicate`);
           return;
         }
       }
+    } else {
+      console.log(`[EVALUATION] No existing evaluation found - creating new one`);
     }
 
     // Create pending evaluation record
@@ -143,23 +158,37 @@ class EvaluationQueue {
         status: 'pending',
       });
       await db.insert(interviewEvaluations).values(evaluationData as any);
-      console.log(`[EVALUATION] Created pending evaluation for interview ${interviewId}`);
+      console.log(`[EVALUATION] ✅ Created pending evaluation record for interview ${interviewId}`);
     } catch (error: any) {
       // If it already exists, that's fine - continue
       const errorMessage = error?.message || String(error);
       if (!errorMessage.includes('duplicate') && !errorMessage.includes('unique')) {
-        console.error(`[EVALUATION] Error creating evaluation record:`, error);
+        console.error(`[EVALUATION] ❌ Error creating evaluation record:`, {
+          error: errorMessage,
+          interviewId,
+        });
         throw error;
+      } else {
+        console.log(`[EVALUATION] Evaluation record already exists (race condition) - continuing`);
       }
     }
 
     // Add to queue
     this.queue.push({ interviewId, conversationId, retries: 0 });
-    console.log(`[EVALUATION] Enqueued evaluation job for interview ${interviewId} (queue size: ${this.queue.length})`);
+    console.log(`[EVALUATION] 📥 Enqueued evaluation job`, {
+      interviewId,
+      conversationId,
+      queueSize: this.queue.length,
+      activeJobs: this.activeJobs,
+      maxConcurrent: MAX_CONCURRENT_JOBS,
+    });
 
     // Start processing if not already running
     if (!this.processing) {
+      console.log(`[EVALUATION] 🚀 Starting queue processor`);
       this.processQueue();
+    } else {
+      console.log(`[EVALUATION] Queue processor already running`);
     }
   }
 
@@ -190,12 +219,22 @@ class EvaluationQueue {
     const { interviewId, conversationId, retries } = job;
 
     try {
-      console.log(`[EVALUATION] Starting evaluation for interview ${interviewId} (attempt ${retries + 1})`);
+      console.log(`[EVALUATION] 🎯 Starting evaluation job`, {
+        interviewId,
+        conversationId,
+        attempt: retries + 1,
+        maxRetries: MAX_RETRIES,
+        timestamp: new Date().toISOString(),
+      });
 
       // Update status to processing (implicitly via evaluateInterview)
       await evaluateInterview(interviewId);
 
-      console.log(`[EVALUATION] Completed evaluation for interview ${interviewId}`);
+      console.log(`[EVALUATION] ✅ Successfully completed evaluation for interview ${interviewId}`, {
+        interviewId,
+        conversationId,
+        timestamp: new Date().toISOString(),
+      });
     } catch (error: any) {
       console.error(`[EVALUATION] Error evaluating interview ${interviewId}:`, error);
 
@@ -241,36 +280,74 @@ export const evaluationQueue = new EvaluationQueue();
  * Evaluate an interview transcript and generate scores
  */
 export async function evaluateInterview(interviewId: string): Promise<void> {
+  console.log(`[EVALUATION] 📊 Starting evaluation process for interview ${interviewId}`);
+
   // Load interview from database
   const interview = await (db.query as any).interviews?.findFirst({
     where: (interviews: any, { eq }: any) => eq(interviews.id, interviewId),
   });
 
   if (!interview) {
+    console.error(`[EVALUATION] ❌ Interview ${interviewId} not found in database`);
     throw new Error(`Interview ${interviewId} not found`);
   }
 
+  console.log(`[EVALUATION] ✅ Interview found`, {
+    interviewId,
+    hasTranscript: !!interview.transcript,
+    transcriptLength: interview.transcript?.length || 0,
+    status: interview.status,
+  });
+
   if (!interview.transcript) {
+    console.error(`[EVALUATION] ❌ Interview ${interviewId} has no transcript`);
     throw new Error(`Interview ${interviewId} has no transcript`);
   }
 
   // Parse transcript into question-answer pairs
+  console.log(`[EVALUATION] 📝 Parsing transcript into Q&A pairs...`);
   const qaPairs = parseTranscript(interview.transcript);
 
+  console.log(`[EVALUATION] ✅ Parsed transcript`, {
+    interviewId,
+    qaPairsCount: qaPairs.length,
+    qaPairsPreview: qaPairs.slice(0, 2).map(qa => ({
+      question: qa.question.substring(0, 50) + '...',
+      answerLength: qa.answer.length,
+    })),
+  });
+
   if (qaPairs.length === 0) {
+    console.error(`[EVALUATION] ❌ No question-answer pairs found in transcript`, {
+      interviewId,
+      transcriptLength: interview.transcript.length,
+      transcriptPreview: interview.transcript.substring(0, 200),
+    });
     throw new Error(`No question-answer pairs found in transcript`);
   }
 
   // Generate evaluation using OpenAI
   // Note: role and major are not stored in interviews table, so we pass undefined
   // The evaluator can work without them
+  console.log(`[EVALUATION] 🤖 Generating evaluation using OpenAI...`, {
+    interviewId,
+    qaPairsCount: qaPairs.length,
+  });
+
   const evaluation = await scoreInterview({
     role: undefined, // Could be extracted from dynamic variables if stored
     major: undefined, // Could be extracted from dynamic variables if stored
     questions: qaPairs,
   });
 
+  console.log(`[EVALUATION] ✅ Evaluation generated`, {
+    interviewId,
+    overallScore: evaluation.overall_score,
+    questionsEvaluated: evaluation.questions?.length || 0,
+  });
+
   // Save evaluation to database
+  console.log(`[EVALUATION] 💾 Saving evaluation to database...`);
   await db.update(interviewEvaluations)
     .set({
       status: 'complete',
@@ -280,7 +357,12 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     })
     .where(eq(interviewEvaluations.interviewId, interviewId));
 
-  console.log(`[EVALUATION] Saved evaluation for interview ${interviewId} (score: ${evaluation.overall_score})`);
+  console.log(`[EVALUATION] ✅ Saved evaluation for interview ${interviewId}`, {
+    interviewId,
+    overallScore: evaluation.overall_score,
+    status: 'complete',
+    timestamp: new Date().toISOString(),
+  });
 }
 
 /**

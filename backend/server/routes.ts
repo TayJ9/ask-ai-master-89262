@@ -1655,56 +1655,128 @@ const tokenRateLimiter = rateLimit({
   // Note: Raw body middleware is applied globally in server/index.ts before express.json()
   app.post("/webhooks/elevenlabs", async (req: any, res) => {
     try {
-      // Verify HMAC signature
-      const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET;
-      if (!webhookSecret) {
-        console.error('[WEBHOOK] ELEVENLABS_WEBHOOK_SECRET not configured');
-        return res.status(500).json({ error: 'Webhook secret not configured' });
-      }
-
-      const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['Elevenlabs-Signature'];
+      // Check if this is a tool call (x-api-secret) vs automatic webhook (HMAC signature)
+      // Express normalizes headers to lowercase, but check both cases for safety
+      const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['Elevenlabs-Signature'] || req.headers['xi-elevenlabs-signature'];
+      const apiSecretHeader = req.headers['x-api-secret'] || req.headers['X-Api-Secret'] || req.headers['X-API-Secret'];
+      const isToolCall = !signatureHeader && !!apiSecretHeader;
+      
+      console.log('[WEBHOOK] Request received', {
+        hasSignatureHeader: !!signatureHeader,
+        hasApiSecretHeader: !!apiSecretHeader,
+        apiSecretHeaderPrefix: apiSecretHeader ? `${apiSecretHeader.substring(0, 8)}...` : 'missing',
+        isToolCall,
+        allHeaders: Object.keys(req.headers).filter(h => h.toLowerCase().includes('api') || h.toLowerCase().includes('secret') || h.toLowerCase().includes('signature')),
+      });
+      
       // req.body is Buffer when using express.raw()
       const rawBody = req.body instanceof Buffer ? req.body : Buffer.from(JSON.stringify(req.body || {}), 'utf8');
       
-      const verification = verifyElevenLabsSignature(signatureHeader, rawBody, webhookSecret);
-      
-      if (!verification.valid) {
-        console.error(`[WEBHOOK] Invalid signature: ${verification.reason}`, {
-          hasSignature: !!signatureHeader,
+      // Verify authentication: either HMAC signature (automatic webhook) or x-api-secret (tool call)
+      if (isToolCall) {
+        // Tool call authentication via x-api-secret
+        console.log('[WEBHOOK] Detected tool call (x-api-secret header present, no HMAC signature)');
+        const expectedApiKey = ELEVENLABS_API_KEY;
+        if (!expectedApiKey) {
+          console.error('[WEBHOOK] ❌ ELEVENLABS_API_KEY not configured for tool call verification');
+          return res.status(500).json({ error: 'API key not configured' });
+        }
+        
+        console.log('[WEBHOOK] Verifying x-api-secret...', {
+          providedLength: apiSecretHeader?.length || 0,
+          expectedLength: expectedApiKey.length,
+          providedPrefix: apiSecretHeader ? `${apiSecretHeader.substring(0, 8)}...` : 'missing',
+          expectedPrefix: `${expectedApiKey.substring(0, 8)}...`,
+        });
+        
+        if (apiSecretHeader !== expectedApiKey) {
+          console.error('[WEBHOOK] ❌ Invalid x-api-secret for tool call', {
+            provided: apiSecretHeader ? `${apiSecretHeader.substring(0, 8)}...${apiSecretHeader.substring(apiSecretHeader.length - 4)}` : 'missing',
+            providedLength: apiSecretHeader?.length || 0,
+            expectedLength: expectedApiKey.length,
+            expectedPrefix: `${expectedApiKey.substring(0, 8)}...`,
+            mismatch: true,
+          });
+          return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
+        }
+        
+        console.log('[WEBHOOK] ✅ Tool call verified via x-api-secret');
+      } else {
+        // Automatic webhook authentication via HMAC signature
+        const webhookSecret = process.env.ELEVENLABS_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+          console.error('[WEBHOOK] ELEVENLABS_WEBHOOK_SECRET not configured');
+          return res.status(500).json({ error: 'Webhook secret not configured' });
+        }
+        
+        const verification = verifyElevenLabsSignature(signatureHeader, rawBody, webhookSecret);
+        
+        if (!verification.valid) {
+          console.error(`[WEBHOOK] Invalid signature: ${verification.reason}`, {
+            hasSignature: !!signatureHeader,
+            timestamp: verification.timestamp,
+          });
+          return res.status(401).json({ error: 'Invalid signature' });
+        }
+        
+        console.log(`[WEBHOOK] Signature verified successfully`, {
+          conversation_id: 'parsing...',
           timestamp: verification.timestamp,
         });
-        return res.status(401).json({ error: 'Invalid signature' });
       }
 
-      // Parse JSON body after signature verification
+      // Parse JSON body after authentication
       let body: any;
       try {
         body = JSON.parse(rawBody.toString('utf8'));
+        console.log('[WEBHOOK] ✅ Successfully parsed JSON body');
       } catch (parseError: any) {
-        console.error('[WEBHOOK] Failed to parse JSON body:', parseError);
+        console.error('[WEBHOOK] ❌ Failed to parse JSON body:', {
+          error: parseError.message,
+          bodyLength: rawBody.length,
+          bodyPreview: rawBody.toString('utf8').substring(0, 200),
+        });
         return res.status(400).json({ error: 'Invalid JSON body' });
       }
 
-      console.log(`[WEBHOOK] Signature verified successfully`, {
-        conversation_id: body?.conversation_id || 'unknown',
-        timestamp: verification.timestamp,
+      console.log('[WEBHOOK] 📥 Received ElevenLabs webhook', {
+        source: isToolCall ? 'tool-call' : 'automatic-webhook',
+        timestamp: new Date().toISOString(),
       });
-
-      console.log('[WEBHOOK] Received ElevenLabs webhook');
-      console.log('[WEBHOOK] Body:', JSON.stringify(body, null, 2));
+      console.log('[WEBHOOK] 📋 Request body fields:', {
+        hasConversationId: !!body.conversation_id,
+        hasTranscript: !!body.transcript,
+        transcriptLength: body.transcript?.length || 0,
+        hasUserId: !!body.user_id,
+        hasAgentId: !!body.agent_id,
+        hasDuration: !!body.duration,
+        hasStatus: !!body.status,
+        hasStartedAt: !!body.started_at,
+        hasEndedAt: !!body.ended_at,
+      });
+      console.log('[WEBHOOK] 📄 Full body:', JSON.stringify(body, null, 2));
 
       const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status } = body;
 
       // Validate required fields
       if (!conversation_id) {
-        console.error('[WEBHOOK] Missing conversation_id');
+        console.error('[WEBHOOK] ❌ Missing conversation_id in request body');
+        console.error('[WEBHOOK] Available fields:', Object.keys(body));
         return res.status(400).json({ error: 'Missing conversation_id' });
       }
 
       if (!user_id) {
-        console.error('[WEBHOOK] Missing user_id');
+        console.error('[WEBHOOK] ❌ Missing user_id in request body');
+        console.error('[WEBHOOK] Available fields:', Object.keys(body));
         return res.status(400).json({ error: 'Missing user_id' });
       }
+
+      console.log('[WEBHOOK] ✅ Required fields validated', {
+        conversation_id,
+        user_id,
+        hasTranscript: !!transcript,
+        transcriptLength: transcript?.length || 0,
+      });
 
       // Check if interview already exists (prevent duplicates)
       const existingInterview = await (db.query as any).interviews?.findFirst({
@@ -1897,10 +1969,25 @@ const tokenRateLimiter = rateLimit({
 
       // Enqueue evaluation job asynchronously (non-critical - don't fail webhook if this fails)
       try {
+        console.log(`[WEBHOOK] 🔄 Enqueuing evaluation for interview ${interview.id}...`);
+        console.log(`[WEBHOOK] Evaluation queue status:`, {
+          interviewId: interview.id,
+          conversationId: conversation_id,
+          hasTranscript: !!interview.transcript,
+          transcriptLength: interview.transcript?.length || 0,
+          interviewStatus: interview.status,
+        });
+        
         await evaluationQueue.enqueue(interview.id, conversation_id);
-        console.log(`[WEBHOOK] Enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
+        console.log(`[WEBHOOK] ✅ Successfully enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
+        console.log(`[WEBHOOK] 📊 Evaluation will be processed asynchronously - check logs for [EVALUATION] messages`);
       } catch (evalError: any) {
-        console.error(`[WEBHOOK] Failed to enqueue evaluation (non-critical):`, evalError);
+        console.error(`[WEBHOOK] ❌ Failed to enqueue evaluation (non-critical):`, {
+          error: evalError.message,
+          stack: evalError.stack,
+          interviewId: interview.id,
+          conversationId: conversation_id,
+        });
         // Don't fail webhook - evaluation can be retried later
       }
 
@@ -2105,6 +2192,7 @@ const tokenRateLimiter = rateLimit({
       const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
       const agent_id = req.body?.agent_id as string | undefined;
       const resume_text = req.body?.resume_text as string | undefined; // Optional resume text from request
+      const transcript_from_tool = req.body?.transcript as string | undefined; // Transcript from SaveInterviewResults tool
       
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - parsed fields:', { 
         userId, 
@@ -2112,6 +2200,8 @@ const tokenRateLimiter = rateLimit({
         conversation_id: conversation_id || 'not provided',
         ended_by,
         agent_id: agent_id || 'not provided',
+        hasTranscript: !!transcript_from_tool,
+        transcriptLength: transcript_from_tool?.length || 0,
         timestamp: new Date().toISOString()
       });
       
@@ -2183,40 +2273,69 @@ const tokenRateLimiter = rateLimit({
               console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
             }
             
-            // Fetch transcript asynchronously (non-blocking)
-            if (!existingInterview.transcript && conversation_id) {
-              fetchTranscriptFromElevenLabs(conversation_id)
-                .then(async (transcript) => {
-                  if (transcript) {
-                    try {
-                      await db.update(interviews)
-                        .set({ transcript })
-                        .where(eq(interviews.id, interviewId));
-                      console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for interview ${interviewId}`);
-                      
-                      // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
-                      try {
-                        const { parseTranscript } = await import('./evaluation');
-                        const qaPairs = parseTranscript(transcript);
-                        if (qaPairs.length > 0) {
-                          console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
-                          await evaluationQueue.enqueue(interviewId, conversation_id);
-                          console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
-                        } else {
-                          console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
-                        }
-                      } catch (evalError: any) {
-                        console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
-                        // Don't fail - evaluation can be triggered later via webhook
-                      }
-                    } catch (updateError: any) {
-                      console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
+            // Process transcript: use provided transcript or fetch from ElevenLabs
+            if (!existingInterview.transcript) {
+              if (transcript_from_tool) {
+                // Use transcript provided by tool
+                try {
+                  await db.update(interviews)
+                    .set({ transcript: transcript_from_tool })
+                    .where(eq(interviews.id, interviewId));
+                  console.log(`[SAVE-INTERVIEW] Successfully saved transcript from tool (${transcript_from_tool.length} chars) for interview ${interviewId}`);
+                  
+                  // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
+                  try {
+                    const { parseTranscript } = await import('./evaluation');
+                    const qaPairs = parseTranscript(transcript_from_tool);
+                    if (qaPairs.length > 0) {
+                      console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
+                      await evaluationQueue.enqueue(interviewId, conversation_id);
+                      console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
+                    } else {
+                      console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
                     }
+                  } catch (evalError: any) {
+                    console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
+                    // Don't fail - evaluation can be triggered later via webhook
                   }
-                })
-                .catch((transcriptError: any) => {
-                  console.error(`[SAVE-INTERVIEW] Error fetching transcript:`, transcriptError.message || transcriptError);
-                });
+                } catch (updateError: any) {
+                  console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
+                }
+              } else if (conversation_id) {
+                // Fetch transcript asynchronously (non-blocking)
+                fetchTranscriptFromElevenLabs(conversation_id)
+                  .then(async (transcript) => {
+                    if (transcript) {
+                      try {
+                        await db.update(interviews)
+                          .set({ transcript })
+                          .where(eq(interviews.id, interviewId));
+                        console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for interview ${interviewId}`);
+                        
+                        // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
+                        try {
+                          const { parseTranscript } = await import('./evaluation');
+                          const qaPairs = parseTranscript(transcript);
+                          if (qaPairs.length > 0) {
+                            console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
+                            await evaluationQueue.enqueue(interviewId, conversation_id);
+                            console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
+                          } else {
+                            console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+                          }
+                        } catch (evalError: any) {
+                          console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
+                          // Don't fail - evaluation can be triggered later via webhook
+                        }
+                      } catch (updateError: any) {
+                        console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
+                      }
+                    }
+                  })
+                  .catch((transcriptError: any) => {
+                    console.error(`[SAVE-INTERVIEW] Error fetching transcript:`, transcriptError.message || transcriptError);
+                  });
+              }
             } else if (existingInterview.transcript) {
               console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, checking if evaluation needed`);
               
@@ -2306,8 +2425,35 @@ const tokenRateLimiter = rateLimit({
               });
           }
           
-          // If conversation_id is available, try to fetch transcript and enqueue evaluation
-          if (conversation_id) {
+          // Process transcript: use provided transcript or fetch from ElevenLabs
+          if (transcript_from_tool) {
+            // Use transcript provided by tool
+            try {
+              await db.update(interviews)
+                .set({ transcript: transcript_from_tool })
+                .where(eq(interviews.id, interviewId));
+              console.log(`[SAVE-INTERVIEW] Successfully saved transcript from tool (${transcript_from_tool.length} chars) for newly created interview ${interviewId}`);
+              
+              // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
+              try {
+                const { parseTranscript } = await import('./evaluation');
+                const qaPairs = parseTranscript(transcript_from_tool);
+                if (qaPairs.length > 0) {
+                  console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for newly created interview ${interviewId}`);
+                  await evaluationQueue.enqueue(interviewId, conversation_id || '');
+                  console.log(`[SAVE-INTERVIEW] Evaluation enqueued for newly created interview ${interviewId}`);
+                } else {
+                  console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+                }
+              } catch (evalError: any) {
+                console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation for newly created interview:`, evalError.message || evalError);
+                // Don't fail - evaluation can be triggered later via webhook
+              }
+            } catch (updateError: any) {
+              console.error(`[SAVE-INTERVIEW] Error updating transcript for newly created interview:`, updateError.message || updateError);
+            }
+          } else if (conversation_id) {
+            // If conversation_id is available, try to fetch transcript and enqueue evaluation
             fetchTranscriptFromElevenLabs(conversation_id)
               .then(async (transcript) => {
                 if (transcript) {
