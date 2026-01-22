@@ -212,14 +212,76 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       hasOverallStrengths: 'overall_strengths' in parsed,
       hasOverallImprovements: 'overall_improvements' in parsed,
       hasQuestions: 'questions' in parsed,
+      hasEvaluations: 'evaluations' in parsed,
       questionsCount: parsed.questions?.length || 0,
+      evaluationsCount: parsed.evaluations?.length || 0,
       keys: Object.keys(parsed),
       parsedPreview: JSON.stringify(parsed).substring(0, 500),
     });
 
+    // Transform OpenAI response to match our schema if needed
+    let transformed = parsed;
+    
+    // If OpenAI returned "evaluations" instead of "questions", transform it
+    if (parsed.evaluations && !parsed.questions) {
+      console.log('[OPENAI_EVALUATOR] Transforming "evaluations" to "questions" format');
+      transformed = {
+        ...parsed,
+        questions: parsed.evaluations.map((evalItem: any, index: number) => {
+          // Find the corresponding question from our input
+          const qaPair = questions[index];
+          return {
+            question: qaPair?.question || evalItem.question || `Question ${index + 1}`,
+            answer: qaPair?.answer || evalItem.answer || '',
+            score: evalItem.score || 0,
+            strengths: Array.isArray(evalItem.strengths) ? evalItem.strengths : [],
+            improvements: Array.isArray(evalItem.improvements) ? evalItem.improvements : [],
+            sample_better_answer: evalItem.sample_better_answer || evalItem.sampleBetterAnswer || '',
+          };
+        }),
+      };
+      delete transformed.evaluations;
+    }
+
+    // Generate overall_strengths and overall_improvements if missing
+    if (!transformed.overall_strengths && transformed.questions) {
+      console.log('[OPENAI_EVALUATOR] Generating overall_strengths from question strengths');
+      const allStrengths = new Set<string>();
+      transformed.questions.forEach((q: any) => {
+        if (Array.isArray(q.strengths)) {
+          q.strengths.forEach((s: string) => allStrengths.add(s));
+        }
+      });
+      transformed.overall_strengths = Array.from(allStrengths).slice(0, 5);
+      if (transformed.overall_strengths.length === 0) {
+        transformed.overall_strengths = ['Demonstrated technical knowledge'];
+      }
+    }
+
+    if (!transformed.overall_improvements && transformed.questions) {
+      console.log('[OPENAI_EVALUATOR] Generating overall_improvements from question improvements');
+      const allImprovements = new Set<string>();
+      transformed.questions.forEach((q: any) => {
+        if (Array.isArray(q.improvements)) {
+          q.improvements.forEach((i: string) => allImprovements.add(i));
+        }
+      });
+      transformed.overall_improvements = Array.from(allImprovements).slice(0, 5);
+      if (transformed.overall_improvements.length === 0) {
+        transformed.overall_improvements = ['Could provide more specific examples'];
+      }
+    }
+
+    // Ensure questions array exists and is properly formatted
+    if (!transformed.questions && transformed.evaluations) {
+      transformed.questions = transformed.evaluations;
+      delete transformed.evaluations;
+    }
+
     // Validate with Zod (ensures schema compliance)
     try {
-      const validated = EvaluationJsonSchema.parse(parsed);
+      const validated = EvaluationJsonSchema.parse(transformed);
+      console.log('[OPENAI_EVALUATOR] ✅ Schema validation passed after transformation');
       return validated;
     } catch (zodError: any) {
       if (zodError instanceof z.ZodError) {
