@@ -118,6 +118,8 @@ export async function scoreInterview({
   major,
   questions,
 }: ScoreInterviewParams): Promise<EvaluationJson> {
+  // Store questions for transformation if needed
+  const inputQuestions = questions;
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     throw new Error("OPENAI_API_KEY environment variable is not set");
