@@ -1656,10 +1656,11 @@ const tokenRateLimiter = rateLimit({
   app.post("/webhooks/elevenlabs", async (req: any, res) => {
     try {
       // Check if this is a tool call (x-api-secret) vs automatic webhook (HMAC signature)
-      // Express normalizes headers to lowercase, but check both cases for safety
-      const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['Elevenlabs-Signature'] || req.headers['xi-elevenlabs-signature'];
-      const apiSecretHeader = req.headers['x-api-secret'] || req.headers['X-Api-Secret'] || req.headers['X-API-Secret'];
-      const isToolCall = !signatureHeader && !!apiSecretHeader;
+      // Express normalizes headers to lowercase, so check lowercase first
+      const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['xi-elevenlabs-signature'];
+      // Express normalizes to lowercase, but check both for safety
+      const apiSecretHeader = (req.headers['x-api-secret'] || req.headers['X-Api-Secret'] || req.headers['X-API-Secret'] || '').toString();
+      const isToolCall = !signatureHeader && apiSecretHeader.length > 0;
       
       console.log('[WEBHOOK] Request received', {
         hasSignatureHeader: !!signatureHeader,
