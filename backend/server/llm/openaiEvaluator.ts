@@ -206,10 +206,35 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       throw new Error(`Failed to parse OpenAI response as JSON: ${parseError.message}`);
     }
 
-    // Validate with Zod (ensures schema compliance)
-    const validated = EvaluationJsonSchema.parse(parsed);
+    // Log what we received for debugging
+    console.log('[OPENAI_EVALUATOR] Raw OpenAI response:', {
+      hasOverallScore: 'overall_score' in parsed,
+      hasOverallStrengths: 'overall_strengths' in parsed,
+      hasOverallImprovements: 'overall_improvements' in parsed,
+      hasQuestions: 'questions' in parsed,
+      questionsCount: parsed.questions?.length || 0,
+      keys: Object.keys(parsed),
+      parsedPreview: JSON.stringify(parsed).substring(0, 500),
+    });
 
-    return validated;
+    // Validate with Zod (ensures schema compliance)
+    try {
+      const validated = EvaluationJsonSchema.parse(parsed);
+      return validated;
+    } catch (zodError: any) {
+      if (zodError instanceof z.ZodError) {
+        console.error('[OPENAI_EVALUATOR] Schema validation failed. Received:', {
+          keys: Object.keys(parsed),
+          overallScore: parsed.overall_score,
+          overallStrengths: parsed.overall_strengths,
+          overallImprovements: parsed.overall_improvements,
+          questions: parsed.questions,
+          errors: zodError.errors.map(e => `${e.path.join('.')}: ${e.message}`),
+        });
+        throw new Error(`Schema validation failed: ${zodError.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(", ")}`);
+      }
+      throw zodError;
+    }
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       throw new Error(`Schema validation failed: ${error.errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);

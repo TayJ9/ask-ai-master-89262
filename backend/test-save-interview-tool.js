@@ -16,7 +16,12 @@
  * Environment Variables:
  *   - API_BASE_URL: Your Railway backend URL (default: http://localhost:3000)
  *   - ELEVENLABS_API_KEY: Your ElevenLabs API key (for x-api-secret header)
- *   - TEST_USER_ID: A valid user UUID from your database (optional, will use test UUID)
+ *   - TEST_USER_ID: A valid user UUID from your database (REQUIRED - must exist in profiles table)
+ * 
+ * Note: TEST_USER_ID must be a real user ID that exists in your database's profiles table.
+ * You can get a real user ID by:
+ *   1. Creating a test user via /api/auth/signup
+ *   2. Querying your database: SELECT id FROM profiles LIMIT 1;
  */
 
 import { randomUUID } from 'crypto';
@@ -57,7 +62,17 @@ args.forEach(arg => {
 // Get API key from: command-line arg > environment variable > .env file
 const API_BASE_URL = process.env.API_BASE_URL || envVars.API_BASE_URL || 'http://localhost:3000';
 const ELEVENLABS_API_KEY = apiKeyFromArgs || process.env.ELEVENLABS_API_KEY || envVars.ELEVENLABS_API_KEY;
-const TEST_USER_ID = process.env.TEST_USER_ID || envVars.TEST_USER_ID || randomUUID();
+const TEST_USER_ID = process.env.TEST_USER_ID || envVars.TEST_USER_ID;
+
+// Parse user_id from command line if provided
+let userIdFromArgs = null;
+args.forEach(arg => {
+  if (arg.startsWith('--user-id=')) {
+    userIdFromArgs = arg.split('=')[1].replace(/^["']|["']$/g, '');
+  }
+});
+
+const finalUserId = userIdFromArgs || TEST_USER_ID;
 
 // Sample transcript with Q&A pairs for testing
 const SAMPLE_TRANSCRIPT = `Interviewer: Hello! Can you tell me about yourself?
@@ -75,7 +90,7 @@ Candidate: I start by reproducing the issue, then I analyze the logs and use deb
 async function testSaveInterviewTool() {
   console.log('🧪 Testing SaveInterviewResults Tool Call\n');
   console.log(`API Base URL: ${API_BASE_URL}`);
-  console.log(`Test User ID: ${TEST_USER_ID}`);
+  console.log(`Test User ID: ${finalUserId || 'NOT SET'}`);
   console.log(`Using API Key: ${ELEVENLABS_API_KEY ? `${ELEVENLABS_API_KEY.substring(0, 8)}...` : 'NOT SET'}\n`);
 
   if (!ELEVENLABS_API_KEY) {
@@ -85,6 +100,19 @@ async function testSaveInterviewTool() {
     console.error('   2. Environment variable: $env:ELEVENLABS_API_KEY="your-key"; node test-save-interview-tool.js');
     console.error('   3. .env file: Create backend/.env with ELEVENLABS_API_KEY=your-key');
     console.error('\n⚠️  The API key is never stored in code or committed to git.');
+    process.exit(1);
+  }
+
+  if (!finalUserId) {
+    console.error('❌ ERROR: TEST_USER_ID is required!');
+    console.error('\n💡 The user_id must exist in your database\'s profiles table.');
+    console.error('   Ways to provide it:');
+    console.error('   1. Command-line: node test-save-interview-tool.js --user-id="uuid-here"');
+    console.error('   2. Environment variable: $env:TEST_USER_ID="uuid-here"; node test-save-interview-tool.js');
+    console.error('   3. .env file: Create backend/.env with TEST_USER_ID=uuid-here');
+    console.error('\n💡 To get a real user ID:');
+    console.error('   - Create a test user via POST /api/auth/signup');
+    console.error('   - Or query your database: SELECT id FROM profiles LIMIT 1;');
     process.exit(1);
   }
 
@@ -99,7 +127,7 @@ async function testSaveInterviewTool() {
     conversation_id: conversationId,
     transcript: SAMPLE_TRANSCRIPT,
     duration: 180, // 3 minutes in seconds
-    user_id: TEST_USER_ID,
+    user_id: finalUserId,
     agent_id: agentId,
     started_at: startedAt,
     ended_at: endedAt,
@@ -109,7 +137,7 @@ async function testSaveInterviewTool() {
   console.log('📤 Sending tool call to /webhooks/elevenlabs...');
   console.log(`   Conversation ID: ${conversationId}`);
   console.log(`   Transcript length: ${SAMPLE_TRANSCRIPT.length} chars`);
-  console.log(`   User ID: ${TEST_USER_ID}`);
+  console.log(`   User ID: ${finalUserId}`);
   console.log(`   Agent ID: ${agentId}\n`);
 
   try {
