@@ -231,7 +231,7 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
         ...parsed,
         questions: parsed.evaluations.map((evalItem: any, index: number) => {
           // Find the corresponding question from our input
-          const qaPair = questions[index];
+          const qaPair = inputQuestions[index];
           return {
             question: qaPair?.question || evalItem.question || `Question ${index + 1}`,
             answer: qaPair?.answer || evalItem.answer || '',
