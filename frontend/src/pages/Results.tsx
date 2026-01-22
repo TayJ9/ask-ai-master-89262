@@ -9,7 +9,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useLocation } from "wouter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw, ArrowLeft } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Loader2, CheckCircle2, AlertCircle, RefreshCw, ArrowLeft, Home, Clock } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 
@@ -340,48 +341,65 @@ export default function Results() {
     let currentStep = 1;
     if (results?.evaluation) {
       if (results.evaluation.status === 'processing') {
-        currentStep = 2; // Transcribing
+        currentStep = 3; // Generating feedback
       } else if (results.evaluation.status === 'pending') {
-        currentStep = 2; // Still transcribing or starting processing
+        currentStep = 2; // Transcribing
       }
     } else {
       currentStep = 1; // Just saved
     }
 
+    // Calculate progress percentage
+    const progressPercentage = Math.round((currentStep / PROCESSING_STEPS.length) * 100);
+    const elapsedTime = pollStartTime ? Math.floor((Date.now() - pollStartTime) / 1000) : 0;
+    const estimatedTimeRemaining = Math.max(0, 60 - elapsedTime);
+
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-        <Card className="w-full max-w-lg">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 py-4 px-4">
+        <Card className="w-full max-w-lg shadow-lg">
           <CardHeader>
             <CardTitle className="text-2xl text-center">Processing Your Interview</CardTitle>
+            <p className="text-sm text-center text-gray-600 mt-2">
+              This usually takes 30-60 seconds
+            </p>
           </CardHeader>
           <CardContent className="pt-6">
             <div className="flex flex-col gap-6">
+              {/* Overall Progress Bar */}
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-600 font-medium">Overall Progress</span>
+                  <span className="text-blue-600 font-semibold">{progressPercentage}%</span>
+                </div>
+                <Progress value={progressPercentage} className="h-3" />
+              </div>
+
               {/* Progress Stepper */}
               <div className="space-y-4">
                 {PROCESSING_STEPS.map((step) => {
-                  const isCompleted = step.id < currentStep || (step.id === currentStep && step.completed);
-                  const isActive = step.id === currentStep && !step.completed;
+                  const isCompleted = step.id < currentStep;
+                  const isActive = step.id === currentStep;
                   
                   return (
                     <div
                       key={step.id}
                       className={`flex items-center gap-4 transition-all duration-300 ${
-                        isActive ? 'opacity-100' : isCompleted ? 'opacity-100' : 'opacity-60'
+                        isActive ? 'opacity-100 scale-105' : isCompleted ? 'opacity-100' : 'opacity-60'
                       }`}
                     >
                       {/* Step Indicator */}
                       <div className="flex-shrink-0">
                         {isCompleted ? (
-                          <div className="w-8 h-8 rounded-full bg-green-500 flex items-center justify-center">
-                            <CheckCircle2 className="w-5 h-5 text-white" />
+                          <div className="w-10 h-10 rounded-full bg-green-500 flex items-center justify-center shadow-md">
+                            <CheckCircle2 className="w-6 h-6 text-white" />
                           </div>
                         ) : isActive ? (
-                          <div className="w-8 h-8 rounded-full bg-blue-500 flex items-center justify-center">
-                            <Loader2 className="w-5 h-5 text-white animate-spin" />
+                          <div className="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center shadow-md animate-pulse">
+                            <Loader2 className="w-6 h-6 text-white animate-spin" />
                           </div>
                         ) : (
-                          <div className="w-8 h-8 rounded-full bg-gray-300 flex items-center justify-center">
-                            <div className="w-3 h-3 rounded-full bg-white" />
+                          <div className="w-10 h-10 rounded-full bg-gray-300 flex items-center justify-center">
+                            <div className="w-4 h-4 rounded-full bg-white" />
                           </div>
                         )}
                       </div>
@@ -389,16 +407,21 @@ export default function Results() {
                       {/* Step Text */}
                       <div className="flex-1">
                         <p
-                          className={`text-sm font-medium transition-colors duration-300 ${
+                          className={`text-base font-medium transition-colors duration-300 ${
                             isCompleted
                               ? 'text-green-600'
                               : isActive
-                              ? 'text-blue-600'
+                              ? 'text-blue-600 font-semibold'
                               : 'text-gray-500'
                           }`}
                         >
                           {step.text}
                         </p>
+                        {isActive && estimatedTimeRemaining > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            Estimated time remaining: ~{estimatedTimeRemaining}s
+                          </p>
+                        )}
                       </div>
                     </div>
                   );
@@ -411,6 +434,7 @@ export default function Results() {
                   onClick={handleReturnToDashboard}
                   variant="outline"
                   className="w-full"
+                  aria-label="Return to dashboard"
                 >
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Return to Dashboard
@@ -426,22 +450,34 @@ export default function Results() {
   // Render Error UI
   if (error && !results) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-        <Card className="w-full max-w-md">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 py-4 px-4">
+        <Card className="w-full max-w-md shadow-lg">
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-4">
-              <AlertCircle className="h-8 w-8 text-red-600" />
+              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertCircle className="h-8 w-8 text-red-600" />
+              </div>
               <div className="text-center">
-                <h2 className="text-xl font-semibold mb-2">Unable to Load Results</h2>
-                <p className="text-gray-600 text-sm mb-4">{error}</p>
-                <div className="flex gap-2 justify-center">
-                  <Button onClick={handleRetry} variant="outline">
+                <h2 className="text-xl font-semibold mb-2 text-gray-900">Unable to Load Results</h2>
+                <p className="text-gray-600 text-sm mb-6">{error}</p>
+                <div className="flex flex-col sm:flex-row gap-2 justify-center">
+                  <Button 
+                    onClick={handleRetry} 
+                    variant="default"
+                    className="min-w-[120px]"
+                    aria-label="Retry loading results"
+                  >
                     <RefreshCw className="h-4 w-4 mr-2" />
                     Retry
                   </Button>
-                  <Button onClick={handleReturnToDashboard} variant="outline">
+                  <Button 
+                    onClick={handleReturnToDashboard} 
+                    variant="outline"
+                    className="min-w-[120px]"
+                    aria-label="Return to dashboard"
+                  >
                     <ArrowLeft className="h-4 w-4 mr-2" />
-                    Return to Dashboard
+                    Dashboard
                   </Button>
                 </div>
               </div>
@@ -460,27 +496,55 @@ export default function Results() {
   // Show Results UI if completed or if we have data (even if evaluation failed)
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8 px-4">
-        <div className="max-w-4xl mx-auto">
-          <Card className="mb-6">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-2xl">Interview Results</CardTitle>
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-4 sm:py-8 px-4">
+        <div className="max-w-4xl mx-auto space-y-6">
+          {/* Breadcrumb Navigation */}
+          <nav className="flex items-center gap-2 text-sm text-gray-600" aria-label="Breadcrumb">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={goToDashboard}
+              className="h-auto p-0 text-gray-600 hover:text-gray-900"
+              aria-label="Return to dashboard"
+            >
+              <Home className="h-4 w-4 mr-1" />
+              Dashboard
+            </Button>
+            <span>/</span>
+            <span className="text-gray-900 font-medium">Interview Results</span>
+          </nav>
+
+          {/* Main Results Card */}
+          <Card className="mb-6 shadow-lg">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <CardTitle className="text-2xl sm:text-3xl mb-1">Interview Results</CardTitle>
+                  {results.interview?.durationSeconds && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600">
+                      <Clock className="h-4 w-4" />
+                      <span>
+                        Duration: {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
+                      </span>
+                    </div>
+                  )}
+                </div>
                 {overallScore !== null && (
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-5 w-5 text-green-600" />
-                    <span className="text-lg font-semibold">Score: {overallScore}/100</span>
+                  <div className="flex flex-col items-center sm:items-end gap-2 bg-gradient-to-br from-blue-50 to-indigo-50 p-4 rounded-lg border-2 border-blue-200 min-w-[140px]">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle2 className="h-6 w-6 text-green-600" />
+                      <span className="text-2xl font-bold text-gray-900">{overallScore}</span>
+                      <span className="text-lg text-gray-600">/100</span>
+                    </div>
+                    <Progress value={overallScore} className="w-full h-2" />
+                    <span className="text-xs text-gray-600 font-medium">
+                      {overallScore >= 80 ? 'Excellent' : overallScore >= 60 ? 'Good' : overallScore >= 40 ? 'Fair' : 'Needs Improvement'}
+                    </span>
                   </div>
                 )}
               </div>
             </CardHeader>
             <CardContent>
-              {/* Interview Info */}
-              {results.interview?.durationSeconds && (
-                <p className="text-gray-600 text-sm mb-4">
-                  Duration: {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
-                </p>
-              )}
 
               {/* Evaluation Failed Message */}
               {evalStatus === 'failed' && results.evaluation && (
@@ -551,53 +615,66 @@ export default function Results() {
                       <CardContent>
                         <div className="space-y-6">
                           {results.evaluation.evaluation.questions.map((qa, index) => (
-                            <div key={index} className="border-l-4 border-blue-500 pl-4 pb-4 last:pb-0">
-                              <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-lg font-semibold text-gray-900">Question {index + 1}</h3>
-                                <span className="text-sm font-medium bg-blue-100 text-blue-800 px-3 py-1 rounded-full">
-                                  Score: {qa.score}/100
-                                </span>
-                              </div>
-                              
-                              <div className="mb-3">
-                                <p className="text-sm font-medium text-gray-600 mb-1">Question:</p>
-                                <p className="text-gray-800">{qa.question}</p>
-                              </div>
-                              
-                              <div className="mb-3">
-                                <p className="text-sm font-medium text-gray-600 mb-1">Your Answer:</p>
-                                <p className="text-gray-700">{qa.answer}</p>
-                              </div>
-                              
-                              {qa.strengths?.length > 0 && (
-                                <div className="mb-3">
-                                  <h4 className="text-sm font-semibold text-green-700 mb-1">Strengths:</h4>
-                                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
-                                    {qa.strengths.map((strength, i) => (
-                                      <li key={i}>{strength}</li>
-                                    ))}
-                                  </ul>
+                            <Card key={index} className="border-l-4 border-l-blue-500 shadow-sm">
+                              <CardContent className="pt-6">
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
+                                  <h3 className="text-lg font-semibold text-gray-900">Question {index + 1}</h3>
+                                  <div className="flex items-center gap-2">
+                                    <Progress value={qa.score} className="w-24 h-2" />
+                                    <span className="text-sm font-semibold bg-blue-100 text-blue-800 px-3 py-1 rounded-full whitespace-nowrap">
+                                      {qa.score}/100
+                                    </span>
+                                  </div>
                                 </div>
-                              )}
-                              
-                              {qa.improvements?.length > 0 && (
-                                <div className="mb-3">
-                                  <h4 className="text-sm font-semibold text-orange-700 mb-1">Areas for Improvement:</h4>
-                                  <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
-                                    {qa.improvements.map((improvement, i) => (
-                                      <li key={i}>{improvement}</li>
-                                    ))}
-                                  </ul>
+                                
+                                <div className="space-y-4">
+                                  <div className="bg-gray-50 p-3 rounded-md">
+                                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Question:</p>
+                                    <p className="text-gray-900 font-medium">{qa.question}</p>
+                                  </div>
+                                  
+                                  <div className="bg-gray-50 p-3 rounded-md">
+                                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Your Answer:</p>
+                                    <p className="text-gray-800">{qa.answer}</p>
+                                  </div>
+                                  
+                                  {qa.strengths?.length > 0 && (
+                                    <div className="bg-green-50 border border-green-200 p-4 rounded-md">
+                                      <h4 className="text-sm font-semibold text-green-700 mb-2 flex items-center gap-2">
+                                        <CheckCircle2 className="h-4 w-4" />
+                                        Strengths
+                                      </h4>
+                                      <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        {qa.strengths.map((strength, i) => (
+                                          <li key={i}>{strength}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  
+                                  {qa.improvements?.length > 0 && (
+                                    <div className="bg-orange-50 border border-orange-200 p-4 rounded-md">
+                                      <h4 className="text-sm font-semibold text-orange-700 mb-2 flex items-center gap-2">
+                                        <AlertCircle className="h-4 w-4" />
+                                        Areas for Improvement
+                                      </h4>
+                                      <ul className="list-disc list-inside text-sm text-gray-700 space-y-1">
+                                        {qa.improvements.map((improvement, i) => (
+                                          <li key={i}>{improvement}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                  
+                                  {qa.sample_better_answer && (
+                                    <div className="bg-blue-50 border-2 border-blue-200 p-4 rounded-md">
+                                      <h4 className="text-sm font-semibold text-blue-700 mb-2">💡 Sample Better Answer:</h4>
+                                      <p className="text-sm text-gray-800 leading-relaxed">{qa.sample_better_answer}</p>
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                              
-                              {qa.sample_better_answer && (
-                                <div className="mt-3 p-3 bg-blue-50 rounded-md border border-blue-200">
-                                  <h4 className="text-sm font-semibold text-blue-700 mb-1">Sample Better Answer:</h4>
-                                  <p className="text-sm text-gray-700">{qa.sample_better_answer}</p>
-                                </div>
-                              )}
-                            </div>
+                              </CardContent>
+                            </Card>
                           ))}
                         </div>
                       </CardContent>
@@ -668,6 +745,9 @@ export default function Results() {
                 <Button 
                   onClick={handleReturnToDashboard}
                   variant="outline"
+                  size="lg"
+                  className="min-w-[200px]"
+                  aria-label="Return to dashboard"
                 >
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Return to Dashboard
@@ -682,14 +762,17 @@ export default function Results() {
 
   // Loading state (initial load)
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
-      <Card className="w-full max-w-md">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 py-4 px-4">
+      <Card className="w-full max-w-md shadow-lg">
         <CardContent className="pt-6">
           <div className="flex flex-col items-center gap-4">
-            <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+            <div className="relative">
+              <Loader2 className="h-10 w-10 animate-spin text-blue-600" />
+              <div className="absolute inset-0 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" style={{ animationDuration: '1s' }} />
+            </div>
             <div className="text-center">
-              <h2 className="text-xl font-semibold mb-2">Loading Results</h2>
-              <p className="text-gray-600 text-sm">Please wait...</p>
+              <h2 className="text-xl font-semibold mb-2 text-gray-900">Loading Results</h2>
+              <p className="text-gray-600 text-sm">Fetching your interview data...</p>
             </div>
           </div>
         </CardContent>

@@ -426,7 +426,7 @@ export default function Index() {
   return (
     <>
       {(
-        <div className="fixed top-4 right-4 flex gap-2 z-50">
+        <div className="fixed top-2 right-2 sm:top-4 sm:right-4 flex flex-wrap gap-2 z-50 max-w-[calc(100vw-1rem)]">
           {currentView === "resume" && (
             <Button
               onClick={() => {
@@ -435,31 +435,34 @@ export default function Index() {
                 setResumeText("");
               }}
               variant="outline"
-              className="gap-2 bg-card shadow-md"
+              className="gap-2 bg-card shadow-md text-xs sm:text-sm"
+              aria-label="Go back to role selection"
             >
-              <ArrowLeft className="w-4 h-4" />
-              Back
+              <ArrowLeft className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">Back</span>
             </Button>
           )}
           {currentView === "roles" && (
             <Button
               onClick={() => setCurrentView("history")}
               variant="outline"
-              className="gap-2 bg-card shadow-md"
+              className="gap-2 bg-card shadow-md text-xs sm:text-sm"
               data-testid="button-view-history"
+              aria-label="View interview history"
             >
-              <History className="w-4 h-4" />
-              History
+              <History className="w-3 h-3 sm:w-4 sm:h-4" />
+              <span className="hidden sm:inline">History</span>
             </Button>
           )}
           <Button
             onClick={handleSignOut}
             variant="outline"
-            className="gap-2 bg-card shadow-md"
+            className="gap-2 bg-card shadow-md text-xs sm:text-sm"
             data-testid="button-signout"
+            aria-label="Sign out"
           >
-            <LogOut className="w-4 h-4" />
-            Sign Out
+            <LogOut className="w-3 h-3 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">Sign Out</span>
           </Button>
         </div>
       )}
