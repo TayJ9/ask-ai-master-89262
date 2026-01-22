@@ -1658,16 +1658,29 @@ const tokenRateLimiter = rateLimit({
       // Check if this is a tool call (x-api-secret) vs automatic webhook (HMAC signature)
       // Express normalizes headers to lowercase, so check lowercase first
       const signatureHeader = req.headers['elevenlabs-signature'] || req.headers['xi-elevenlabs-signature'];
-      // Express normalizes to lowercase, but check both for safety
-      const apiSecretHeader = (req.headers['x-api-secret'] || req.headers['X-Api-Secret'] || req.headers['X-API-Secret'] || '').toString();
-      const isToolCall = !signatureHeader && apiSecretHeader.length > 0;
+      // Express normalizes headers to lowercase - check all possible variations
+      const apiSecretHeader = req.headers['x-api-secret'] || req.headers['x-apisecret'] || req.headers['xapisecret'] || '';
+      const apiSecretHeaderStr = apiSecretHeader ? String(apiSecretHeader) : '';
+      const isToolCall = !signatureHeader && apiSecretHeaderStr.length > 0;
+      
+      // Debug: Log all headers to see what we're receiving
+      const relevantHeaders = Object.keys(req.headers)
+        .filter(h => h.toLowerCase().includes('api') || h.toLowerCase().includes('secret') || h.toLowerCase().includes('signature') || h.toLowerCase().includes('x-'))
+        .reduce((acc, key) => {
+          acc[key] = req.headers[key] ? `${String(req.headers[key]).substring(0, 10)}...` : 'missing';
+          return acc;
+        }, {} as Record<string, string>);
       
       console.log('[WEBHOOK] Request received', {
         hasSignatureHeader: !!signatureHeader,
         hasApiSecretHeader: !!apiSecretHeader,
-        apiSecretHeaderPrefix: apiSecretHeader ? `${apiSecretHeader.substring(0, 8)}...` : 'missing',
+        apiSecretHeaderValue: apiSecretHeaderStr ? `${apiSecretHeaderStr.substring(0, 8)}...` : 'missing',
+        apiSecretHeaderLength: apiSecretHeaderStr.length,
         isToolCall,
-        allHeaders: Object.keys(req.headers).filter(h => h.toLowerCase().includes('api') || h.toLowerCase().includes('secret') || h.toLowerCase().includes('signature')),
+        method: req.method,
+        path: req.path,
+        relevantHeaders,
+        allHeaderKeys: Object.keys(req.headers),
       });
       
       // req.body is Buffer when using express.raw()
