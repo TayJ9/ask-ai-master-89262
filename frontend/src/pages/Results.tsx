@@ -61,6 +61,33 @@ const PROCESSING_STEPS = [
 const POLL_INTERVAL = 3000; // 3 seconds
 const POLL_TIMEOUT = 60000; // 60 seconds
 
+// Format transcript with proper line breaks and speaker labels
+const formatTranscript = (transcript: string): string => {
+  if (!transcript) return '';
+  
+  // Try to detect speaker labels (Interviewer:, Candidate:, etc.)
+  const speakerPattern = /(Interviewer|Candidate|User|AI|Agent):\s*/gi;
+  
+  // If we find speaker labels, format with line breaks
+  if (speakerPattern.test(transcript)) {
+    return transcript
+      .replace(/(Interviewer|Candidate|User|AI|Agent):\s*/gi, '\n\n$&')
+      .trim()
+      .split('\n\n')
+      .filter(line => line.trim())
+      .join('\n\n');
+  }
+  
+  // If no speaker labels, try to split by sentences and add line breaks
+  return transcript
+    .replace(/\.\s+/g, '.\n\n')
+    .replace(/\?\s+/g, '?\n\n')
+    .replace(/!\s+/g, '!\n\n')
+    .split('\n\n')
+    .filter(line => line.trim())
+    .join('\n\n');
+};
+
 export default function Results() {
   const [location] = useLocation();
   const [, navigate] = useRoute("/");
@@ -561,8 +588,24 @@ export default function Results() {
                     <CardTitle>Transcript</CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="whitespace-pre-wrap text-sm text-gray-700">
-                      {results.interview.transcript}
+                    <div className="whitespace-pre-wrap text-sm text-gray-700 space-y-2">
+                      {formatTranscript(results.interview.transcript).split('\n\n').map((paragraph, i) => {
+                        // Check if this paragraph starts with a speaker label
+                        const speakerMatch = paragraph.match(/^(Interviewer|Candidate|User|AI|Agent):\s*(.*)$/i);
+                        if (speakerMatch) {
+                          const [, speaker, text] = speakerMatch;
+                          return (
+                            <p key={i} className="mb-3">
+                              <strong className="text-gray-900">{speaker}:</strong> {text}
+                            </p>
+                          );
+                        }
+                        return (
+                          <p key={i} className="mb-3">
+                            {paragraph}
+                          </p>
+                        );
+                      })}
                     </div>
                   </CardContent>
                 </Card>

@@ -280,6 +280,32 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       delete transformed.evaluations;
     }
 
+    // Ensure schema compliance: fix empty strengths arrays and short sample_better_answer fields
+    if (transformed.questions) {
+      transformed.questions = transformed.questions.map((q: any, index: number) => {
+        // Ensure strengths array has at least 1 item
+        if (!Array.isArray(q.strengths) || q.strengths.length === 0) {
+          q.strengths = ['Provided a response to the question'];
+        }
+        
+        // Ensure sample_better_answer is at least 20 characters
+        if (!q.sample_better_answer || q.sample_better_answer.length < 20) {
+          const qaPair = inputQuestions[index];
+          const defaultAnswer = qaPair?.answer 
+            ? `A more detailed answer would expand on: ${qaPair.answer.substring(0, 100)}...`
+            : 'A more comprehensive answer would provide specific examples and demonstrate deeper understanding of the topic.';
+          q.sample_better_answer = defaultAnswer.substring(0, 500);
+        }
+        
+        // Ensure improvements is an array
+        if (!Array.isArray(q.improvements)) {
+          q.improvements = [];
+        }
+        
+        return q;
+      });
+    }
+
     // Validate with Zod (ensures schema compliance)
     try {
       const validated = EvaluationJsonSchema.parse(transformed);
