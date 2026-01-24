@@ -16,15 +16,21 @@ export default defineConfig({
     proxy: {
       // Proxy API requests to the backend server
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'http://localhost:3000',
         changeOrigin: true,
         secure: false,
       },
       // Proxy WebSocket requests for voice interviews
       '/voice': {
-        target: 'ws://localhost:5000',
+        target: 'ws://localhost:3000',
         ws: true,
         changeOrigin: true,
+      },
+      // Proxy webhooks to backend
+      '/webhooks': {
+        target: 'http://localhost:3000',
+        changeOrigin: true,
+        secure: false,
       },
     },
   },

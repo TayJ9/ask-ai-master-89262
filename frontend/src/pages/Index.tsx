@@ -13,23 +13,25 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 
-// Cinematic dip-to-black for internal view transitions
-// Slower, smoother transitions matching route-level animations
+// Smooth, fast internal view transitions
 const viewTransition = {
-  duration: 0.7, // Slower for deliberate, cinematic feel
-  ease: [0.25, 0.1, 0.25, 1] as [number, number, number, number], // Smooth easeInOut curve
+  duration: 0.3, // Fast and responsive
+  ease: [0.22, 1, 0.36, 1] as [number, number, number, number], // Smooth easeOut curve
 };
 
-// Fade-to-black variants for internal views
+// Elegant fade variants for internal views
 const viewVariants = {
   initial: {
     opacity: 0,
+    scale: 0.98, // Slight scale for smooth appearance
   },
   animate: {
     opacity: 1,
+    scale: 1,
   },
   exit: {
     opacity: 0,
+    scale: 0.98,
   },
 };
 

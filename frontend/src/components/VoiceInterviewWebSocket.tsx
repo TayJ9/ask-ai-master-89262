@@ -8,12 +8,14 @@ import { useConversation } from "@elevenlabs/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, Volume2, Loader2, X, User, Headphones } from "lucide-react";
+import { Mic, Volume2, Loader2, X, User, Headphones, Volume1, VolumeX } from "lucide-react";
 import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import AudioVisualizer from "@/components/ui/AudioVisualizer";
 import { getApiUrl } from "@/lib/api";
 import { debugLog, initElevenWsDebug, shouldDebugEleven, elevenDebugConstants } from "@/lib/wsDebug";
+import { motion } from "framer-motion";
+import { useAmbientSound } from "@/hooks/useAmbientSound";
 
 const BUILD_ID = "eleven-resume-logging-v1";
 
@@ -78,6 +80,10 @@ export default function VoiceInterviewWebSocket({
   const [outputVolume, setOutputVolume] = useState(0);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [isTokenRequesting, setIsTokenRequesting] = useState(false);
+  
+  // Ambient sound state
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [soundVolume, setSoundVolume] = useState(0.3);
   
   // Connection guards to prevent race conditions
   const isStartingRef = useRef(false);
@@ -767,6 +773,12 @@ export default function VoiceInterviewWebSocket({
   };
 
   const conversationMode = getConversationMode();
+
+  // Ambient sound hook - only plays during processing state
+  const { isLoaded: soundsLoaded } = useAmbientSound(conversationMode, {
+    enabled: soundEnabled,
+    volume: soundVolume
+  });
 
   // Update status message based on mode
   useEffect(() => {
@@ -1622,6 +1634,20 @@ export default function VoiceInterviewWebSocket({
                   {isConnected ? 'Connected' : conversation.status === 'connecting' ? 'Connecting' : 'Disconnected'}
                 </div>
                 
+                {/* Sound Toggle Button */}
+                <Button
+                  onClick={() => setSoundEnabled(!soundEnabled)}
+                  variant={soundEnabled ? "default" : "outline"}
+                  size="sm"
+                  title={soundEnabled ? "Ambient sound enabled - click to disable" : "Ambient sound disabled - click to enable"}
+                >
+                  {soundEnabled ? (
+                    <Volume1 className="w-4 h-4" />
+                  ) : (
+                    <VolumeX className="w-4 h-4" />
+                  )}
+                </Button>
+                
               <Button
                 onClick={handleEndInterview}
                 variant="outline"
@@ -1635,35 +1661,63 @@ export default function VoiceInterviewWebSocket({
 
             {/* Idle State - Show Start Interview Button */}
             {isIdle && !isStarting && !isTokenRequesting ? (
-              <div className="flex flex-col items-center justify-center py-12">
-                <div className="text-center mb-8">
+              <motion.div 
+                className="flex flex-col items-center justify-center py-12"
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5, ease: "easeOut" }}
+              >
+                <motion.div 
+                  className="text-center mb-8"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.4, delay: 0.2 }}
+                >
                   <h3 className="text-xl font-semibold mb-2">Ready to Begin</h3>
                   <p className="text-muted-foreground max-w-md">
                     Click the button below to start your voice interview. 
                     You'll be asked to allow microphone access.
                   </p>
-                </div>
+                </motion.div>
                 
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ duration: 0.5, delay: 0.4 }}
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
                 <Button
                   onClick={handleStartClick}
                   size="lg"
                   disabled={isTokenRequesting || isStarting}
-                  className="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-primary to-primary/80 hover:from-primary/90 hover:to-primary/70 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <div className="flex flex-col items-center gap-2">
                     <Mic className="w-12 h-12" />
                     <span>Start Interview</span>
                   </div>
                 </Button>
+                </motion.div>
                 
-                <p className="text-xs text-muted-foreground mt-4">
+                <motion.p 
+                  className="text-xs text-muted-foreground mt-4"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ duration: 0.4, delay: 0.6 }}
+                >
                   Make sure you're in a quiet environment
-                </p>
-              </div>
+                </motion.p>
+              </motion.div>
             ) : (
               <>
             {/* Status Indicator - Clear visual feedback for each state */}
-            <div className="text-center mb-6">
+            <motion.div 
+              className="text-center mb-6"
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+            >
                   {!isConnected && isStarting ? (
                 <div className="flex items-center justify-center gap-2 text-yellow-600">
                   <Loader2 className="w-5 h-5 animate-spin" />
@@ -1690,10 +1744,15 @@ export default function VoiceInterviewWebSocket({
                       <span className="font-medium text-lg">Listening... Speak when ready</span>
                 </div>
               )}
-            </div>
+            </motion.div>
 
             {/* Audio Visualizer - Enhanced for better visibility */}
-            <div className="mb-6 flex flex-col items-center justify-center">
+            <motion.div 
+              className="mb-6 flex flex-col items-center justify-center"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.4, delay: 0.2 }}
+            >
               {/* Microphone Activity Indicator */}
               {isConnected && (
                 <div className="flex items-center gap-2 mb-2">
@@ -1713,7 +1772,7 @@ export default function VoiceInterviewWebSocket({
                   </div>
                 </div>
               )}
-              <div className={`transition-all duration-300 ${
+              <div className={`transition-all duration-300 w-full max-w-3xl mx-auto px-4 ${
                 conversationMode === 'user_speaking' 
                   ? 'scale-105 drop-shadow-lg' 
                   : conversationMode === 'ai_speaking'
@@ -1726,13 +1785,17 @@ export default function VoiceInterviewWebSocket({
                   mode={conversationMode}
                   width={700}
                   height={140}
-                  barCount={70}
                 />
               </div>
-            </div>
+            </motion.div>
 
                 {/* Microphone Status Indicator */}
-            <div className="flex flex-col items-center justify-center mb-6">
+            <motion.div 
+              className="flex flex-col items-center justify-center mb-6"
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.4, delay: 0.3 }}
+            >
               <div
                 className={`w-32 h-32 rounded-full flex items-center justify-center transition-all shadow-2xl cursor-default ${
                       isAiSpeaking
@@ -1771,7 +1834,7 @@ export default function VoiceInterviewWebSocket({
                       ? "Connecting..."
                       : "Listening - speak naturally"}
               </p>
-            </div>
+            </motion.div>
               </>
             )}
           </CardContent>

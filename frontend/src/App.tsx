@@ -7,25 +7,27 @@ import { AnimatePresence, motion } from "framer-motion";
 import Index from "./pages/Index";
 import Results from "./pages/Results";
 import NotFound from "./pages/NotFound";
+import InterviewPreview from "./pages/InterviewPreview";
 
-// Cinematic dip-to-black transition settings
-// Slower, more deliberate timing for premium feel
+// Smooth, fast page transition settings
 const transition = {
-  duration: 0.8, // Significantly slower for cinematic effect
-  ease: [0.25, 0.1, 0.25, 1] as [number, number, number, number], // Smooth easeInOut curve
+  duration: 0.4, // Fast and smooth
+  ease: [0.22, 1, 0.36, 1] as [number, number, number, number], // Smooth easeOut curve
 };
 
-// Cinematic fade-to-black animation variants
-// Pages fade out to black, then new page fades in from black
+// Elegant fade animation variants
 const pageVariants = {
   initial: {
     opacity: 0,
+    y: 10, // Slight upward movement for polish
   },
   animate: {
     opacity: 1,
+    y: 0,
   },
   exit: {
     opacity: 0,
+    y: -10, // Slight downward movement on exit
   },
 };
 
@@ -54,7 +56,7 @@ const AppContent = () => {
             position: "relative",
           }}
         >
-          {/* Black background that shows through when content fades out */}
+          {/* Soft warm background that shows through during transitions */}
           <div
             style={{
               position: "absolute",
@@ -62,13 +64,14 @@ const AppContent = () => {
               left: 0,
               right: 0,
               bottom: 0,
-              backgroundColor: "#000000",
-              zIndex: -1, // Behind content, visible when content opacity is 0
+              background: "#FFF8F0",
+              zIndex: -1, // Behind content
             }}
           />
           <Switch>
             <Route path="/" component={Index} />
             <Route path="/results" component={Results} />
+            <Route path="/interview-preview" component={InterviewPreview} />
             <Route component={NotFound} />
           </Switch>
         </motion.div>

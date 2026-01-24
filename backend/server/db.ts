@@ -1,9 +1,17 @@
+// Load environment variables FIRST
+import dotenv from 'dotenv';
+dotenv.config();
+
 import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
 import { Pool as PgPool } from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
+import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
+import Database from 'better-sqlite3';
 import ws from "ws";
 import * as schema from "../shared/schema";
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -11,25 +19,37 @@ if (!process.env.DATABASE_URL) {
   );
 }
 
-// Detect if we're using Neon (WebSocket) or standard PostgreSQL
+// Detect database type
+const isSqliteDatabase = process.env.DATABASE_URL.startsWith('file:');
 const isNeonDatabase = process.env.DATABASE_URL.includes('neon.tech') || 
                        process.env.DATABASE_URL.includes('neon') ||
                        process.env.USE_NEON === 'true';
 
-let pool: NeonPool | PgPool;
+let pool: NeonPool | PgPool | undefined;
 let db: ReturnType<typeof drizzlePg>;
 
-if (isNeonDatabase) {
+if (isSqliteDatabase) {
+  // Use SQLite for local development
+  const dbPath = process.env.DATABASE_URL.replace('file:', '');
+  console.log('🗄️  Using SQLite database:', dbPath);
+  
+  const sqlite = new Database(dbPath);
+  // Enable WAL mode for better concurrency
+  sqlite.pragma('journal_mode = WAL');
+  
+  db = drizzleSqlite(sqlite, { schema }) as any;
+  
+  console.log('✅ SQLite database connected successfully');
+} else if (isNeonDatabase) {
   // Use Neon serverless driver for Neon databases
   neonConfig.webSocketConstructor = ws;
   pool = new NeonPool({ connectionString: process.env.DATABASE_URL });
-  // Neon serverless might use different syntax, but try the same format
   db = drizzleNeon(pool as any, { schema }) as any;
+  
+  console.log('✅ Neon database connected successfully');
 } else {
   // Use standard PostgreSQL driver for Railway and other standard PostgreSQL instances
   pool = new PgPool({ connectionString: process.env.DATABASE_URL });
-  // Try the older API format: drizzle(pool, { schema })
-  // This might be the issue - drizzle-orm 0.29 might use different syntax
   db = drizzlePg(pool, { schema });
   
   // Debug: Verify db.query and db.query.profiles exist
@@ -52,6 +72,8 @@ if (isNeonDatabase) {
     console.error('   This means drizzle did not register the schema tables.');
     throw new Error('Drizzle schema tables not registered. Check schema export format.');
   }
+  
+  console.log('✅ PostgreSQL database connected successfully');
 }
 
 export { pool, db };

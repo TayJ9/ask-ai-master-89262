@@ -30,8 +30,10 @@
   "dependencies": {
     "@google-cloud/functions-framework": "^3.0.0",
     "@neondatabase/serverless": "^0.9.0",
+    "@types/better-sqlite3": "^7.6.13",
     "audio-resampler": "^1.0.1",
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.6.2",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "drizzle-orm": "^0.29.0",

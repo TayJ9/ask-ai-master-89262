@@ -17,6 +17,13 @@ export async function repairSchema(): Promise<void> {
   try {
     console.log('🔧 Running schema repair...');
 
+    // Skip schema repair for SQLite (tables already created by setup script)
+    const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+    if (isSqlite) {
+      console.log('✅ SQLite detected - skipping schema repair (not needed for SQLite)');
+      return;
+    }
+
     // Handle both Neon (pool.query) and standard PostgreSQL (pool.connect)
     const isNeon = process.env.DATABASE_URL?.includes('neon.tech') || 
                    process.env.DATABASE_URL?.includes('neon') ||

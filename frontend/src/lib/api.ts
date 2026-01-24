@@ -65,8 +65,18 @@ export class ApiError extends Error {
 /**
  * Handles API response errors and throws user-friendly errors
  */
-export async function handleApiResponse(response: Response): Promise<any> {
+export async function handleApiResponse(response: Response, path?: string): Promise<any> {
   if (!response.ok) {
+    // In development, if server returns 500 and we're on localhost, handle gracefully for non-critical endpoints
+    const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+    const isDevMode = import.meta.env.DEV;
+    const isNonCriticalEndpoint = path && (path.includes('/auth/') || path.includes('/conversation-token'));
+    
+    if (response.status === 500 && isDevMode && isLocalhost && isNonCriticalEndpoint) {
+      console.warn(`[API] Server returned 500 for ${path} (server may not be running). This is OK in development.`);
+      return null; // Return null for non-critical endpoints in dev when server returns 500
+    }
+    
     let errorData: any;
     let errorMessage = 'An error occurred';
     
@@ -160,11 +170,20 @@ export async function apiFetch(
     });
     
     clearTimeout(timeoutId);
-    return handleApiResponse(response);
+    return handleApiResponse(response, path);
   } catch (error: any) {
     clearTimeout(timeoutId);
     
+    // In development, if server is not available and we're on localhost, log but don't throw for non-critical endpoints
+    const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
+    const isDevMode = import.meta.env.DEV;
+    const isNonCriticalEndpoint = path.includes('/auth/') || path.includes('/conversation-token');
+    
     if (error.name === 'AbortError') {
+      if (isDevMode && isLocalhost && isNonCriticalEndpoint) {
+        console.warn(`[API] Request to ${path} timed out (server may not be running). This is OK in development.`);
+        return null; // Return null instead of throwing for non-critical endpoints in dev
+      }
       throw new ApiError('Request timed out. Please check your connection and try again.', 408);
     }
     
@@ -172,8 +191,12 @@ export async function apiFetch(
       throw error;
     }
     
-    // Network errors
-    if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError')) {
+    // Network errors - handle gracefully in dev mode
+    if (error.message?.includes('Failed to fetch') || error.message?.includes('NetworkError') || error.message?.includes('ERR_CONNECTION_REFUSED')) {
+      if (isDevMode && isLocalhost && isNonCriticalEndpoint) {
+        console.warn(`[API] Cannot connect to ${path} (server may not be running). This is OK in development.`);
+        return null; // Return null for non-critical endpoints in dev
+      }
       throw new ApiError(
         'Unable to connect to the server. Please check your internet connection.',
         0,

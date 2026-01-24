@@ -9,6 +9,7 @@ import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import { motion } from "framer-motion";
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => void;
@@ -292,9 +293,20 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
 
   return (
     <AnimatedBackground className="p-6 flex items-center justify-center">
-      <Card className="max-w-2xl w-full shadow-xl">
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: "easeOut" }}
+        className="max-w-2xl w-full"
+      >
+      <Card className="shadow-xl">
         <CardHeader>
-          <div className="flex items-start justify-between mb-2">
+          <motion.div 
+            className="flex items-start justify-between mb-2"
+            initial={{ opacity: 0, x: -20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.4, delay: 0.1 }}
+          >
             {onBack && (
               <Button
                 onClick={onBack}
@@ -307,15 +319,26 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               </Button>
             )}
             <div className="flex-1" />
-          </div>
-          <CardTitle className="text-3xl">Upload Your Resume</CardTitle>
-          <CardDescription className="text-base">
-            Upload your resume and provide your information to help personalize your interview.
-          </CardDescription>
+          </motion.div>
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.2 }}
+          >
+            <CardTitle className="text-3xl">Upload Your Resume</CardTitle>
+            <CardDescription className="text-base">
+              Upload your resume and provide your information to help personalize your interview.
+            </CardDescription>
+          </motion.div>
         </CardHeader>
         <CardContent className="space-y-6">
           {/* Candidate Information Fields */}
-          <div className="space-y-4">
+          <motion.div 
+            className="space-y-4"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.3 }}
+          >
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="firstName">First Name *</Label>
@@ -358,10 +381,15 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
                 </Select>
               </div>
             </div>
-          </div>
+          </motion.div>
 
           {/* File Upload Section */}
-          <div className="space-y-4">
+          <motion.div 
+            className="space-y-4"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.4 }}
+          >
             <div className="flex items-center gap-4">
               <input
                 ref={fileInputRef}
@@ -430,11 +458,16 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
                 Save Text
               </Button>
             </div>
-          </div>
+          </motion.div>
 
           {/* Resume Preview */}
           {resumeText && (
-            <div className="p-4 bg-muted rounded-lg space-y-2">
+            <motion.div 
+              className="p-4 bg-muted rounded-lg space-y-2"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.3 }}
+            >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Resume Preview</span>
                 <span className="text-xs text-muted-foreground">
@@ -444,11 +477,16 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
               <p className="text-sm text-muted-foreground line-clamp-3">
                 {resumeText}
               </p>
-            </div>
+            </motion.div>
           )}
 
           {/* Action Buttons */}
-          <div className="flex gap-3 pt-4">
+          <motion.div 
+            className="flex gap-3 pt-4"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.5 }}
+          >
             <Button
               onClick={onSkip}
               variant="outline"
@@ -463,9 +501,10 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
             >
               Continue with Resume
             </Button>
-          </div>
+          </motion.div>
         </CardContent>
       </Card>
+      </motion.div>
     </AnimatedBackground>
   );
 }

@@ -4,9 +4,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, Eye, EyeOff } from "lucide-react";
+import { Mic, Eye, EyeOff, Zap } from "lucide-react";
 import { z } from "zod";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import { useLocation } from "wouter";
 
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
@@ -27,6 +28,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
   const [passwordError, setPasswordError] = useState("");
   const [nameError, setNameError] = useState("");
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
 
   const validateEmail = useCallback((value: string) => {
     const result = emailSchema.safeParse(value);
@@ -257,6 +259,33 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             >
               {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
             </Button>
+
+            {/* Demo Mode Divider */}
+            <div className="relative my-6">
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full border-t border-gray-300"></div>
+              </div>
+              <div className="relative flex justify-center text-sm">
+                <span className="px-2 bg-white text-gray-500">Or</span>
+              </div>
+            </div>
+
+            {/* Quick Demo Button */}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=true')}
+              className="w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 shadow-md hover:shadow-lg transition-all duration-300"
+            >
+              <Zap className="w-4 h-4 mr-2" />
+              Try Quick Demo
+              <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+                No Sign-Up
+              </span>
+            </Button>
+            <p className="text-xs text-center text-gray-500">
+              See sample interview results instantly
+            </p>
           </form>
         </CardContent>
       </Card>

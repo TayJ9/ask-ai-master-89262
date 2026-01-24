@@ -179,6 +179,21 @@ export class DatabaseStorage implements IStorage {
 
   async checkDbConnection(): Promise<boolean> {
     try {
+      // Check if we're using SQLite (no pool)
+      const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+      
+      if (isSqlite) {
+        // For SQLite, just try a simple query using drizzle
+        await db.query.profiles.findFirst();
+        return true;
+      }
+      
+      // For PostgreSQL/Neon, use pool.query
+      if (!pool) {
+        console.error('   Pool is undefined - database connection not initialized');
+        return false;
+      }
+      
       // Handle both Neon serverless (pool.query) and standard PostgreSQL (pool.query)
       // Add a timeout to prevent hanging
       const queryPromise = (pool as any).query('SELECT 1');
