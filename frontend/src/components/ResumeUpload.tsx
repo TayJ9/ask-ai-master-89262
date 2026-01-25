@@ -294,18 +294,18 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   return (
     <AnimatedBackground className="p-6 flex items-center justify-center">
       <motion.div
-        initial={{ opacity: 0, y: 20 }}
+        initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
+        transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
         className="max-w-2xl w-full"
       >
       <Card className="shadow-xl">
         <CardHeader>
           <motion.div 
             className="flex items-start justify-between mb-2"
-            initial={{ opacity: 0, x: -20 }}
+            initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.4, delay: 0.1 }}
+            transition={{ duration: 0.3, delay: 0.08, ease: [0.33, 1, 0.68, 1] }}
           >
             {onBack && (
               <Button
@@ -335,9 +335,9 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
           {/* Candidate Information Fields */}
           <motion.div 
             className="space-y-4"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.3 }}
+            transition={{ duration: 0.3, delay: 0.18, ease: [0.33, 1, 0.68, 1] }}
           >
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
@@ -386,9 +386,9 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
           {/* File Upload Section */}
           <motion.div 
             className="space-y-4"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.4 }}
+            transition={{ duration: 0.3, delay: 0.18, ease: [0.33, 1, 0.68, 1] }}
           >
             <div className="flex items-center gap-4">
               <input
@@ -483,9 +483,9 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
           {/* Action Buttons */}
           <motion.div 
             className="flex gap-3 pt-4"
-            initial={{ opacity: 0, y: 10 }}
+            initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.5 }}
+            transition={{ duration: 0.3, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
           >
             <Button
               onClick={onSkip}

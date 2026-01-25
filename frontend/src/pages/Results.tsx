@@ -427,9 +427,9 @@ export default function Results() {
     return (
       <AnimatedBackground className="flex items-center justify-center py-4 px-4">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
             <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
@@ -555,9 +555,9 @@ export default function Results() {
     return (
       <AnimatedBackground className="flex items-center justify-center py-4 px-4">
         <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
+          initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.4 }}
+          transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
           <Card className="w-full max-w-md shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
@@ -667,9 +667,9 @@ export default function Results() {
           {/* Overall Score Badge - Wide Hero Banner */}
           {overallScore !== null && (
             <motion.div
-              initial={{ opacity: 0, y: -30 }}
+              initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ type: "spring", stiffness: 150, damping: 20, delay: 0.2 }}
+              transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1], delay: 0.15 }}
               className="mb-8"
             >
               <div
@@ -689,9 +689,9 @@ export default function Results() {
                   <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
                     {/* Left Panel - Interview Stats */}
                     <motion.div 
-                      initial={{ opacity: 0, x: -20 }}
+                      initial={{ opacity: 0, x: -10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.4 }}
+                      transition={{ duration: 0.3, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
@@ -778,9 +778,10 @@ export default function Results() {
                     
                     {/* Right Panel - Performance Insights */}
                     <motion.div 
-                      initial={{ opacity: 0, x: 20 }}
+                      initial={{ opacity: 0, x: 10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: 0.5 }}
+                      transition={{ duration: 0.3, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
+                      transition={{ duration: 0.3, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
@@ -1302,9 +1303,9 @@ export default function Results() {
   return (
     <AnimatedBackground className="flex items-center justify-center py-4 px-4">
       <motion.div
-        initial={{ opacity: 0, scale: 0.9 }}
+        initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.5 }}
+        transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
         className="relative z-10 w-full"
       >
         <Card className="w-full max-w-md shadow-xl border-0 bg-white/95">

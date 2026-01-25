@@ -20,28 +20,23 @@ export default function PageTransition({ children }: PageTransitionProps) {
   const [location] = useLocation();
 
   // Premium easing curve: smooth, elegant, non-linear
-  // cubic-bezier(0.4, 0, 0.2, 1) - Material Design's standard easing
+  // Optimized to prevent double pulse effect
   const transition = {
-    duration: 0.4,
-    ease: [0.4, 0, 0.2, 1] as [number, number, number, number],
+    duration: 0.3, // Slightly faster for snappier feel
+    ease: [0.25, 0.1, 0.25, 1] as [number, number, number, number], // Smooth ease-in-out
   };
 
-  // Animation variants for fade + subtle scale
+  // Animation variants - simplified to prevent double pulse
+  // Removed blur and scale to eliminate visual artifacts
   const variants = {
     initial: {
       opacity: 0,
-      scale: 0.98, // Subtle scale for depth
-      filter: "blur(4px)", // Subtle blur for premium feel
     },
     animate: {
       opacity: 1,
-      scale: 1,
-      filter: "blur(0px)",
     },
     exit: {
       opacity: 0,
-      scale: 1.02, // Slight scale up on exit for smoothness
-      filter: "blur(4px)",
     },
   };
 

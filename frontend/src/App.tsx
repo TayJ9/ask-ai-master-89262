@@ -9,27 +9,11 @@ import Results from "./pages/Results";
 import NotFound from "./pages/NotFound";
 import InterviewPreview from "./pages/InterviewPreview";
 
-// Smooth, fast page transition settings
-const transition = {
-  duration: 0.4, // Fast and smooth
-  ease: [0.22, 1, 0.36, 1] as [number, number, number, number], // Smooth easeOut curve
-};
+import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
 
-// Elegant fade animation variants
-const pageVariants = {
-  initial: {
-    opacity: 0,
-    y: 10, // Slight upward movement for polish
-  },
-  animate: {
-    opacity: 1,
-    y: 0,
-  },
-  exit: {
-    opacity: 0,
-    y: -10, // Slight downward movement on exit
-  },
-};
+// Smooth page transition settings - using shared animation config
+const transition = defaultFadeTransition;
+const pageVariants = fadeInVariants;
 
 const AppContent = () => {
   const [location] = useLocation();
@@ -66,6 +50,7 @@ const AppContent = () => {
               bottom: 0,
               background: "#FFF8F0",
               zIndex: -1, // Behind content
+              opacity: 0.95, // Slightly reduced to prevent white flash
             }}
           />
           <Switch>

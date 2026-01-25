@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
+import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
 import Auth from "@/components/Auth";
 import RoleSelection from "@/components/RoleSelection";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
@@ -13,27 +14,9 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 
-// Smooth, fast internal view transitions
-const viewTransition = {
-  duration: 0.3, // Fast and responsive
-  ease: [0.22, 1, 0.36, 1] as [number, number, number, number], // Smooth easeOut curve
-};
-
-// Elegant fade variants for internal views
-const viewVariants = {
-  initial: {
-    opacity: 0,
-    scale: 0.98, // Slight scale for smooth appearance
-  },
-  animate: {
-    opacity: 1,
-    scale: 1,
-  },
-  exit: {
-    opacity: 0,
-    scale: 0.98,
-  },
-};
+// Smooth internal view transitions - using shared animation config
+const viewTransition = defaultFadeTransition;
+const viewVariants = fadeInVariants;
 
 export default function Index() {
   const [location, setLocation] = useLocation();

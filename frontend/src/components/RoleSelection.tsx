@@ -46,9 +46,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
         {/* Heading with entrance animation */}
         <motion.div 
           className="text-center space-y-4 bg-white/60 backdrop-blur-sm px-8 py-6 rounded-2xl shadow-lg border border-white/30"
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, ease: "easeOut" }}
+          transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1] }}
         >
           <h1 className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Start Your Interview
@@ -61,9 +61,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
         {/* Buttons Section with Enhanced Card Background */}
         <motion.div 
           className="w-full max-w-md space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-2xl border border-white/40"
-          initial={{ opacity: 0, y: 20 }}
+          initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.4, ease: "easeOut" }}
+          transition={{ duration: 0.4, delay: 0.15, ease: [0.33, 1, 0.68, 1] }}
           style={{
             boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2), 0 0 40px rgba(255, 255, 255, 0.3)',
           }}

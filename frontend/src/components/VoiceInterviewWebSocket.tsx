@@ -18,6 +18,42 @@ import { useAmbientSound } from "@/hooks/useAmbientSound";
 
 const BUILD_ID = "eleven-resume-logging-v1";
 
+// ============================================================================
+// HELPER FUNCTIONS - Defined at top level to prevent TDZ issues
+// ============================================================================
+
+/**
+ * Generates a unique token request ID for API requests
+ */
+const generateTokenRequestId = (): string => {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
+    return crypto.randomUUID();
+  }
+  return `token-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+};
+
+// ============================================================================
+// CONSTANTS - Defined at top level to prevent TDZ issues
+// ============================================================================
+
+const MIC_TIMEOUT_MS = 5000;
+
+const PREFERRED_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: 1,
+  sampleRate: 16000,
+  sampleSize: 16
+};
+
+const FALLBACK_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  channelCount: 1
+};
+
+const MINIMAL_AUDIO_CONSTRAINTS = { audio: true };
+
 interface VoiceInterviewWebSocketProps {
   sessionId: string;
   firstName: string;
@@ -117,13 +153,6 @@ export default function VoiceInterviewWebSocket({
   const lastIsSpeakingRef = useRef<boolean>(false); // Track previous AI speaking state
   
   const { toast } = useToast();
-
-  const generateTokenRequestId = () => {
-    if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
-      return crypto.randomUUID();
-    }
-    return `token-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  };
 
   useEffect(() => {
     if (shouldDebugEleven()) {
@@ -1113,37 +1142,15 @@ export default function VoiceInterviewWebSocket({
       // ============================================
       console.log('Step 1: Requesting microphone access with optimized constraints...');
       
-      // FIX: Timeout guard on getUserMedia (5 seconds)
-      // Browsers can hang indefinitely if permission dialog is ignored
-      const MIC_TIMEOUT_MS = 5000;
-      
-      // CRITICAL: Request 16kHz sample rate for better compatibility and reduced crackling
-      // Many browsers and audio systems work better with 16kHz, reducing sample rate mismatches
-      const preferredConstraints: MediaTrackConstraints = {
-        echoCancellation: true,      // Critical for speaker output to prevent feedback
-        noiseSuppression: true,       // Enable for cleaner input
-        autoGainControl: true,        // Enable for consistent levels
-        channelCount: 1,              // Mono input
-        sampleRate: 16000,           // 16kHz for better compatibility (reduces crackling)
-        sampleSize: 16               // 16-bit depth
-      };
-      
-      // Fallback constraints if browser rejects preferred settings
-      const fallbackConstraints: MediaTrackConstraints = {
-        echoCancellation: true,      // Keep echo cancellation as minimum requirement
-        channelCount: 1              // Mono input
-      };
-      
-      // Minimal fallback (just audio permission)
-      const minimalConstraints = { audio: true };
+      // Use module-level constants defined at top of file to prevent TDZ issues
       
       try {
         // Attempt with preferred constraints first
         let micPromise: Promise<MediaStream>;
         
         try {
-          console.log('[AUDIO] Attempting microphone access with preferred constraints:', preferredConstraints);
-          micPromise = navigator.mediaDevices.getUserMedia({ audio: preferredConstraints });
+          console.log('[AUDIO] Attempting microphone access with preferred constraints:', PREFERRED_AUDIO_CONSTRAINTS);
+          micPromise = navigator.mediaDevices.getUserMedia({ audio: PREFERRED_AUDIO_CONSTRAINTS });
           
           const timeoutPromise = new Promise<never>((_, reject) => {
             setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
@@ -1163,7 +1170,7 @@ export default function VoiceInterviewWebSocket({
             console.warn('[AUDIO] Preferred constraints rejected, trying fallback constraints:', preferredError.message);
             
             try {
-              micPromise = navigator.mediaDevices.getUserMedia({ audio: fallbackConstraints });
+              micPromise = navigator.mediaDevices.getUserMedia({ audio: FALLBACK_AUDIO_CONSTRAINTS });
               const timeoutPromise = new Promise<never>((_, reject) => {
                 setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
               });
@@ -1177,7 +1184,7 @@ export default function VoiceInterviewWebSocket({
               
               // Last resort: minimal constraints
               console.warn('[AUDIO] Fallback constraints rejected, trying minimal constraints:', fallbackError.message);
-              micPromise = navigator.mediaDevices.getUserMedia(minimalConstraints);
+              micPromise = navigator.mediaDevices.getUserMedia(MINIMAL_AUDIO_CONSTRAINTS);
               const timeoutPromise = new Promise<never>((_, reject) => {
                 setTimeout(() => reject(new Error('TIMEOUT')), MIC_TIMEOUT_MS);
               });
@@ -1735,15 +1742,15 @@ export default function VoiceInterviewWebSocket({
             {isIdle && !isStarting && !isTokenRequesting ? (
               <motion.div 
                 className="flex flex-col items-center justify-center py-12"
-                initial={{ opacity: 0, scale: 0.9 }}
+                initial={{ opacity: 0, scale: 0.98 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
+                transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
               >
                 <motion.div 
                   className="text-center mb-8"
-                  initial={{ opacity: 0, y: 20 }}
+                  initial={{ opacity: 0, y: 8 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.2 }}
+                  transition={{ duration: 0.3, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
                 >
                   <h3 className="text-xl font-semibold mb-2">Ready to Begin</h3>
                   <p className="text-muted-foreground max-w-md">
@@ -1776,7 +1783,7 @@ export default function VoiceInterviewWebSocket({
                   className="text-xs text-muted-foreground mt-4"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ duration: 0.4, delay: 0.6 }}
+                  transition={{ duration: 0.3, delay: 0.3, ease: [0.33, 1, 0.68, 1] }}
                 >
                   Make sure you're in a quiet environment
                 </motion.p>
@@ -1786,9 +1793,9 @@ export default function VoiceInterviewWebSocket({
             {/* Status Indicator - Clear visual feedback for each state */}
             <motion.div 
               className="text-center mb-6"
-              initial={{ opacity: 0, y: -10 }}
+              initial={{ opacity: 0, y: -6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
+              transition={{ duration: 0.3, ease: [0.33, 1, 0.68, 1] }}
             >
                   {!isConnected && isStarting ? (
                 <div className="flex items-center justify-center gap-2 text-yellow-600">
@@ -1823,9 +1830,9 @@ export default function VoiceInterviewWebSocket({
             {/* Audio Visualizer - Enhanced for better visibility */}
             <motion.div 
               className="mb-6 flex flex-col items-center justify-center"
-              initial={{ opacity: 0, scale: 0.9 }}
+              initial={{ opacity: 0, scale: 0.98 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.4, delay: 0.2 }}
+              transition={{ duration: 0.3, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
             >
               {/* Microphone Activity Indicator */}
               {isConnected && (
