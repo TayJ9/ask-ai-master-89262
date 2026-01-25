@@ -608,7 +608,7 @@ export default function Results() {
                   <Sparkles className="h-6 w-6 animate-pulse" />
                   <div>
                     <p className="font-bold text-lg">Demo Mode</p>
-                    <p className="text-sm text-white/90">This is a sample interview showing what results look like</p>
+                    <p className="text-sm text-white/90">This is a sample interview with realistic fake resume and responses demonstrating the evaluation system</p>
                   </div>
                 </div>
                 <Button
