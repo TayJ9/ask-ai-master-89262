@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loading State Preview - Interview Processing</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        @keyframes scale {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
+        }
+        .animate-spin {
+            animation: spin 1s linear infinite;
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        .animate-scale {
+            animation: scale 2s ease-in-out infinite;
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+        .gradient-bg::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 1px, transparent 1px);
+            background-size: 50px 50px;
+            animation: move 20s linear infinite;
+        }
+        @keyframes move {
+            0% { transform: translate(0, 0); }
+            100% { transform: translate(50px, 50px); }
+        }
+    </style>
+</head>
+<body class="gradient-bg flex items-center justify-center p-4">
+    <div class="w-full max-w-lg">
+        <!-- Card Container -->
+        <div class="bg-white/95 backdrop-blur-sm rounded-lg shadow-2xl border-0 p-6">
+            <!-- Header -->
+            <div class="text-center mb-6">
+                <h2 class="text-2xl font-bold text-gray-900 mb-2">Processing Your Interview</h2>
+                <p class="text-sm text-gray-600">Analyzing your responses using AI...</p>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="mb-6 space-y-2">
+                <div class="flex items-center justify-between text-sm mb-2">
+                    <span class="text-gray-700 font-semibold">Overall Progress</span>
+                    <span class="text-blue-600 font-bold text-base">75%</span>
+                </div>
+                <div class="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <div class="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full transition-all duration-800 ease-out" style="width: 75%"></div>
+                </div>
+            </div>
+
+            <!-- Progress Stepper -->
+            <div class="space-y-4 mb-6">
+                <!-- Step 1: Completed -->
+                <div class="flex items-center gap-4 opacity-100">
+                    <div class="flex-shrink-0">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg ring-2 ring-green-200">
+                            <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-base font-medium text-green-600">Interview Saved</p>
+                    </div>
+                </div>
+
+                <!-- Step 2: Completed -->
+                <div class="flex items-center gap-4 opacity-100">
+                    <div class="flex-shrink-0">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg ring-2 ring-green-200">
+                            <svg class="w-7 h-7 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-base font-medium text-green-600">Processing Transcript...</p>
+                    </div>
+                </div>
+
+                <!-- Step 3: Active (Current) -->
+                <div class="flex items-center gap-4 opacity-100 scale-105">
+                    <div class="flex-shrink-0">
+                        <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg ring-2 ring-blue-200 animate-scale">
+                            <svg class="w-7 h-7 text-white animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-base font-semibold text-blue-600">Analyzing Responses...</p>
+                        <p class="text-xs text-blue-600 mt-1 font-medium">Analyzing 5 responses...</p>
+                        <p class="text-xs text-gray-500 mt-1">Estimated time remaining: ~15s</p>
+                    </div>
+                </div>
+
+                <!-- Step 4: Pending -->
+                <div class="flex items-center gap-4 opacity-60">
+                    <div class="flex-shrink-0">
+                        <div class="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center ring-2 ring-gray-100">
+                            <div class="w-5 h-5 rounded-full bg-white"></div>
+                        </div>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-base font-medium text-gray-500">Generating Feedback...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Return to Dashboard Button -->
+            <div class="pt-4 border-t">
+                <button class="w-full px-4 py-3 bg-white border-2 border-gray-300 rounded-lg text-gray-700 font-semibold hover:bg-gray-50 hover:border-gray-400 hover:text-gray-900 transition-all duration-200 flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path>
+                    </svg>
+                    Return to Dashboard
+                </button>
+            </div>
+        </div>
+
+        <!-- Additional States Preview -->
+        <div class="mt-8 text-center text-white/80 text-sm">
+            <p>💡 This preview shows Step 3 (Analyzing Responses) as active</p>
+            <p class="mt-2">The spinner animates and the step scales slightly to indicate activity</p>
+        </div>
+    </div>
+
+    <script>
+        // Simulate progress updates
+        let progress = 75;
+        const progressBar = document.querySelector('.bg-gradient-to-r');
+        
+        setInterval(() => {
+            if (progress < 100) {
+                progress += 0.5;
+                progressBar.style.width = Math.min(progress, 100) + '%';
+                document.querySelector('.text-blue-600.font-bold').textContent = Math.round(Math.min(progress, 100)) + '%';
+            }
+        }, 500);
+    </script>
+</body>
+</html>

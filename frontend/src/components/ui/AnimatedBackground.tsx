@@ -181,61 +181,78 @@ export default function AnimatedBackground({ className = "", children }: Animate
   }, []);
 
   return (
-    <div className={`relative min-h-screen overflow-hidden ${className}`} style={{ backgroundColor: '#D4A574' }}>
+    <div 
+      className={`relative min-h-screen overflow-hidden ${className}`} 
+      style={{ 
+        backgroundColor: '#D4A574',
+        transform: 'translateZ(0)', // GPU acceleration
+        willChange: 'auto',
+      }}
+    >
       {/* Enhanced Gradient Mesh Blobs - Warm Color Palette */}
       <div className="absolute inset-0 overflow-hidden z-[1]">
-        {/* Blob 1 - Top Left - Vibrant Orange */}
+        {/* Blob 1 - Top Left - Vibrant Orange - Reduced blur for performance */}
         <div
-          className="mesh-blob-1 absolute w-[700px] h-[700px] rounded-full blur-3xl will-change-transform"
+          className="mesh-blob-1 absolute w-[700px] h-[700px] rounded-full blur-2xl will-change-transform"
           style={{
             background: 'radial-gradient(circle, hsl(30, 100%, 68%) 0%, hsl(30, 100%, 58%) 25%, hsl(30, 100%, 48%) 50%, transparent 70%)',
             top: '-15%',
             left: '-15%',
             transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+            perspective: '1000px',
           }}
         />
         
-        {/* Blob 2 - Top Right - Warm Peach */}
+        {/* Blob 2 - Top Right - Warm Peach - Reduced blur for performance */}
         <div
-          className="mesh-blob-2 absolute w-[650px] h-[650px] rounded-full blur-3xl will-change-transform"
+          className="mesh-blob-2 absolute w-[650px] h-[650px] rounded-full blur-2xl will-change-transform"
           style={{
             background: 'radial-gradient(circle, hsl(20, 100%, 68%) 0%, hsl(20, 100%, 58%) 25%, hsl(20, 100%, 48%) 50%, transparent 70%)',
             top: '-10%',
             right: '-10%',
             transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+            perspective: '1000px',
           }}
         />
         
-        {/* Blob 3 - Bottom Left - Golden Yellow */}
+        {/* Blob 3 - Bottom Left - Golden Yellow - Reduced blur for performance */}
         <div
-          className="mesh-blob-3 absolute w-[680px] h-[680px] rounded-full blur-3xl will-change-transform"
+          className="mesh-blob-3 absolute w-[680px] h-[680px] rounded-full blur-2xl will-change-transform"
           style={{
             background: 'radial-gradient(circle, hsl(45, 100%, 65%) 0%, hsl(45, 100%, 55%) 25%, hsl(45, 100%, 45%) 50%, transparent 70%)',
             bottom: '-15%',
             left: '5%',
             transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+            perspective: '1000px',
           }}
         />
         
-        {/* Blob 4 - Bottom Right - Coral Red */}
+        {/* Blob 4 - Bottom Right - Coral Red - Reduced blur for performance */}
         <div
-          className="mesh-blob-4 absolute w-[620px] h-[620px] rounded-full blur-3xl will-change-transform"
+          className="mesh-blob-4 absolute w-[620px] h-[620px] rounded-full blur-2xl will-change-transform"
           style={{
             background: 'radial-gradient(circle, hsl(15, 100%, 68%) 0%, hsl(15, 100%, 58%) 25%, hsl(15, 100%, 48%) 50%, transparent 70%)',
             bottom: '-10%',
             right: '0%',
             transform: 'translateZ(0)',
+            backfaceVisibility: 'hidden',
+            perspective: '1000px',
           }}
         />
         
-        {/* Center Accent Blob - Peachy Orange */}
+        {/* Center Accent Blob - Peachy Orange - Reduced blur for performance */}
         <div
-          className="mesh-blob-2 absolute w-[500px] h-[500px] rounded-full blur-3xl will-change-transform"
+          className="mesh-blob-2 absolute w-[500px] h-[500px] rounded-full blur-2xl will-change-transform"
           style={{
             background: 'radial-gradient(circle, hsl(25, 100%, 72%) 0%, hsl(25, 100%, 62%) 30%, transparent 60%)',
             top: '40%',
             left: '50%',
             transform: 'translate(-50%, -50%) translateZ(0)',
+            backfaceVisibility: 'hidden',
+            perspective: '1000px',
           }}
         />
       </div>

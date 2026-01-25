@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, Volume2, Loader2, X, User, Headphones, Volume1, VolumeX } from "lucide-react";
-import AISpeakingIndicator from "@/components/ui/AISpeakingIndicator";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import AudioVisualizer from "@/components/ui/AudioVisualizer";
 import { getApiUrl } from "@/lib/api";
@@ -113,6 +112,9 @@ export default function VoiceInterviewWebSocket({
   const firstAudioChunkTimeRef = useRef<number | null>(null);
   const lastInputVolumeRef = useRef<number>(0);
   const userSpeechEndTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const wasUserSpeakingRef = useRef<boolean>(false); // Track if user was speaking to detect processing state
+  const processingTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Timeout to reset processing state
+  const lastIsSpeakingRef = useRef<boolean>(false); // Track previous AI speaking state
   
   const { toast } = useToast();
 
@@ -761,24 +763,84 @@ export default function VoiceInterviewWebSocket({
     if (conversation.status !== 'connected') {
       return 'processing';
     }
+    
     if (conversation.isSpeaking) {
       return 'ai_speaking';
     }
+    
     // Use input volume to detect user speaking - lowered threshold for better sensitivity
     // 0.03 allows detection of quieter speech while avoiding false positives
     if (inputVolume > 0.03) {
       return 'user_speaking';
     }
+    
+    // If user was speaking but now stopped, and AI hasn't started yet, show processing
+    if (wasUserSpeakingRef.current && !conversation.isSpeaking) {
+      return 'processing';
+    }
+    
     return 'listening';
   };
 
   const conversationMode = getConversationMode();
 
-  // Ambient sound hook - only plays during processing state
-  const { isLoaded: soundsLoaded } = useAmbientSound(conversationMode, {
+  // Determine if we should play ambient sound (only during actual processing, not during disconnection)
+  const shouldPlayAmbientSound = conversationMode === 'processing' && conversation.status === 'connected';
+
+  // Ambient sound hook - only plays during processing state when connected
+  const { isLoaded: soundsLoaded } = useAmbientSound(shouldPlayAmbientSound ? 'processing' : 'idle', {
     enabled: soundEnabled,
     volume: soundVolume
   });
+
+  // Track state transitions and manage processing state timeout
+  useEffect(() => {
+    if (!hasStarted || conversation.status !== 'connected') return;
+    
+    // Detect when AI finishes speaking (transitions from speaking to not speaking)
+    if (lastIsSpeakingRef.current && !conversation.isSpeaking) {
+      // AI just finished speaking - reset processing flag
+      wasUserSpeakingRef.current = false;
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
+    }
+    lastIsSpeakingRef.current = conversation.isSpeaking;
+    
+    // When AI starts speaking, clear processing state
+    if (conversation.isSpeaking) {
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
+      wasUserSpeakingRef.current = false;
+    }
+    
+    // When user is speaking, mark it and clear any processing timeout
+    if (inputVolume > 0.03) {
+      wasUserSpeakingRef.current = true;
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
+    }
+    
+    // If we're in processing state (user stopped speaking, AI hasn't started), set timeout
+    if (wasUserSpeakingRef.current && !conversation.isSpeaking && inputVolume <= 0.03) {
+      if (!processingTimeoutRef.current) {
+        processingTimeoutRef.current = setTimeout(() => {
+          console.log('[State Transition] Processing timeout - resetting to listening');
+          wasUserSpeakingRef.current = false;
+          processingTimeoutRef.current = null;
+        }, 10000); // 10 second timeout as safety mechanism
+      }
+    } else if (!wasUserSpeakingRef.current && processingTimeoutRef.current) {
+      // Clear timeout if we're no longer in processing state
+      clearTimeout(processingTimeoutRef.current);
+      processingTimeoutRef.current = null;
+    }
+  }, [conversation.isSpeaking, conversation.status, inputVolume, hasStarted]);
 
   // Update status message based on mode
   useEffect(() => {
@@ -797,6 +859,8 @@ export default function VoiceInterviewWebSocket({
       case 'processing':
         if (conversation.status === 'connecting') {
           setStatusMessage("Connecting...");
+        } else {
+          setStatusMessage("Processing your response...");
         }
         break;
     }
@@ -1576,6 +1640,14 @@ export default function VoiceInterviewWebSocket({
         userSpeechEndTimeoutRef.current = null;
       }
       
+      // Clean up processing state tracking
+      wasUserSpeakingRef.current = false;
+      lastIsSpeakingRef.current = false;
+      if (processingTimeoutRef.current) {
+        clearTimeout(processingTimeoutRef.current);
+        processingTimeoutRef.current = null;
+      }
+      
       // If interview completed successfully, skip any cleanup that might interfere with navigation
       // The navigation to /results should proceed without interference
       if (isComplete) {
@@ -1730,7 +1802,9 @@ export default function VoiceInterviewWebSocket({
                     </div>
                   ) : isAiSpeaking ? (
                 <div className="flex items-center justify-center gap-2 text-blue-600">
-                  <AISpeakingIndicator size="md" />
+                  <div className="flex items-center justify-center">
+                    <div className="w-5 h-5 bg-blue-600 rounded-full animate-pulse" />
+                  </div>
                       <span className="font-medium text-lg">AI is speaking...</span>
                 </div>
                   ) : conversationMode === 'user_speaking' ? (

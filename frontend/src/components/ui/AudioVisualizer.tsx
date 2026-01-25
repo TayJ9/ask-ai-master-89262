@@ -97,8 +97,14 @@ export default function AudioVisualizer({
   const mouseRef = useRef({ x: width / 2, y: height / 2 });
   const [paths, setPaths] = useState({ main: '', inner: '', outer: '' });
   const [particles, setParticles] = useState<Particle[]>([]);
-  const [shimmerOffset, setShimmerOffset] = useState(0);
+  const shimmerOffsetRef = useRef(0);
   const perlinRef = useRef(new PerlinNoise(Math.random() * 1000));
+  const activeVolumeRef = useRef(activeVolume);
+  
+  // Keep activeVolume ref in sync without triggering re-renders
+  useEffect(() => {
+    activeVolumeRef.current = activeVolume;
+  }, [activeVolume]);
 
   const activeVolume = mode === 'user_speaking' ? inputVolume : 
                        mode === 'ai_speaking' ? outputVolume : 
@@ -219,55 +225,62 @@ export default function AudioVisualizer({
     return pathData;
   };
 
-  // Ambient star field particle system - creates/updates starfield based on volume
+  // Ambient star field particle system - optimized to reduce re-renders
+  const particlesRef = useRef<Particle[]>([]);
+  const lastParticleUpdateRef = useRef(0);
+  
   const updateParticles = () => {
-    setParticles(prev => {
-      // Update existing particles with twinkling
-      const updated = prev.map(p => {
-        // Update twinkle phase
-        p.twinklePhase += p.twinkleSpeed;
-        
-        // Calculate opacity based on twinkle and global volume
-        const twinkle = Math.sin(p.twinklePhase) * 0.5 + 0.5; // 0 to 1
-        const volumeInfluence = 0.3 + activeVolume * 0.7; // Volume affects brightness
-        
-        p.currentOpacity = p.baseOpacity * twinkle * volumeInfluence;
-        
-        return p;
-      });
-
-      // Determine target particle count based on volume - EVEN MORE STARS!
-      const minParticles = 20;
-      const maxParticles = 120;
-      const targetCount = Math.floor(minParticles + (maxParticles - minParticles) * activeVolume);
-      
-      // Add particles if below target
-      if (updated.length < targetCount) {
-        const toAdd = Math.min(5, targetCount - updated.length); // Add faster
-        for (let i = 0; i < toAdd; i++) {
-          updated.push({
-            x: Math.random() * width,
-            y: Math.random() * height,
-            baseOpacity: 0.3 + Math.random() * 0.5,
-            currentOpacity: 0,
-            size: 1 + Math.random() * 0.8, // Tiny dots: 1-1.8px
-            twinkleSpeed: 0.02 + Math.random() * 0.04,
-            twinklePhase: Math.random() * Math.PI * 2,
-            pulseOffset: Math.random() * Math.PI * 2
-          });
-        }
-      }
-      
-      // Remove particles if above target (fade out the dimmest ones)
-      if (updated.length > targetCount) {
-        const toRemove = Math.min(4, updated.length - targetCount);
-        // Sort by current opacity and remove dimmest
-        updated.sort((a, b) => a.currentOpacity - b.currentOpacity);
-        updated.splice(0, toRemove);
-      }
-
-      return updated;
+    const now = Date.now();
+    // Only update particles every 100ms to reduce state updates
+    if (now - lastParticleUpdateRef.current < 100) {
+      return;
+    }
+    lastParticleUpdateRef.current = now;
+    
+    const currentVolume = activeVolumeRef.current;
+    
+    // Update existing particles with twinkling (mutate in place for performance)
+    particlesRef.current.forEach(p => {
+      p.twinklePhase += p.twinkleSpeed;
+      const twinkle = Math.sin(p.twinklePhase) * 0.5 + 0.5;
+      const volumeInfluence = 0.3 + currentVolume * 0.7;
+      p.currentOpacity = p.baseOpacity * twinkle * volumeInfluence;
     });
+
+    // Determine target particle count based on volume
+    const minParticles = 20;
+    const maxParticles = 80; // Reduced from 120 for better performance
+    const targetCount = Math.floor(minParticles + (maxParticles - minParticles) * currentVolume);
+    
+    // Add particles if below target
+    if (particlesRef.current.length < targetCount) {
+      const toAdd = Math.min(3, targetCount - particlesRef.current.length);
+      for (let i = 0; i < toAdd; i++) {
+        particlesRef.current.push({
+          x: Math.random() * width,
+          y: Math.random() * height,
+          baseOpacity: 0.3 + Math.random() * 0.5,
+          currentOpacity: 0,
+          size: 1 + Math.random() * 0.8,
+          twinkleSpeed: 0.02 + Math.random() * 0.04,
+          twinklePhase: Math.random() * Math.PI * 2,
+          pulseOffset: Math.random() * Math.PI * 2
+        });
+      }
+    }
+    
+    // Remove particles if above target (optimized - only sort when needed)
+    if (particlesRef.current.length > targetCount) {
+      const toRemove = Math.min(3, particlesRef.current.length - targetCount);
+      // Only sort if we need to remove particles
+      if (toRemove > 0) {
+        particlesRef.current.sort((a, b) => a.currentOpacity - b.currentOpacity);
+        particlesRef.current.splice(0, toRemove);
+      }
+    }
+
+    // Update state with new array reference to trigger re-render
+    setParticles([...particlesRef.current]);
   };
 
   // Mouse tracking
@@ -286,43 +299,53 @@ export default function AudioVisualizer({
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // Main animation loop
+  // Main animation loop - optimized to not restart on volume changes
   useEffect(() => {
     const centerX = width / 2;
     const centerY = height / 2;
     const baseRadius = Math.min(width, height) * 0.10;
+    let lastPathUpdate = 0;
 
     const animate = () => {
       animationFrameRef.current = requestAnimationFrame(animate);
 
+      const now = performance.now();
       noiseOffsetRef.current += 1;
       breathingRef.current += 0.02;
       
-      // Calculate velocity (rate of volume change) - MORE MOMENTUM
-      const volumeDelta = activeVolume - prevVolumeRef.current;
-      velocityRef.current = velocityRef.current * 0.85 + volumeDelta * 15; // Increased momentum
-      prevVolumeRef.current = activeVolume;
+      // Get current volume from ref (doesn't trigger re-render)
+      const currentVolume = activeVolumeRef.current;
       
-      // Rotation with momentum - MORE DRAMATIC
+      // Calculate velocity (rate of volume change)
+      const volumeDelta = currentVolume - prevVolumeRef.current;
+      velocityRef.current = velocityRef.current * 0.85 + volumeDelta * 15;
+      prevVolumeRef.current = currentVolume;
+      
+      // Rotation with momentum
       const targetRotationSpeed = (mode === 'user_speaking' || mode === 'ai_speaking')
-        ? 0.3 + activeVolume * 1.2 + Math.abs(velocityRef.current) * 0.6
+        ? 0.3 + currentVolume * 1.2 + Math.abs(velocityRef.current) * 0.6
         : mode === 'listening'
-        ? 0.15 + activeVolume * 0.4
+        ? 0.15 + currentVolume * 0.4
         : 0.08;
       
       rotationRef.current += targetRotationSpeed;
 
-      // Update shimmer
-      setShimmerOffset(prev => (prev + 2) % 360);
+      // Update shimmer offset (use ref, only update state occasionally)
+      shimmerOffsetRef.current = (shimmerOffsetRef.current + 2) % 360;
 
-      // Generate multi-layer paths
-      const mainPath = generateBlobPath(centerX, centerY, baseRadius, activeVolume, noiseOffsetRef.current, 0);
-      const innerPath = generateBlobPath(centerX, centerY, baseRadius, activeVolume, noiseOffsetRef.current, 0.5);
-      const outerPath = generateBlobPath(centerX, centerY, baseRadius, activeVolume, noiseOffsetRef.current, -0.3);
-      
-      setPaths({ main: mainPath, inner: innerPath, outer: outerPath });
+      // Throttle path updates to ~60fps max (update every ~16ms)
+      if (now - lastPathUpdate >= 16) {
+        lastPathUpdate = now;
+        
+        // Generate multi-layer paths
+        const mainPath = generateBlobPath(centerX, centerY, baseRadius, currentVolume, noiseOffsetRef.current, 0);
+        const innerPath = generateBlobPath(centerX, centerY, baseRadius, currentVolume, noiseOffsetRef.current, 0.5);
+        const outerPath = generateBlobPath(centerX, centerY, baseRadius, currentVolume, noiseOffsetRef.current, -0.3);
+        
+        setPaths({ main: mainPath, inner: innerPath, outer: outerPath });
+      }
 
-      // Update particles
+      // Update particles (throttled internally)
       updateParticles();
     };
 
@@ -333,21 +356,21 @@ export default function AudioVisualizer({
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [inputVolume, outputVolume, mode, width, height, activeVolume]);
+  }, [mode, width, height]); // Removed activeVolume, inputVolume, outputVolume from dependencies
 
   // Dynamic scaling with elastic overshoot - CONSTRAINED TO CENTER
   const targetScale = mode === 'user_speaking' || mode === 'ai_speaking'
-    ? 1 + activeVolume * 0.3 + Math.abs(velocityRef.current) * 0.2
+    ? 1 + activeVolumeRef.current * 0.3 + Math.abs(velocityRef.current) * 0.2
     : mode === 'listening'
-    ? 1 + activeVolume * 0.15
+    ? 1 + activeVolumeRef.current * 0.15
     : 1;
 
   // Cap maximum scale to ensure blob stays in center (max 40% growth)
   const maxScale = 1.4;
   const blobScale = Math.min(targetScale + Math.sin(breathingRef.current) * 0.03, maxScale);
 
-  // Dynamic color temperature
-  const colorIndex = Math.floor((shimmerOffset / 360) * colors.primary.length);
+  // Dynamic color temperature - use ref instead of state
+  const colorIndex = Math.floor((shimmerOffsetRef.current / 360) * colors.primary.length);
   const currentPrimary = colors.primary[colorIndex % colors.primary.length];
   const currentSecondary = colors.secondary[colorIndex % colors.secondary.length];
   const currentAccent = colors.accent[colorIndex % colors.accent.length];
@@ -462,7 +485,7 @@ export default function AudioVisualizer({
           </defs>
 
           {/* Outer glow layer */}
-          <g opacity={0.15 + activeVolume * 0.25}>
+          <g opacity={0.15 + activeVolumeRef.current * 0.25}>
             <path
               d={paths.outer}
               fill="url(#blobGradient)"
@@ -475,7 +498,7 @@ export default function AudioVisualizer({
           </g>
 
           {/* Background glow layer */}
-          <g opacity={0.25 + activeVolume * 0.35}>
+          <g opacity={0.25 + activeVolumeRef.current * 0.35}>
             <path
               d={paths.main}
               fill="url(#blobGradient)"
@@ -492,16 +515,12 @@ export default function AudioVisualizer({
             style={{
               transform: `rotate(${rotationRef.current}deg) scale(${blobScale * 0.9831})`,
               transformOrigin: 'center',
-              transition: 'transform 0.1s ease-out',
             }}
           >
             <path
               d={paths.main}
               fill="url(#flowGradient)"
               filter="url(#glow)"
-              style={{
-                transition: 'd 0.2s ease-out',
-              }}
             />
             
             {/* Shimmer overlay */}
@@ -513,24 +532,23 @@ export default function AudioVisualizer({
           </g>
 
           {/* Inner core glow */}
-          <g opacity={0.5 + activeVolume * 0.5}>
+          <g opacity={0.5 + activeVolumeRef.current * 0.5}>
             <circle
               cx={width / 2}
               cy={height / 2}
-              r={(15 + activeVolume * 25) * 1.3}
+              r={(15 + activeVolumeRef.current * 25) * 1.3}
               fill={currentAccent}
               filter="url(#softGlow)"
               style={{
                 transform: `scale(${1 + Math.abs(velocityRef.current) * 0.5})`,
                 transformOrigin: 'center',
-                transition: 'transform 0.15s ease-out',
               }}
             />
           </g>
 
           {/* Inner layer with opacity variation */}
           <g 
-            opacity={0.4 + activeVolume * 0.3}
+            opacity={0.4 + activeVolumeRef.current * 0.3}
             style={{
               transform: `rotate(${rotationRef.current * 2}deg) scale(${blobScale * 1.0814})`,
               transformOrigin: 'center',
@@ -543,14 +561,14 @@ export default function AudioVisualizer({
             />
           </g>
 
-          {/* Simple white dot particles */}
+          {/* Simple white dot particles - use key based on index for better React reconciliation */}
           {particles.map((particle, i) => {
             const volumePulse = Math.sin(noiseOffsetRef.current * 0.05 + particle.pulseOffset) * 0.15 + 0.85;
             const finalOpacity = particle.currentOpacity * volumePulse;
             
             return (
               <circle
-                key={i}
+                key={`particle-${i}`}
                 cx={particle.x}
                 cy={particle.y}
                 r={particle.size}

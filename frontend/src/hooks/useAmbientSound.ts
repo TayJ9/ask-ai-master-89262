@@ -158,14 +158,31 @@ export function useAmbientSound(
 
     const audio = processingAudioRef.current;
     let fadeInterval: NodeJS.Timeout | null = null;
+    
+    // Safety check: if audio is in a bad state, reset it
+    if (audio.error) {
+      console.warn('[AmbientSound] Audio element has error, resetting:', audio.error);
+      audio.load();
+      return;
+    }
 
     const fadeIn = (targetVolume: number, duration = 500) => {
       // Clear any existing fade interval
       if (fadeInterval) clearInterval(fadeInterval);
       
+      // Reset audio state before playing to prevent popping
       audio.volume = 0;
       audio.currentTime = 0;
-      audio.play().catch((e) => console.warn('[AmbientSound] Play failed:', e));
+      
+      // Play with error handling to prevent popping on failure
+      audio.play().catch((e) => {
+        console.warn('[AmbientSound] Play failed:', e);
+        // If play fails, don't try to fade in
+        if (fadeInterval) {
+          clearInterval(fadeInterval);
+          fadeInterval = null;
+        }
+      });
       
       const steps = 20;
       const stepTime = duration / steps;
@@ -212,7 +229,12 @@ export function useAmbientSound(
     if (state === 'processing') {
       // Only start playing if not already playing
       if (audio.paused) {
-        fadeIn(volume, 10);
+        // Start playing immediately at full volume (no fade-in for processing state)
+        audio.volume = volume;
+        audio.currentTime = 0;
+        audio.play().catch((e) => {
+          console.warn('[AmbientSound] Play failed:', e);
+        });
       }
     } else {
       // Stop sound for all other states

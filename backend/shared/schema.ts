@@ -142,6 +142,7 @@ export const elevenLabsInterviewSessions = pgTable("elevenlabs_interview_session
   interviewId: uuid("interview_id").references(() => interviews.id, { onDelete: "set null" }), // Link to interviews table when webhook arrives
   status: text("status").notNull().default("started"), // started, ended_pending_webhook, completed, failed
   endedBy: text("ended_by"), // 'user' | 'disconnect' | null
+  candidateContext: jsonb("candidate_context"), // Stores role, major, and other candidate info for evaluation
   startedAt: timestamp("started_at").defaultNow(),
   endedAt: timestamp("ended_at"),
   clientEndedAt: timestamp("client_ended_at"), // When frontend called save-interview

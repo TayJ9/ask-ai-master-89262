@@ -42,7 +42,6 @@ interface InterviewResults {
         score: number;
         strengths: string[];
         improvements: string[];
-        sample_better_answer?: string;
       }>;
     } | null;
     error: string | null;
@@ -58,8 +57,9 @@ interface InterviewResults {
 // Processing steps for the progress stepper
 const PROCESSING_STEPS = [
   { id: 1, text: "Interview Saved", completed: true },
-  { id: 2, text: "Transcribing Audio...", completed: false },
-  { id: 3, text: "Generating Feedback...", completed: false },
+  { id: 2, text: "Processing Transcript...", completed: false },
+  { id: 3, text: "Analyzing Responses...", completed: false },
+  { id: 4, text: "Generating Feedback...", completed: false },
 ];
 
 const POLL_INTERVAL = 3000; // 3 seconds
@@ -375,17 +375,32 @@ export default function Results() {
   const renderProcessingUI = () => {
     // Determine which step we're on based on evaluation status
     let currentStep = 1;
+    let stepDescription = "";
+    
     if (results?.evaluation) {
-      if (results.evaluation.status === 'processing') {
-        currentStep = 3; // Generating feedback
-      } else if (results.evaluation.status === 'pending') {
-        currentStep = 2; // Transcribing
+      const status = results.evaluation.status;
+      if (status === 'processing') {
+        // Check if we have transcript - if yes, we're analyzing; if no, still processing transcript
+        if (results.transcript) {
+          currentStep = 3; // Analyzing responses
+          stepDescription = "Evaluating your answers using AI...";
+        } else {
+          currentStep = 2; // Processing transcript
+          stepDescription = "Converting audio to text...";
+        }
+      } else if (status === 'pending') {
+        currentStep = 2; // Processing transcript
+        stepDescription = "Preparing your interview for analysis...";
+      } else if (status === 'complete' && results.evaluation.evaluation) {
+        currentStep = 4; // Generating feedback (final step)
+        stepDescription = "Finalizing your results...";
       }
     } else {
       currentStep = 1; // Just saved
+      stepDescription = "Your interview has been saved";
     }
 
-    // Calculate progress percentage
+    // Calculate progress percentage (smooth progression)
     const progressPercentage = Math.round((currentStep / PROCESSING_STEPS.length) * 100);
     const elapsedTime = pollStartTime ? Math.floor((Date.now() - pollStartTime) / 1000) : 0;
     const estimatedTimeRemaining = Math.max(0, 60 - elapsedTime);
@@ -398,11 +413,11 @@ export default function Results() {
           transition={{ duration: 0.5, ease: [0.4, 0, 0.2, 1] }}
           className="relative z-10 w-full"
         >
-          <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-300 border-0 bg-white/90 backdrop-blur-sm">
+            <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
           <CardHeader>
             <CardTitle className="text-2xl text-center">Processing Your Interview</CardTitle>
             <p className="text-sm text-center text-gray-600 mt-2">
-              This usually takes 30-60 seconds
+              {stepDescription || "This usually takes 30-60 seconds"}
             </p>
           </CardHeader>
           <CardContent className="pt-6">
@@ -433,7 +448,7 @@ export default function Results() {
                   return (
                     <div
                       key={step.id}
-                      className={`flex items-center gap-4 transition-all duration-300 ${
+                      className={`flex items-center gap-4 transition-opacity duration-200 ${
                         isActive ? 'opacity-100 scale-105' : isCompleted ? 'opacity-100' : 'opacity-60'
                       }`}
                     >
@@ -476,10 +491,19 @@ export default function Results() {
                         >
                           {step.text}
                         </p>
-                        {isActive && estimatedTimeRemaining > 0 && (
-                          <p className="text-xs text-gray-500 mt-1">
-                            Estimated time remaining: ~{estimatedTimeRemaining}s
-                          </p>
+                        {isActive && (
+                          <>
+                            {estimatedTimeRemaining > 0 && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                Estimated time remaining: ~{estimatedTimeRemaining}s
+                              </p>
+                            )}
+                            {currentStep === 3 && results?.transcript && (
+                              <p className="text-xs text-blue-600 mt-1 font-medium">
+                                Analyzing {results.transcript.split(/\n+/).filter(l => l.trim().length > 10).length} responses...
+                              </p>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -489,17 +513,15 @@ export default function Results() {
 
               {/* Return to Dashboard Button - Always Visible */}
               <div className="pt-4 border-t">
-                <motion.div whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }}>
-                  <Button 
-                    onClick={handleReturnToDashboard}
-                    variant="outline"
-                    className="w-full transition-all duration-300 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
-                    aria-label="Return to dashboard"
-                  >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Return to Dashboard
-                  </Button>
-                </motion.div>
+                <Button 
+                  onClick={handleReturnToDashboard}
+                  variant="outline"
+                  className="w-full transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
+                  aria-label="Return to dashboard"
+                >
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Return to Dashboard
+                </Button>
               </div>
             </div>
           </CardContent>
@@ -519,7 +541,7 @@ export default function Results() {
           transition={{ duration: 0.4 }}
           className="relative z-10 w-full"
         >
-          <Card className="w-full max-w-md shadow-xl hover:shadow-2xl transition-shadow duration-300 border-0 bg-white/90 backdrop-blur-sm">
+          <Card className="w-full max-w-md shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-4">
               <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
@@ -529,28 +551,24 @@ export default function Results() {
                 <h2 className="text-xl font-semibold mb-2 text-gray-900">Unable to Load Results</h2>
                 <p className="text-gray-600 text-sm mb-6">{error}</p>
                 <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <Button 
-                      onClick={handleRetry} 
-                      variant="default"
-                      className="min-w-[120px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-xl transition-all duration-300 text-white font-semibold"
-                      aria-label="Retry loading results"
-                    >
-                      <RefreshCw className="h-4 w-4 mr-2" />
-                      Retry
-                    </Button>
-                  </motion.div>
-                  <motion.div whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}>
-                    <Button 
-                      onClick={handleReturnToDashboard} 
-                      variant="outline"
-                      className="min-w-[120px] transition-all duration-300 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
-                      aria-label="Return to dashboard"
-                    >
-                      <ArrowLeft className="h-4 w-4 mr-2" />
-                      Dashboard
-                    </Button>
-                  </motion.div>
+                  <Button 
+                    onClick={handleRetry} 
+                    variant="default"
+                    className="min-w-[120px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-xl transition-shadow duration-200 text-white font-semibold"
+                    aria-label="Retry loading results"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Retry
+                  </Button>
+                  <Button 
+                    onClick={handleReturnToDashboard} 
+                    variant="outline"
+                    className="min-w-[120px] transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
+                    aria-label="Return to dashboard"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Dashboard
+                  </Button>
                 </div>
               </div>
             </div>
@@ -570,11 +588,12 @@ export default function Results() {
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
       <AnimatedBackground className="py-4 sm:py-8 px-4">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.6 }}
+        <div
           className="max-w-4xl mx-auto space-y-6 relative z-10"
+          style={{ 
+            willChange: 'auto',
+            transform: 'translateZ(0)', // GPU acceleration
+          }}
         >
           {/* Demo Mode Banner */}
           {isDemoMode && (
@@ -602,33 +621,29 @@ export default function Results() {
             </motion.div>
           )}
 
-          {/* Breadcrumb Navigation - Sticky */}
-          <motion.nav
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="sticky top-0 z-50 bg-gradient-to-br from-blue-50/95 via-indigo-50/95 to-purple-50/95 backdrop-blur-md py-3 -mx-4 px-4 mb-4 flex items-center gap-2 text-sm text-gray-600 rounded-lg shadow-sm" 
+          {/* Breadcrumb Navigation - Sticky - Optimized for scroll */}
+          <nav
+            className="sticky top-0 z-50 bg-gradient-to-br from-blue-50/95 via-indigo-50/95 to-purple-50/95 py-3 -mx-4 px-4 mb-4 flex items-center gap-2 text-sm text-gray-600 rounded-lg shadow-sm" 
+            style={{ 
+              willChange: 'transform',
+              transform: 'translateZ(0)', // GPU acceleration for sticky
+              backfaceVisibility: 'hidden',
+            }}
             aria-label="Breadcrumb"
           >
-            <motion.div 
-              whileHover={{ scale: 1.08, y: -1 }} 
-              whileTap={{ scale: 0.95 }}
-              transition={{ type: "spring", stiffness: 400, damping: 17 }}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={goToDashboard}
+              className="h-auto p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors duration-200 rounded-lg font-medium"
+              aria-label="Return to dashboard"
             >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={goToDashboard}
-                className="h-auto p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-all duration-300 rounded-lg font-medium"
-                aria-label="Return to dashboard"
-              >
-                <Home className="h-4 w-4 mr-1" />
-                Dashboard
-              </Button>
-            </motion.div>
+              <Home className="h-4 w-4 mr-1" />
+              Dashboard
+            </Button>
             <span className="text-gray-400">/</span>
             <span className="text-gray-900 font-semibold">Interview Results</span>
-          </motion.nav>
+            </nav>
 
           {/* Overall Score Badge - Wide Hero Banner */}
           {overallScore !== null && (
@@ -638,18 +653,14 @@ export default function Results() {
               transition={{ type: "spring", stiffness: 150, damping: 20, delay: 0.2 }}
               className="mb-8"
             >
-              <motion.div
-                whileHover={{ 
-                  y: -4,
-                  transition: { duration: 0.3 }
-                }}
+              <div
                 className="relative max-w-5xl mx-auto"
               >
                 {/* Outer glow effect */}
                 <div className="absolute inset-0 bg-gradient-to-br from-blue-400 via-indigo-400 to-purple-400 opacity-20 blur-3xl rounded-3xl" />
                 
                 {/* Main banner container */}
-                <div className="relative bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl p-6 sm:p-8 shadow-2xl border-4 border-white/30 backdrop-blur-sm">
+                <div className="relative bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl p-6 sm:p-8 shadow-2xl border-4 border-white/30">
                   {/* Inner glow effects */}
                   <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-transparent rounded-3xl" />
                   <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-300/10 rounded-full blur-3xl" />
@@ -664,7 +675,7 @@ export default function Results() {
                       transition={{ delay: 0.4 }}
                       className="flex flex-col gap-3 text-white"
                     >
-                      <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/20">
+                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                         <div className="w-10 h-10 rounded-lg bg-blue-400/30 flex items-center justify-center">
                           <CheckCircle2 className="h-6 w-6 text-white" />
                         </div>
@@ -674,7 +685,7 @@ export default function Results() {
                         </div>
                       </div>
                       {results.interview?.durationSeconds && (
-                        <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/20">
+                        <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                           <div className="w-10 h-10 rounded-lg bg-purple-400/30 flex items-center justify-center">
                             <Clock className="h-6 w-6 text-white" />
                           </div>
@@ -753,7 +764,7 @@ export default function Results() {
                       transition={{ delay: 0.5 }}
                       className="flex flex-col gap-3 text-white"
                     >
-                      <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/20">
+                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                         <div className="w-10 h-10 rounded-lg bg-green-400/30 flex items-center justify-center">
                           <TrendingUp className="h-6 w-6 text-white" />
                         </div>
@@ -764,7 +775,7 @@ export default function Results() {
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 bg-white/10 backdrop-blur-sm rounded-xl p-3 border border-white/20">
+                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                         <div className="w-10 h-10 rounded-lg bg-yellow-400/30 flex items-center justify-center">
                           <Sparkles className="h-6 w-6 text-white" />
                         </div>
@@ -778,16 +789,12 @@ export default function Results() {
                     </motion.div>
                   </div>
                 </div>
-              </motion.div>
-            </motion.div>
+              </div>
+            </div>
           )}
 
-          {/* Main Results Card */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-          >
+          {/* Main Results Card - Optimized */}
+          <div>
             <Card className="mb-6 shadow-xl hover:shadow-2xl transition-all duration-300 border-0 bg-white/95 backdrop-blur-sm">
               <CardHeader className="pb-4">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -843,17 +850,8 @@ export default function Results() {
                 <>
                   {/* Overall Feedback Section */}
                   {(results.evaluation.evaluation.overall_strengths?.length || results.evaluation.evaluation.overall_improvements?.length) && (
-                    <motion.div
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.5, delay: 0.2 }}
-                      whileHover={{ 
-                        y: -4, 
-                        scale: 1.01,
-                        transition: { duration: 0.3, type: "spring", stiffness: 300, damping: 20 } 
-                      }}
-                    >
-                      <Card className="mb-6 border-2 border-blue-300 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 shadow-lg hover:shadow-2xl hover:ring-2 hover:ring-indigo-200 transition-all duration-300 relative overflow-hidden cursor-pointer">
+                    <div>
+                      <Card className="mb-6 border-2 border-blue-300 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 shadow-lg hover:shadow-2xl hover:ring-2 hover:ring-indigo-200 transition-shadow duration-200 relative overflow-hidden" style={{ transform: 'translateZ(0)' }}>
                         <div className="absolute top-0 right-0 w-32 h-32 bg-blue-200/20 rounded-full blur-2xl -mr-16 -mt-16" />
                         <CardHeader className="relative z-10">
                           <div className="flex items-center gap-3">
@@ -873,7 +871,7 @@ export default function Results() {
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ duration: 0.4, delay: 0.3 }}
-                                className="bg-white/60 backdrop-blur-sm p-4 rounded-lg border border-green-200 shadow-sm"
+                                className="bg-white/60 p-4 rounded-lg border border-green-200 shadow-sm"
                               >
                                 <h4 className="text-base font-bold text-green-700 mb-3 flex items-center gap-2">
                                   <CheckCircle2 className="h-5 w-5" />
@@ -900,7 +898,7 @@ export default function Results() {
                                 initial={{ opacity: 0, x: -20 }}
                                 animate={{ opacity: 1, x: 0 }}
                                 transition={{ duration: 0.4, delay: 0.5 }}
-                                className="bg-white/60 backdrop-blur-sm p-4 rounded-lg border border-orange-200 shadow-sm"
+                                className="bg-white/60 p-4 rounded-lg border border-orange-200 shadow-sm"
                               >
                                 <h4 className="text-base font-bold text-orange-700 mb-3 flex items-center gap-2">
                                   <TrendingUp className="h-5 w-5" />
@@ -925,16 +923,12 @@ export default function Results() {
                           </div>
                         </CardContent>
                       </Card>
-                    </motion.div>
+                    </div>
                   )}
 
-                  {/* Score Comparison Card - NEW */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.5, delay: 0.25 }}
-                  >
-                    <Card className="mb-6 border-2 border-purple-300 bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 shadow-lg hover:shadow-xl transition-all duration-300">
+                  {/* Score Comparison Card - Optimized */}
+                  <div>
+                    <Card className="mb-6 border-2 border-purple-300 bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
                       <CardHeader>
                         <div className="flex items-center gap-3">
                           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-md">
@@ -992,7 +986,7 @@ export default function Results() {
                           initial={{ opacity: 0, y: 10 }}
                           animate={{ opacity: 1, y: 0 }}
                           transition={{ delay: 0.8 }}
-                          className="mt-6 p-4 bg-white/60 backdrop-blur-sm rounded-xl border border-purple-200"
+                          className="mt-6 p-4 bg-white/60 rounded-xl border border-purple-200"
                         >
                           <div className="flex items-start gap-3">
                             <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -1022,13 +1016,9 @@ export default function Results() {
                   {/* Per-Question Evaluation Section */}
                   {results.evaluation.evaluation.questions && results.evaluation.evaluation.questions.length > 0 && (
                     <>
-                      {/* Skills Breakdown Chart - NEW */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.3 }}
-                      >
-                        <Card className="mb-6 border-2 border-green-300 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 shadow-lg hover:shadow-xl transition-all duration-300">
+                      {/* Skills Breakdown Chart - Optimized */}
+                      <div>
+                        <Card className="mb-6 border-2 border-green-300 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
                           <CardHeader>
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-md">
@@ -1043,11 +1033,8 @@ export default function Results() {
                           <CardContent>
                             <div className="space-y-4">
                               {results.evaluation.evaluation.questions.map((qa, index) => (
-                                <motion.div
+                                <div
                                   key={index}
-                                  initial={{ opacity: 0, x: -20 }}
-                                  animate={{ opacity: 1, x: 0 }}
-                                  transition={{ delay: 0.4 + index * 0.1 }}
                                   className="space-y-2"
                                 >
                                   <div className="flex items-center justify-between">
@@ -1074,7 +1061,7 @@ export default function Results() {
                                       }`}
                                     />
                                   </div>
-                                </motion.div>
+                                </div>
                               ))}
                             </div>
 
@@ -1083,7 +1070,7 @@ export default function Results() {
                               initial={{ opacity: 0 }}
                               animate={{ opacity: 1 }}
                               transition={{ delay: 1 }}
-                              className="mt-6 p-4 bg-white/60 backdrop-blur-sm rounded-xl border border-green-200"
+                              className="mt-6 p-4 bg-white/60 rounded-xl border border-green-200"
                             >
                               <div className="flex items-center justify-between">
                                 <span className="text-sm font-semibold text-gray-700">Average Question Score</span>
@@ -1102,7 +1089,7 @@ export default function Results() {
                         animate={{ opacity: 1, y: 0 }}
                         transition={{ duration: 0.5, delay: 0.35 }}
                       >
-                        <Card className="mb-6 shadow-lg border-0 bg-white/95 backdrop-blur-sm">
+                        <Card className="mb-6 shadow-lg border-0 bg-white/95">
                           <CardHeader>
                             <CardTitle className="text-2xl font-bold text-gray-900">Question-by-Question Feedback</CardTitle>
                             <p className="text-sm text-gray-600 mt-1 font-medium">Detailed feedback for each interview question</p>
@@ -1112,24 +1099,17 @@ export default function Results() {
                             {results.evaluation.evaluation.questions.map((qa, index) => {
                               const scoreColor = qa.score >= 80 ? 'from-green-500 to-emerald-600' : qa.score >= 60 ? 'from-blue-500 to-indigo-600' : qa.score >= 40 ? 'from-yellow-500 to-orange-500' : 'from-red-500 to-rose-600';
                               return (
-                                <motion.div
+                                <div
                                   key={index}
-                                  initial={{ opacity: 0, y: 20 }}
-                                  animate={{ opacity: 1, y: 0 }}
-                                  transition={{ duration: 0.4, delay: 0.4 + index * 0.1 }}
-                                  whileHover={{ 
-                                    y: -8, 
-                                    scale: 1.02, 
-                                    boxShadow: "0 25px 50px -12px rgba(0, 0, 0, 0.25)",
-                                    transition: { duration: 0.3, type: "spring", stiffness: 400, damping: 20 } 
-                                  }}
                                 >
-                                  <Card className="border-l-8 bg-gradient-to-r from-white to-gray-50/50 shadow-md hover:shadow-2xl transition-all duration-300 relative overflow-hidden group cursor-pointer"
+                                  <Card className="border-l-8 bg-gradient-to-r from-white to-gray-50/50 shadow-md hover:shadow-2xl transition-shadow duration-200 relative overflow-hidden group"
                                     style={{
-                                      borderLeftColor: qa.score >= 80 ? '#10b981' : qa.score >= 60 ? '#3b82f6' : qa.score >= 40 ? '#f59e0b' : '#ef4444'
+                                      borderLeftColor: qa.score >= 80 ? '#10b981' : qa.score >= 60 ? '#3b82f6' : qa.score >= 40 ? '#f59e0b' : '#ef4444',
+                                      transform: 'translateZ(0)', // GPU acceleration
+                                      willChange: 'auto',
                                     }}
                                   >
-                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${scoreColor} opacity-100 transition-all duration-300 group-hover:w-2`} />
+                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${scoreColor} opacity-100 transition-width duration-200 group-hover:w-2`} />
                                     <CardContent className="pt-6 pl-6">
                                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
                                         <h3 className="text-xl font-bold text-gray-900">Question {index + 1}</h3>
@@ -1224,7 +1204,7 @@ export default function Results() {
                                       </div>
                                     </CardContent>
                                   </Card>
-                                </motion.div>
+                                </div>
                               );
                             })}
                           </div>
@@ -1236,14 +1216,10 @@ export default function Results() {
                 </>
               )}
 
-              {/* Transcript */}
+              {/* Transcript - Optimized for scroll performance */}
               {results.interview?.transcript && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.5, delay: 0.4 }}
-                >
-                  <Card className="shadow-lg border-0 bg-white/95 backdrop-blur-sm">
+                <div>
+                  <Card className="shadow-lg border-0 bg-white/95">
                     <CardHeader>
                       <CardTitle className="text-2xl font-bold text-gray-900">Interview Transcript</CardTitle>
                       <p className="text-sm text-gray-600 mt-1 font-medium">Full conversation transcript with speaker labels</p>
@@ -1260,19 +1236,16 @@ export default function Results() {
                             const isUser = /^(Candidate|User)$/i.test(speaker);
                             
                             return (
-                              <motion.div
+                              <div
                                 key={i}
-                                initial={{ opacity: 0, x: isAI ? -20 : 20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ duration: 0.4, delay: 0.5 + i * 0.05 }}
-                                whileHover={{ scale: 1.01, y: -2, transition: { duration: 0.2 } }}
-                                className={`p-4 rounded-xl shadow-md hover:shadow-lg transition-all duration-300 ${
+                                className={`p-4 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200 ${
                                   isAI 
                                     ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-l-4 border-blue-500 mr-6 sm:mr-12' 
                                     : isUser 
                                     ? 'bg-gradient-to-br from-purple-50 to-pink-50 border-r-4 border-purple-500 ml-6 sm:ml-12' 
                                     : 'bg-gradient-to-br from-gray-50 to-gray-100 border-l-4 border-gray-400'
                                 }`}
+                                style={{ transform: 'translateZ(0)' }}
                               >
                                 <div className="flex items-start gap-3">
                                   <span 
@@ -1288,55 +1261,43 @@ export default function Results() {
                                   </span>
                                   <p className="text-sm text-gray-800 flex-1 leading-relaxed font-medium">{text}</p>
                                 </div>
-                              </motion.div>
+                              </div>
                             );
                           }
                           return (
-                            <motion.p
+                            <p
                               key={i}
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: 0.5 + i * 0.05 }}
                               className="mb-3 text-sm text-gray-700 leading-relaxed"
                             >
                               {paragraph}
-                            </motion.p>
+                            </p>
                           );
                         })}
                       </div>
                     </CardContent>
                   </Card>
-                </motion.div>
+                </div>
               )}
 
               {/* Return to Dashboard Button */}
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.5 }}
+              <div
                 className="mt-8 flex justify-center"
               >
-                <motion.div 
-                  whileHover={{ scale: 1.05, y: -2 }} 
-                  whileTap={{ scale: 0.95 }}
-                  transition={{ type: "spring", stiffness: 400, damping: 17 }}
+                <Button 
+                  onClick={handleReturnToDashboard}
+                  variant="outline"
+                  size="lg"
+                  className="min-w-[220px] bg-white hover:bg-gray-50 border-2 border-gray-300 hover:border-gray-500 shadow-md hover:shadow-xl transition-shadow duration-200 font-semibold text-gray-700 hover:text-gray-900"
+                  aria-label="Return to dashboard"
                 >
-                  <Button 
-                    onClick={handleReturnToDashboard}
-                    variant="outline"
-                    size="lg"
-                    className="min-w-[220px] bg-white hover:bg-gray-50 border-2 border-gray-300 hover:border-gray-500 shadow-md hover:shadow-xl transition-all duration-300 font-semibold text-gray-700 hover:text-gray-900"
-                    aria-label="Return to dashboard"
-                  >
-                    <ArrowLeft className="h-5 w-5 mr-2" />
-                    Return to Dashboard
-                  </Button>
-                </motion.div>
-              </motion.div>
+                  <ArrowLeft className="h-5 w-5 mr-2" />
+                  Return to Dashboard
+                </Button>
+              </div>
             </CardContent>
           </Card>
-        </motion.div>
-        </motion.div>
+        </div>
+        </div>
       </AnimatedBackground>
     );
   }
@@ -1350,7 +1311,7 @@ export default function Results() {
         transition={{ duration: 0.5 }}
         className="relative z-10 w-full"
       >
-        <Card className="w-full max-w-md shadow-xl border-0 bg-white/90 backdrop-blur-sm">
+        <Card className="w-full max-w-md shadow-xl border-0 bg-white/95">
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-6">
               <div className="relative">

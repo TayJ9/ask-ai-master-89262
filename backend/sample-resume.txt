@@ -1,0 +1,53 @@
+JOHN DOE
+Software Engineering Student
+Email: john.doe@university.edu | Phone: (555) 123-4567
+
+EDUCATION
+Bachelor of Science in Computer Science
+State University | Expected Graduation: May 2025
+GPA: 3.7/4.0
+Relevant Coursework: Data Structures, Algorithms, Database Systems, Web Development, Software Engineering
+
+SKILLS
+Programming Languages: Python, JavaScript, Java, C++, TypeScript
+Web Technologies: React, Node.js, Express, HTML, CSS, REST APIs
+Databases: PostgreSQL, MongoDB, SQL
+Tools & Frameworks: Git, Docker, VS Code, Jest, Postman
+Cloud Platforms: AWS (basic knowledge)
+
+EXPERIENCE
+Software Development Intern | Tech Company Inc. | Summer 2024
+- Developed RESTful APIs using Node.js and Express for customer management system
+- Collaborated with team of 5 developers using Agile methodology
+- Reduced API response time by 30% through database query optimization
+- Participated in daily stand-ups, code reviews, and sprint planning
+- Fixed 15+ production bugs and implemented unit tests
+
+Teaching Assistant | State University | Fall 2023 - Present
+- Assist professor in Introduction to Programming course
+- Grade assignments and provide feedback to 40+ students
+- Hold office hours to help students with coding problems
+- Created study guides and practice exercises
+
+PROJECTS
+E-Commerce Platform | Personal Project | 2024
+- Built full-stack web application using React frontend and Node.js backend
+- Implemented user authentication using JWT tokens
+- Integrated Stripe payment processing API
+- Deployed application using Docker containers on AWS EC2
+- GitHub: github.com/johndoe/ecommerce-platform
+
+Academic Database System | Course Project | Fall 2023
+- Designed and implemented PostgreSQL database schema for student management
+- Created REST API endpoints using Express.js for data retrieval and updates
+- Worked in team of 4 students using Git for version control
+- Presented project to class of 50+ students
+
+LEADERSHIP & ACTIVITIES
+Computer Science Club | Member | 2022 - Present
+- Organize monthly coding workshops and hackathons
+- Mentor first-year students in programming fundamentals
+
+Hackathon Winner | University Hackathon 2024
+- Led team of 3 to build mobile app for campus navigation
+- Won "Best User Experience" award

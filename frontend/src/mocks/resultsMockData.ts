@@ -63,7 +63,6 @@ Candidate: I'm looking for a role where I can continue to grow as a developer an
             "Could mention specific projects or achievements from internships",
             "Consider adding what drew you to software development initially"
           ],
-          sample_better_answer: "I'm a recent computer science graduate from the University of Technology with a passion for building scalable web applications. Over the past four years, I've completed three internships where I worked on production applications using React and Node.js. For example, in my most recent internship, I built a real-time dashboard that improved user engagement by 40%. I'm particularly drawn to the problem-solving aspect of development and love seeing how code translates into user value."
         },
         {
           question: "What would you say are your biggest strengths as a developer?",

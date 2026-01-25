@@ -326,17 +326,99 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     throw new Error(`No question-answer pairs found in transcript`);
   }
 
+  // Extract role/major from session's candidateContext and resume from resumes table
+  let role: string | undefined;
+  let major: string | undefined;
+  let resumeText: string | undefined;
+
+  try {
+    // Find session linked to this interview
+    const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+      where: (sessions: any, { eq }: any) => eq(sessions.interviewId, interviewId),
+    });
+
+    if (session?.candidateContext) {
+      const context = session.candidateContext as any;
+      role = context.role || context.target_role;
+      major = context.major;
+      console.log(`[EVALUATION] ✅ Extracted context from session`, {
+        role,
+        major,
+        hasContext: !!session.candidateContext,
+      });
+    }
+
+    // Get resume text and profile from resumes table
+    const resume = await (db.query as any).resumes?.findFirst({
+      where: (resumes: any, { eq }: any) => eq(resumes.interviewId, interviewId),
+    });
+
+    if (resume) {
+      if (resume.resumeFulltext) {
+        resumeText = resume.resumeFulltext;
+        console.log(`[EVALUATION] ✅ Found resume text`, {
+          resumeLength: resumeText.length,
+        });
+      }
+
+      // Try to extract role/major from resumeProfile if not found in session
+      if (resume.resumeProfile && (!role || !major)) {
+        const profile = resume.resumeProfile as any;
+        if (!role && profile.major) {
+          // Infer role from major
+          const majorLower = (profile.major || '').toLowerCase();
+          if (majorLower.includes('computer science') || majorLower.includes('cs ') || majorLower.includes('software')) {
+            role = 'Software Engineer';
+          } else if (majorLower.includes('finance') || majorLower.includes('accounting')) {
+            role = 'Financial Analyst';
+          } else if (majorLower.includes('engineering')) {
+            role = 'Engineer';
+          } else if (majorLower.includes('business') || majorLower.includes('management')) {
+            role = 'Business Analyst';
+          }
+        }
+        if (!major && profile.major) {
+          major = profile.major;
+        }
+        if (role || major) {
+          console.log(`[EVALUATION] ✅ Extracted role/major from resumeProfile`, {
+            role,
+            major,
+          });
+        }
+      }
+    }
+  } catch (contextError: any) {
+    console.warn(`[EVALUATION] ⚠️ Could not extract context/resume (non-critical):`, contextError.message);
+    // Continue without context - evaluation can still work
+  }
+
+  // Update status to 'processing' before starting evaluation
+  try {
+    await db.update(interviewEvaluations)
+      .set({
+        status: 'processing',
+        updatedAt: new Date(),
+      })
+      .where(eq(interviewEvaluations.interviewId, interviewId));
+    console.log(`[EVALUATION] 📊 Updated status to 'processing' for interview ${interviewId}`);
+  } catch (statusError: any) {
+    console.warn(`[EVALUATION] ⚠️ Could not update status to 'processing' (non-critical):`, statusError.message);
+  }
+
   // Generate evaluation using OpenAI
-  // Note: role and major are not stored in interviews table, so we pass undefined
-  // The evaluator can work without them
   console.log(`[EVALUATION] 🤖 Generating evaluation using OpenAI...`, {
     interviewId,
     qaPairsCount: qaPairs.length,
+    hasRole: !!role,
+    hasMajor: !!major,
+    hasResume: !!resumeText,
   });
 
   const evaluation = await scoreInterview({
-    role: undefined, // Could be extracted from dynamic variables if stored
-    major: undefined, // Could be extracted from dynamic variables if stored
+    role,
+    major,
+    resumeText,
     questions: qaPairs,
   });
 
