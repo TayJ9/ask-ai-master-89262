@@ -371,6 +371,25 @@ export default function Results() {
     ? (results?.evaluation?.overallScore || results?.evaluation?.evaluation?.overall_score || null)
     : null;
 
+  // Memoize expensive calculations
+  const formattedTranscript = useMemo(() => {
+    if (!results?.interview?.transcript) return '';
+    return formatTranscript(results.interview.transcript);
+  }, [results?.interview?.transcript]);
+
+  const transcriptParagraphs = useMemo(() => {
+    if (!formattedTranscript) return [];
+    return formattedTranscript.split('\n\n');
+  }, [formattedTranscript]);
+
+  const averageQuestionScore = useMemo(() => {
+    if (!results?.evaluation?.evaluation?.questions?.length) return 0;
+    return Math.round(
+      results.evaluation.evaluation.questions.reduce((sum, q) => sum + q.score, 0) / 
+      results.evaluation.evaluation.questions.length
+    );
+  }, [results?.evaluation?.evaluation?.questions]);
+
   // Render Processing UI
   const renderProcessingUI = () => {
     // Determine which step we're on based on evaluation status
@@ -867,11 +886,9 @@ export default function Results() {
                         <CardContent className="relative z-10">
                           <div className="space-y-5">
                             {results.evaluation.evaluation.overall_strengths && results.evaluation.evaluation.overall_strengths.length > 0 && (
-                              <motion.div
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ duration: 0.4, delay: 0.3 }}
+                              <div
                                 className="bg-white/60 p-4 rounded-lg border border-green-200 shadow-sm"
+                                style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                               >
                                 <h4 className="text-base font-bold text-green-700 mb-3 flex items-center gap-2">
                                   <CheckCircle2 className="h-5 w-5" />
@@ -879,26 +896,21 @@ export default function Results() {
                                 </h4>
                                 <ul className="list-none space-y-2">
                                   {results.evaluation.evaluation.overall_strengths.map((strength, i) => (
-                                    <motion.li
+                                    <li
                                       key={i}
-                                      initial={{ opacity: 0, x: -10 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ duration: 0.3, delay: 0.4 + i * 0.1 }}
                                       className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
                                     >
                                       <span className="text-green-600 text-sm font-bold flex-shrink-0 leading-relaxed">•</span>
                                       <span>{strength}</span>
-                                    </motion.li>
+                                    </li>
                                   ))}
                                 </ul>
-                              </motion.div>
+                              </div>
                             )}
                             {results.evaluation.evaluation.overall_improvements && results.evaluation.evaluation.overall_improvements.length > 0 && (
-                              <motion.div
-                                initial={{ opacity: 0, x: -20 }}
-                                animate={{ opacity: 1, x: 0 }}
-                                transition={{ duration: 0.4, delay: 0.5 }}
+                              <div
                                 className="bg-white/60 p-4 rounded-lg border border-orange-200 shadow-sm"
+                                style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                               >
                                 <h4 className="text-base font-bold text-orange-700 mb-3 flex items-center gap-2">
                                   <TrendingUp className="h-5 w-5" />
@@ -906,19 +918,16 @@ export default function Results() {
                                 </h4>
                                 <ul className="list-none space-y-2">
                                   {results.evaluation.evaluation.overall_improvements.map((improvement, i) => (
-                                    <motion.li
+                                    <li
                                       key={i}
-                                      initial={{ opacity: 0, x: -10 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ duration: 0.3, delay: 0.6 + i * 0.1 }}
                                       className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
                                     >
                                       <span className="text-orange-600 text-sm font-bold flex-shrink-0 leading-relaxed">•</span>
                                       <span>{improvement}</span>
-                                    </motion.li>
+                                    </li>
                                   ))}
                                 </ul>
-                              </motion.div>
+                              </div>
                             )}
                           </div>
                         </CardContent>
@@ -969,24 +978,24 @@ export default function Results() {
                               </span>
                             </div>
                             <div className="relative h-8 bg-gray-200 rounded-full overflow-hidden shadow-inner">
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={{ width: `${overallScore >= 80 ? 73 : overallScore >= 70 ? 67 : overallScore >= 60 ? 62 : 58}%` }}
-                                transition={{ duration: 1, delay: 0.6, ease: "easeOut" }}
+                              <div
                                 className="h-full bg-gradient-to-r from-gray-400 to-gray-500 rounded-full flex items-center justify-end pr-2"
+                                style={{ 
+                                  width: `${overallScore >= 80 ? 73 : overallScore >= 70 ? 67 : overallScore >= 60 ? 62 : 58}%`,
+                                  transform: 'translateZ(0)',
+                                  willChange: 'auto'
+                                }}
                               >
                                 <span className="text-xs font-bold text-white drop-shadow">Avg</span>
-                              </motion.div>
+                              </div>
                             </div>
                           </div>
                         </div>
 
                         {/* Insight Message */}
-                        <motion.div
-                          initial={{ opacity: 0, y: 10 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ delay: 0.8 }}
+                        <div
                           className="mt-6 p-4 bg-white/60 rounded-xl border border-purple-200"
+                          style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                         >
                           <div className="flex items-start gap-3">
                             <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
@@ -1008,7 +1017,7 @@ export default function Results() {
                               </p>
                             </div>
                           </div>
-                        </motion.div>
+                        </div>
                       </CardContent>
                     </Card>
                   </div>
@@ -1049,16 +1058,18 @@ export default function Results() {
                                     </span>
                                   </div>
                                   <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
-                                    <motion.div
-                                      initial={{ width: 0 }}
-                                      animate={{ width: `${qa.score}%` }}
-                                      transition={{ duration: 0.8, delay: 0.5 + index * 0.1, ease: "easeOut" }}
+                                    <div
                                       className={`h-full rounded-full ${
                                         qa.score >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
                                         qa.score >= 60 ? 'bg-gradient-to-r from-blue-500 to-indigo-600' :
                                         qa.score >= 40 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
                                         'bg-gradient-to-r from-red-500 to-rose-600'
                                       }`}
+                                      style={{ 
+                                        width: `${qa.score}%`,
+                                        transform: 'translateZ(0)',
+                                        willChange: 'auto'
+                                      }}
                                     />
                                   </div>
                                 </div>
@@ -1066,16 +1077,14 @@ export default function Results() {
                             </div>
 
                             {/* Average Score Display */}
-                            <motion.div
-                              initial={{ opacity: 0 }}
-                              animate={{ opacity: 1 }}
-                              transition={{ delay: 1 }}
+                            <div
                               className="mt-6 p-4 bg-white/60 rounded-xl border border-green-200"
+                              style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                             >
                               <div className="flex items-center justify-between">
                                 <span className="text-sm font-semibold text-gray-700">Average Question Score</span>
                                 <span className="text-2xl font-bold text-green-600">
-                                  {Math.round(results.evaluation.evaluation.questions.reduce((sum, q) => sum + q.score, 0) / results.evaluation.evaluation.questions.length)}
+                                  {averageQuestionScore}
                                 </span>
                               </div>
                             </motion.div>
@@ -1084,10 +1093,8 @@ export default function Results() {
                       </div>
 
                       {/* Question-by-Question Feedback */}
-                      <motion.div
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ duration: 0.5, delay: 0.35 }}
+                      <div
+                        style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                       >
                         <Card className="mb-6 shadow-lg border-0 bg-white/95">
                           <CardHeader>
@@ -1115,19 +1122,14 @@ export default function Results() {
                                         <h3 className="text-xl font-bold text-gray-900">Question {index + 1}</h3>
                                         <div className="flex items-center gap-3">
                                           <div className="relative w-28 h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                                            <motion.div
-                                              initial={{ width: 0 }}
-                                              animate={{ width: `${qa.score}%` }}
-                                              transition={{ duration: 0.8, delay: 0.5 + index * 0.1, ease: "easeOut" }}
-                                              className={`h-full bg-gradient-to-r ${scoreColor} rounded-full shadow-sm relative overflow-hidden`}
-                                            >
-                                              {/* Shimmer effect */}
-                                              <motion.div
-                                                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent"
-                                                animate={{ x: ['-100%', '200%'] }}
-                                                transition={{ duration: 2, delay: 1 + index * 0.1, ease: "easeInOut" }}
-                                              />
-                                            </motion.div>
+                                            <div
+                                              className={`h-full bg-gradient-to-r ${scoreColor} rounded-full shadow-sm`}
+                                              style={{ 
+                                                width: `${qa.score}%`,
+                                                transform: 'translateZ(0)',
+                                                willChange: 'auto'
+                                              }}
+                                            />
                                           </div>
                                           <span className={`text-sm font-bold px-4 py-1.5 rounded-full whitespace-nowrap shadow-sm bg-gradient-to-r ${scoreColor} text-white`}>
                                             {qa.score}/100
@@ -1147,11 +1149,9 @@ export default function Results() {
                                         </div>
                                         
                                         {qa.strengths?.length > 0 && (
-                                          <motion.div
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ delay: 0.6 + index * 0.1 }}
+                                          <div
                                             className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 p-4 rounded-xl shadow-md"
+                                            style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                                           >
                                             <h4 className="text-sm font-bold text-green-700 mb-3 flex items-center gap-2">
                                               <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
@@ -1159,27 +1159,22 @@ export default function Results() {
                                             </h4>
                                             <ul className="list-none space-y-2.5">
                                               {qa.strengths.map((strength, i) => (
-                                                <motion.li 
+                                                <li 
                                                   key={i} 
-                                                  initial={{ opacity: 0, x: -10 }}
-                                                  animate={{ opacity: 1, x: 0 }}
-                                                  transition={{ delay: 0.65 + index * 0.1 + i * 0.05 }}
                                                   className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
                                                 >
                                                   <span className="text-green-600 text-sm font-bold flex-shrink-0 leading-relaxed">✓</span>
                                                   <span>{strength}</span>
-                                                </motion.li>
+                                                </li>
                                               ))}
                                             </ul>
-                                          </motion.div>
+                                          </div>
                                         )}
                                         
                                         {qa.improvements?.length > 0 && (
-                                          <motion.div
-                                            initial={{ opacity: 0 }}
-                                            animate={{ opacity: 1 }}
-                                            transition={{ delay: 0.7 + index * 0.1 }}
+                                          <div
                                             className="bg-gradient-to-br from-orange-50 to-amber-50 border-2 border-orange-300 p-4 rounded-xl shadow-md"
+                                            style={{ transform: 'translateZ(0)', willChange: 'auto' }}
                                           >
                                             <h4 className="text-sm font-bold text-orange-700 mb-3 flex items-center gap-2">
                                               <AlertCircle className="h-5 w-5 flex-shrink-0" />
@@ -1187,19 +1182,16 @@ export default function Results() {
                                             </h4>
                                             <ul className="list-none space-y-2.5">
                                               {qa.improvements.map((improvement, i) => (
-                                                <motion.li 
+                                                <li 
                                                   key={i} 
-                                                  initial={{ opacity: 0, x: -10 }}
-                                                  animate={{ opacity: 1, x: 0 }}
-                                                  transition={{ delay: 0.75 + index * 0.1 + i * 0.05 }}
                                                   className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
                                                 >
                                                   <span className="text-orange-600 text-sm font-bold flex-shrink-0 leading-relaxed">→</span>
                                                   <span>{improvement}</span>
-                                                </motion.li>
+                                                </li>
                                               ))}
                                             </ul>
-                                          </motion.div>
+                                          </div>
                                         )}
                                       </div>
                                     </CardContent>
@@ -1210,7 +1202,7 @@ export default function Results() {
                           </div>
                         </CardContent>
                       </Card>
-                    </motion.div>
+                    </div>
                   </>
                 )}
                 </>
@@ -1245,7 +1237,11 @@ export default function Results() {
                                     ? 'bg-gradient-to-br from-purple-50 to-pink-50 border-r-4 border-purple-500 ml-6 sm:ml-12' 
                                     : 'bg-gradient-to-br from-gray-50 to-gray-100 border-l-4 border-gray-400'
                                 }`}
-                                style={{ transform: 'translateZ(0)' }}
+                                style={{ 
+                                  transform: 'translateZ(0)',
+                                  willChange: 'auto',
+                                  contain: 'layout style paint'
+                                }}
                               >
                                 <div className="flex items-start gap-3">
                                   <span 
