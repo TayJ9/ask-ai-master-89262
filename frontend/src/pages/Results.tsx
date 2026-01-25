@@ -1087,7 +1087,7 @@ export default function Results() {
                                   {averageQuestionScore}
                                 </span>
                               </div>
-                            </motion.div>
+                            </div>
                           </CardContent>
                         </Card>
                       </div>

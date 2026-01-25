@@ -82,9 +82,6 @@ Open Source Contributor | 2023 - Present
 • Maintained documentation and responded to GitHub issues
 `;
 
-// Export resume for potential use in demo UI
-export { demoResume };
-
 export const mockInterviewResults = {
   interview: {
     id: "demo-interview-alex-chen-2025",
