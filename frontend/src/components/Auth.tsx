@@ -278,7 +278,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               className="w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 shadow-md hover:shadow-lg transition-all duration-300"
             >
               <Zap className="w-4 h-4 mr-2" />
-              Try Quick Demo
+              See Quick Demo
               <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
                 No Sign-Up
               </span>

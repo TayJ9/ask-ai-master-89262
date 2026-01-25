@@ -118,6 +118,20 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  /* Smooth scroll with fallback for older browsers */
+  /* Supported in: Chrome 61+, Firefox 36+, Safari 15.4+, Edge 79+ */
+  /* Falls back gracefully to instant scroll in unsupported browsers */
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Fallback for browsers that don't support scroll-behavior */
+  @supports not (scroll-behavior: smooth) {
+    html {
+      scroll-behavior: auto; /* Instant scroll fallback */
+    }
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";
@@ -162,5 +176,18 @@ All colors MUST be HSL.
       opacity: 1;
       transform: scale(1);
     }
+  }
+
+  /* Smooth focus transitions */
+  /* Well-supported across all modern browsers */
+  *:focus-visible {
+    transition: outline-offset 0.2s ease-out;
+  }
+
+  /* Improved input focus states */
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline-offset: 2px;
   }
 }
