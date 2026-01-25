@@ -790,7 +790,7 @@ export default function Results() {
                   </div>
                 </div>
               </div>
-            </div>
+            </motion.div>
           )}
 
           {/* Main Results Card - Optimized */}
@@ -1011,7 +1011,7 @@ export default function Results() {
                         </motion.div>
                       </CardContent>
                     </Card>
-                  </motion.div>
+                  </div>
 
                   {/* Per-Question Evaluation Section */}
                   {results.evaluation.evaluation.questions && results.evaluation.evaluation.questions.length > 0 && (
@@ -1081,7 +1081,7 @@ export default function Results() {
                             </motion.div>
                           </CardContent>
                         </Card>
-                      </motion.div>
+                      </div>
 
                       {/* Question-by-Question Feedback */}
                       <motion.div
