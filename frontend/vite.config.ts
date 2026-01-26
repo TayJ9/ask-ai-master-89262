@@ -40,7 +40,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist",
+    outDir: "dist/public",
     emptyOutDir: true,
     chunkSizeWarningLimit: 600, // Increase warning threshold slightly
     minify: 'esbuild', // Use esbuild for faster builds
