@@ -10,6 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { motion } from "framer-motion";
+import { devLog } from "@/lib/utils";
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => void;
@@ -32,7 +33,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     if (!file) return;
 
     // Log file details before upload for debugging
-    console.log('Uploading file:', {
+    devLog.log('Uploading file:', {
       name: file.name,
       size: file.size,
       type: file.type,
@@ -41,7 +42,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
 
     // Client-side file type validation
     if (file.type !== "application/pdf") {
-      console.error('[ResumeUpload] Invalid file type:', file.type);
+      devLog.error('[ResumeUpload] Invalid file type:', file.type);
       toast({
         title: "Invalid file type",
         description: "Please upload a PDF file.",
@@ -54,7 +55,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
     if (file.size > MAX_FILE_SIZE) {
       const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-      console.error('[ResumeUpload] File too large:', {
+      devLog.error('[ResumeUpload] File too large:', {
         fileSize: file.size,
         fileSizeMB: fileSizeMB,
         maxSizeMB: 10
@@ -69,7 +70,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
 
     // Additional validation: check file extension as fallback
     if (!file.name.toLowerCase().endsWith('.pdf')) {
-      console.warn('[ResumeUpload] File extension mismatch:', file.name);
+      devLog.warn('[ResumeUpload] File extension mismatch:', file.name);
       toast({
         title: "Invalid file type",
         description: "Please upload a PDF file (.pdf extension required).",
@@ -91,8 +92,8 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
     // Check for authentication token before upload
     const token = localStorage.getItem('auth_token');
     if (!token || !token.trim()) {
-      console.error('[ResumeUpload] No auth token found in localStorage');
-      console.error('[ResumeUpload] localStorage keys:', Object.keys(localStorage));
+      devLog.error('[ResumeUpload] No auth token found in localStorage');
+      devLog.error('[ResumeUpload] localStorage keys:', Object.keys(localStorage));
       toast({
         title: "Authentication Required",
         description: "Please sign in again to upload your resume.",
@@ -103,7 +104,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
 
     // Log token info for debugging (masked)
     const tokenPreview = token.length > 20 ? `${token.substring(0, 20)}...` : token;
-    console.log('[ResumeUpload] Token check before upload:', {
+    devLog.log('[ResumeUpload] Token check before upload:', {
       exists: true,
       length: token.length,
       preview: tokenPreview,
@@ -115,7 +116,7 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
 
     try {
       // Log FormData contents before sending (file details only, not file content)
-      console.log('[ResumeUpload] Preparing FormData:', {
+      devLog.log('[ResumeUpload] Preparing FormData:', {
         fileName: file.name,
         fileSize: file.size,
         fileType: file.type,
@@ -136,15 +137,15 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       const maskedToken = tokenForLog 
         ? `${tokenForLog.substring(0, 10)}...${tokenForLog.substring(tokenForLog.length - 4)}`
         : 'MISSING';
-      console.log('[ResumeUpload] Sending upload request to /api/upload-resume with headers:', {
+      devLog.log('[ResumeUpload] Sending upload request to /api/upload-resume with headers:', {
         hasAuthorization: !!tokenForLog,
         authorizationPreview: tokenForLog ? `Bearer ${maskedToken}` : 'none',
         contentType: 'multipart/form-data (set by browser)'
       });
       
-      console.log('[ResumeUpload] Sending upload request to /api/upload-resume');
+      devLog.log('[ResumeUpload] Sending upload request to /api/upload-resume');
       const data = await apiPostFormData('/api/upload-resume', formData);
-      console.log('[ResumeUpload] Upload successful:', {
+      devLog.log('[ResumeUpload] Upload successful:', {
         sessionId: data.sessionId,
         hasResumeText: !!data.resumeText,
         resumeTextLength: data.resumeText?.length || 0
@@ -166,15 +167,15 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
       setResumeText(extractedResumeText);
       
       toast({
-        title: "Resume uploaded successfully",
-        description: `Session ID: ${data.sessionId}`,
+        title: "Resume uploaded successfully!",
+        description: "Your resume has been processed and is ready for your interview.",
       });
       
       // Call callback with resume text and candidate info
       onResumeUploaded(extractedResumeText, candidateInfo);
     } catch (error: any) {
       // Enhanced error logging
-      console.error('[ResumeUpload] Upload failed:', {
+      devLog.error('[ResumeUpload] Upload failed:', {
         error: error.message || error,
         errorType: error instanceof ApiError ? 'ApiError' : typeof error,
         statusCode: error instanceof ApiError ? error.statusCode : undefined,

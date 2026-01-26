@@ -80,3 +80,28 @@ export class LRUCache<K, V> {
     return this.cache.has(key);
   }
 }
+
+// Development-only logger utility
+// Only logs in development mode to reduce console noise in production
+export const devLog = {
+  log: (...args: any[]) => {
+    if (import.meta.env.DEV) {
+      console.log(...args);
+    }
+  },
+  error: (...args: any[]) => {
+    if (import.meta.env.DEV) {
+      console.error(...args);
+    }
+  },
+  warn: (...args: any[]) => {
+    if (import.meta.env.DEV) {
+      console.warn(...args);
+    }
+  },
+  info: (...args: any[]) => {
+    if (import.meta.env.DEV) {
+      console.info(...args);
+    }
+  },
+};

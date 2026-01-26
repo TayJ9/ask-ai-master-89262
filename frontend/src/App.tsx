@@ -1,15 +1,16 @@
-import React from "react";
+import React, { Suspense, lazy } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Route, Switch, useLocation } from "wouter";
 import { queryClient } from "@/lib/queryClient";
 import { Toaster } from "@/components/ui/toaster";
 import { AnimatePresence, motion } from "framer-motion";
-import Index from "./pages/Index";
-import Results from "./pages/Results";
-import NotFound from "./pages/NotFound";
-import InterviewPreview from "./pages/InterviewPreview";
-
 import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
+
+// Lazy load route components for better code splitting and performance
+const Index = lazy(() => import("./pages/Index"));
+const Results = lazy(() => import("./pages/Results"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const InterviewPreview = lazy(() => import("./pages/InterviewPreview"));
 
 // Smooth page transition settings - using shared animation config
 const transition = defaultFadeTransition;
@@ -53,12 +54,24 @@ const AppContent = () => {
               opacity: 0.95, // Slightly reduced to prevent white flash
             }}
           />
-          <Switch>
-            <Route path="/" component={Index} />
-            <Route path="/results" component={Results} />
-            <Route path="/interview-preview" component={InterviewPreview} />
-            <Route component={NotFound} />
-          </Switch>
+          <Suspense fallback={
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'center', 
+              alignItems: 'center', 
+              minHeight: '100vh',
+              color: '#666'
+            }}>
+              Loading...
+            </div>
+          }>
+            <Switch>
+              <Route path="/" component={Index} />
+              <Route path="/results" component={Results} />
+              <Route path="/interview-preview" component={InterviewPreview} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
         </motion.div>
       </AnimatePresence>
     </div>

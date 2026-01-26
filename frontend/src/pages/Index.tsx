@@ -13,6 +13,7 @@ import { LogOut, History, ArrowLeft } from "lucide-react";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
+import { devLog } from "@/lib/utils";
 
 // Smooth internal view transitions - using shared animation config
 const viewTransition = defaultFadeTransition;
@@ -49,7 +50,7 @@ export default function Index() {
 
   // Debug logging
   useEffect(() => {
-    console.log('[FLIGHT_RECORDER] [SETUP] View changed:', {
+    devLog.log('[FLIGHT_RECORDER] [SETUP] View changed:', {
       currentView,
       selectedRole,
       candidateContextExists: !!candidateContext,
@@ -62,7 +63,7 @@ export default function Index() {
   useEffect(() => {
     // If navigating from /results to /, clear interview state
     if (previousLocation.startsWith('/results') && location === '/') {
-      console.log('Navigating from results page - clearing interview state');
+      devLog.log('Navigating from results page - clearing interview state');
       resetInterviewState();
     }
     setPreviousLocation(location);
@@ -121,14 +122,14 @@ export default function Index() {
   const handleSelectRole = (role: string, mode: "text" | "voice" = "voice") => {
     // Ensure role is never empty - default to "General Interview"
     const normalizedRole = role?.trim() || "General Interview";
-    console.log('handleSelectRole called with:', normalizedRole, mode);
+    devLog.log('handleSelectRole called with:', normalizedRole, mode);
     // Clear any previous interview state before starting new interview
     resetInterviewState();
     setSelectedRole(normalizedRole);
     setInterviewMode("voice"); // Always use voice mode
     // Show resume upload step before starting interview
     setCurrentView("resume");
-    console.log('View changed to resume upload');
+    devLog.log('View changed to resume upload');
   };
 
   const handleResumeUploaded = async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
@@ -151,7 +152,7 @@ export default function Index() {
         resumeText: resume,
         resumeSource: candidateInfo.resumeSource || "unknown"
       };
-      console.log('[FLIGHT_RECORDER] [SETUP] candidateContext updated:', {
+      devLog.log('[FLIGHT_RECORDER] [SETUP] candidateContext updated:', {
         firstName: newCandidateContext.firstName,
         major: newCandidateContext.major,
         year: newCandidateContext.year,
@@ -173,12 +174,12 @@ export default function Index() {
           resumeSource: candidateInfo.resumeSource || "unknown"
         };
         localStorage.setItem('candidate_context', JSON.stringify(contextToStore));
-        console.log('[FLIGHT_RECORDER] [SETUP] candidateContext persisted to localStorage:', {
+        devLog.log('[FLIGHT_RECORDER] [SETUP] candidateContext persisted to localStorage:', {
           sessionId: contextToStore.sessionId,
           timestamp: new Date().toISOString()
         });
       } catch (e) {
-        console.warn('[FLIGHT_RECORDER] [SETUP] Failed to persist candidate_context', e);
+        devLog.warn('[FLIGHT_RECORDER] [SETUP] Failed to persist candidate_context', e);
       }
 
       if (shouldDebugEleven()) {
@@ -211,7 +212,7 @@ export default function Index() {
     
     // Start voice interview session
     try {
-      console.log("Starting voice interview with resume:", { role: selectedRole });
+      devLog.log("Starting voice interview with resume:", { role: selectedRole });
       
       // Voice interview - use WebSocket if we have candidate context and sessionId
       if (candidateInfo && candidateInfo.sessionId) {
@@ -230,7 +231,7 @@ export default function Index() {
         resumeText: resume,
       });
       
-      console.log("Voice interview started successfully:", response);
+      devLog.log("Voice interview started successfully:", response);
       
       if (!response.sessionId) {
         throw new Error("Invalid response from server. Missing session ID.");
@@ -285,7 +286,7 @@ export default function Index() {
     
     // Start voice interview session without resume
     try {
-      console.log("Starting voice interview without resume:", { role: selectedRole });
+      devLog.log("Starting voice interview without resume:", { role: selectedRole });
       
       // For voice interviews without resume, we still need candidate info
       toast({
@@ -295,7 +296,7 @@ export default function Index() {
       });
       return;
     } catch (error: any) {
-      console.error("Error starting interview:", error);
+      devLog.error("Error starting interview:", error);
       const errorMessage = error.message || error.error || "Failed to start interview.";
       
       // Check if it's an authentication error
@@ -326,7 +327,7 @@ export default function Index() {
     const conversationId = results?.conversationId;
     const interviewId = results?.interviewId; // Database ID from save-interview response
     
-    console.log('[FLIGHT_RECORDER] [TRANSITION] handleCompleteInterview called:', {
+    devLog.log('[FLIGHT_RECORDER] [TRANSITION] handleCompleteInterview called:', {
       resultsProvided: !!results,
       resultsSessionId: results?.sessionId,
       resultsConversationId: results?.conversationId,
@@ -353,7 +354,7 @@ export default function Index() {
     const params = new URLSearchParams();
     if (interviewId) {
       params.set('interviewId', interviewId); // Direct lookup - preferred
-      console.log('[FLIGHT_RECORDER] [TRANSITION] Using interviewId for direct lookup:', interviewId);
+      devLog.log('[FLIGHT_RECORDER] [TRANSITION] Using interviewId for direct lookup:', interviewId);
     }
     if (sessionId) {
       params.set('sessionId', sessionId); // Fallback for polling
@@ -363,7 +364,7 @@ export default function Index() {
     }
     
     const resultsUrl = `/results?${params.toString()}`;
-    console.log('[FLIGHT_RECORDER] [TRANSITION] Navigating to results URL:', {
+    devLog.log('[FLIGHT_RECORDER] [TRANSITION] Navigating to results URL:', {
       url: resultsUrl,
       interviewId: interviewId || 'not provided',
       sessionId,
@@ -382,7 +383,7 @@ export default function Index() {
     if (typeof window !== 'undefined') {
       const fullUrl = `${window.location.origin}${resultsUrl}`;
       window.history.replaceState({}, '', fullUrl);
-      console.log('[FLIGHT_RECORDER] [TRANSITION] Updated window.location to:', {
+      devLog.log('[FLIGHT_RECORDER] [TRANSITION] Updated window.location to:', {
         fullUrl,
         windowLocationHref: window.location.href,
         windowLocationSearch: window.location.search,
@@ -520,7 +521,7 @@ export default function Index() {
                   }}
                   onComplete={handleCompleteInterview}
                   onInterviewEnd={(data) => {
-                    console.log('Interview ended via tool call:', data);
+                    devLog.log('Interview ended via tool call:', data);
                     // Transition to results screen using the same handler
                     // Use sessionId and conversationId from callback data, with fallbacks
                     handleCompleteInterview({

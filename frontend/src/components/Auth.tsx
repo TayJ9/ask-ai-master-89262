@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +9,7 @@ import { Mic, Eye, EyeOff, Zap } from "lucide-react";
 import { z } from "zod";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { useLocation } from "wouter";
+import { devLog } from "@/lib/utils";
 
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
@@ -88,7 +90,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         
         // Log token info for debugging (masked)
         const tokenPreview = trimmedToken.length > 20 ? `${trimmedToken.substring(0, 20)}...` : trimmedToken;
-        console.log('[Auth] Storing token in localStorage:', {
+        devLog.log('[Auth] Storing token in localStorage:', {
           length: trimmedToken.length,
           preview: tokenPreview,
           wasTrimmed: trimmedToken !== data.token
@@ -102,14 +104,14 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
           // Verify token was stored correctly
           const storedToken = localStorage.getItem('auth_token');
           if (storedToken !== trimmedToken) {
-            console.error('[Auth] Token storage verification failed:', {
+            devLog.error('[Auth] Token storage verification failed:', {
               expected: trimmedToken.substring(0, 20) + '...',
               actual: storedToken ? storedToken.substring(0, 20) + '...' : 'null'
             });
             throw new Error('Token storage verification failed.');
           }
           
-          console.log('[Auth] Token successfully stored and verified');
+          devLog.log('[Auth] Token successfully stored and verified');
         } catch (storageError: any) {
           console.error('[Auth] Failed to store auth data:', storageError);
           throw new Error('Failed to save authentication data. Please check your browser settings.');
@@ -242,14 +244,14 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               </div>
               {passwordError && <p className="text-sm text-destructive">{passwordError}</p>}
             </div>
-            <Button
+            <LoadingButton
               type="submit"
               className="w-full gradient-primary text-white shadow-glow hover:opacity-90"
-              disabled={loading}
+              loading={loading}
               data-testid="button-submit"
             >
-              {loading ? "Loading..." : isLogin ? "Sign In" : "Create Account"}
-            </Button>
+              {isLogin ? "Sign In" : "Create Account"}
+            </LoadingButton>
             <Button
               type="button"
               variant="ghost"
