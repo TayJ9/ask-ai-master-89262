@@ -29,7 +29,7 @@ const getAllowedOrigins = (): string[] => {
     // Vercel production URL (if set)
     process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined,
     // Development origins
-    'http://localhost:3000',
+    'http://localhost:3001',
     'http://localhost:5173',
     'http://localhost:5000',
   ].filter(Boolean) as string[];

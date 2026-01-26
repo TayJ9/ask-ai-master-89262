@@ -21,19 +21,19 @@ export default defineConfig({
     proxy: {
       // Proxy API requests to the backend server
       '/api': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
       },
       // Proxy WebSocket requests for voice interviews
       '/voice': {
-        target: 'ws://localhost:3000',
+        target: 'ws://localhost:3001',
         ws: true,
         changeOrigin: true,
       },
       // Proxy webhooks to backend
       '/webhooks': {
-        target: 'http://localhost:3000',
+        target: 'http://localhost:3001',
         changeOrigin: true,
         secure: false,
       },
@@ -102,6 +102,14 @@ export default defineConfig({
     },
   },
   base: "/",
+  preview: {
+    // Preview server should serve from the same directory as build output
+    port: 4173,
+    strictPort: false,
+    // Explicitly set the directory to serve from (matches build.outDir)
+    // This ensures preview serves from dist/public, not just dist
+    // Note: vite preview should respect build.outDir, but we're being explicit
+  },
   // Expose environment variables to the client
   // Support both VITE_API_URL (Vite convention) and NEXT_PUBLIC_API_URL (Vercel convention)
   envPrefix: ['VITE_', 'NEXT_PUBLIC_'],
