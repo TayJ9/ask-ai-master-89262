@@ -1,3 +1,5 @@
+// Import React synchronously first to ensure it's available before any lazy components
+import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import "./index.css";
@@ -11,9 +13,12 @@ if (!rootElement) {
 
 // Log that we're starting to render
 console.log("[App] Starting React app render");
+console.log("[App] React version:", React.version);
+console.log("[App] Root element:", rootElement);
 
 try {
   const root = createRoot(rootElement);
+  console.log("[App] Root created, rendering App component...");
   root.render(<App />);
   console.log("[App] React app rendered successfully");
 } catch (error) {

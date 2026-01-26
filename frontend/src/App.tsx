@@ -1,4 +1,6 @@
-import React, { Suspense, lazy } from "react";
+// Import React first to ensure it's available before lazy components
+import React from "react";
+import { Suspense, lazy } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Route, Switch, useLocation } from "wouter";
 import { queryClient } from "@/lib/queryClient";
@@ -7,32 +9,19 @@ import { AnimatePresence, motion } from "framer-motion";
 import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
 import AppErrorBoundary from "@/components/AppErrorBoundary";
 
+// Temporarily disable lazy loading to test if it's causing the React initialization error
+// TODO: Re-enable lazy loading once React chunking issue is resolved
+import Index from "./pages/Index";
+import Results from "./pages/Results";
+import NotFound from "./pages/NotFound";
+import InterviewPreview from "./pages/InterviewPreview";
+
 // Lazy load route components for better code splitting and performance
-// Wrap lazy imports with error handling to catch module loading failures
-const Index = lazy(() => 
-  import("./pages/Index").catch((error) => {
-    console.error("Failed to load Index component:", error);
-    throw error;
-  })
-);
-const Results = lazy(() => 
-  import("./pages/Results").catch((error) => {
-    console.error("Failed to load Results component:", error);
-    throw error;
-  })
-);
-const NotFound = lazy(() => 
-  import("./pages/NotFound").catch((error) => {
-    console.error("Failed to load NotFound component:", error);
-    throw error;
-  })
-);
-const InterviewPreview = lazy(() => 
-  import("./pages/InterviewPreview").catch((error) => {
-    console.error("Failed to load InterviewPreview component:", error);
-    throw error;
-  })
-);
+// DISABLED TEMPORARILY to fix "Cannot set properties of undefined" error
+// const Index = lazy(() => import("./pages/Index"));
+// const Results = lazy(() => import("./pages/Results"));
+// const NotFound = lazy(() => import("./pages/NotFound"));
+// const InterviewPreview = lazy(() => import("./pages/InterviewPreview"));
 
 // Smooth page transition settings - using shared animation config
 const transition = defaultFadeTransition;
@@ -40,6 +29,9 @@ const pageVariants = fadeInVariants;
 
 const AppContent = () => {
   const [location] = useLocation();
+  
+  // Debug logging
+  console.log("[AppContent] Rendering with location:", location);
 
   return (
     <div
@@ -76,47 +68,12 @@ const AppContent = () => {
               opacity: 0.95, // Slightly reduced to prevent white flash
             }}
           />
-          <Suspense fallback={
-            <div style={{ 
-              display: 'flex', 
-              flexDirection: 'column',
-              justifyContent: 'center', 
-              alignItems: 'center', 
-              minHeight: '100vh',
-              color: '#666',
-              gap: '1rem',
-              backgroundColor: '#FFF8F0',
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              zIndex: 10
-            }}>
-              <div style={{
-                width: '48px',
-                height: '48px',
-                border: '4px solid #f3f4f6',
-                borderTop: '4px solid #2563eb',
-                borderRadius: '50%',
-                animation: 'spin 1s linear infinite'
-              }}></div>
-              <p style={{ fontSize: '16px', fontWeight: '500' }}>Loading application...</p>
-              <style>{`
-                @keyframes spin {
-                  0% { transform: rotate(0deg); }
-                  100% { transform: rotate(360deg); }
-                }
-              `}</style>
-            </div>
-          }>
-            <Switch>
-              <Route path="/" component={Index} />
-              <Route path="/results" component={Results} />
-              <Route path="/interview-preview" component={InterviewPreview} />
-              <Route component={NotFound} />
-            </Switch>
-          </Suspense>
+          <Switch>
+            <Route path="/" component={Index} />
+            <Route path="/results" component={Results} />
+            <Route path="/interview-preview" component={InterviewPreview} />
+            <Route component={NotFound} />
+          </Switch>
         </motion.div>
       </AnimatePresence>
     </div>

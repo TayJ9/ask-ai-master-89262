@@ -411,8 +411,7 @@ export default function Index() {
 
   return (
     <>
-      {(
-        <div className="fixed top-2 right-2 sm:top-4 sm:right-4 flex flex-wrap gap-2 z-50 max-w-[calc(100vw-1rem)]">
+      <div className="fixed top-2 right-2 sm:top-4 sm:right-4 flex flex-wrap gap-2 z-50 max-w-[calc(100vw-1rem)]">
           {currentView === "resume" && (
             <Button
               onClick={() => {
@@ -451,7 +450,6 @@ export default function Index() {
             <span className="hidden sm:inline">Sign Out</span>
           </Button>
         </div>
-      )}
 
       <AnimatePresence mode="wait" initial={false}>
           {currentView === "roles" && (

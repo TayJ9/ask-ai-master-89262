@@ -40,20 +40,29 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: "dist/public",
+    outDir: "dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 600, // Increase warning threshold slightly
     minify: 'esbuild', // Use esbuild for faster builds
     sourcemap: false, // Disable sourcemaps in production for smaller bundle
+    commonjsOptions: {
+      include: [/node_modules/],
+      transformMixedEsModules: true,
+    },
     rollupOptions: {
       output: {
+        // CRITICAL FIX: The "Cannot set properties of undefined (setting 'Children')" error
+        // happens when React is in a vendor chunk that loads asynchronously.
+        // Solution: Keep React in the entry bundle (don't chunk it) to ensure synchronous loading
         manualChunks: (id) => {
           // Split vendor chunks for better caching and smaller initial bundle
           if (id.includes('node_modules')) {
-            // React and React DOM - MUST be in same chunk to avoid duplicate React instances
-            if (id.includes('react') || id.includes('react-dom') || 
-                id.includes('/react/') || id.includes('/react-dom/')) {
-              return 'react-vendor';
+            // React and React-DOM MUST be in entry bundle (not chunked) to prevent TDZ errors
+            // Return undefined to keep React in the main entry chunk
+            if (id.includes('node_modules/react/') || 
+                id.includes('node_modules/react-dom/') ||
+                id === 'react' || id === 'react-dom') {
+              return undefined; // Keep in entry bundle, don't chunk
             }
             // Radix UI components
             if (id.includes('@radix-ui')) {
@@ -99,5 +108,7 @@ export default defineConfig({
   define: {
     // Make NEXT_PUBLIC_API_URL available via import.meta.env
     'import.meta.env.NEXT_PUBLIC_API_URL': JSON.stringify(process.env.NEXT_PUBLIC_API_URL || process.env.VITE_API_URL || ''),
+    // Ensure React is available globally to prevent initialization errors
+    'global': 'globalThis',
   },
 });
