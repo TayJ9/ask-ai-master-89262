@@ -43,7 +43,7 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: (id) => {
-          // Split vendor chunks for better caching
+          // Split vendor chunks for better caching and smaller initial bundle
           if (id.includes('node_modules')) {
             // React and React DOM
             if (id.includes('react') || id.includes('react-dom')) {
@@ -66,7 +66,20 @@ export default defineConfig({
             if (id.includes('framer-motion')) {
               return 'framer-motion';
             }
-            // Other node_modules
+            // Validation libraries (Zod can be large)
+            if (id.includes('zod')) {
+              return 'validation-vendor';
+            }
+            // WebSocket and audio libraries
+            if (id.includes('ws') || id.includes('socket') || id.includes('audio') || 
+                id.includes('media') || id.includes('recorder')) {
+              return 'media-vendor';
+            }
+            // Router and navigation
+            if (id.includes('wouter') || id.includes('router')) {
+              return 'router-vendor';
+            }
+            // Other node_modules - split into smaller chunks if still too large
             return 'vendor';
           }
         },

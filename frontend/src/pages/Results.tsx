@@ -16,6 +16,7 @@ import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { mockInterviewResults } from "@/mocks/resultsMockData";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import { devLog } from "@/lib/utils";
 
 interface InterviewResults {
   interview: {
@@ -137,7 +138,7 @@ export default function Results() {
   const fetchResults = useCallback(async (interviewId: string): Promise<InterviewResults | null> => {
     // In mock mode, return mock data immediately - no API calls
     if (isMockMode) {
-      console.log('[RESULTS] Using mock data for development preview - skipping API calls');
+      devLog.log('[RESULTS] Using mock data for development preview - skipping API calls');
       // Return mock data after a small delay to simulate loading
       await new Promise(resolve => setTimeout(resolve, 100));
       return mockInterviewResults as InterviewResults;
@@ -147,10 +148,10 @@ export default function Results() {
       const data = await apiGet(`/api/interviews/${interviewId}/results`);
       return data;
     } catch (err: any) {
-      console.error('Error fetching results:', err);
+      devLog.error('Error fetching results:', err);
       // In development, if server is down, fall back to mock data
       if (import.meta.env.DEV && window.location.hostname === 'localhost') {
-        console.warn('[RESULTS] Server unavailable, using mock data as fallback');
+        devLog.warn('[RESULTS] Server unavailable, using mock data as fallback');
         return mockInterviewResults as InterviewResults;
       }
       throw err;
@@ -168,7 +169,7 @@ export default function Results() {
       const data = await apiGet(`/api/interviews/by-session/${sessionId}`);
       return data.interviewId || null;
     } catch (err: any) {
-      console.error('Error polling for interviewId:', err);
+      devLog.error('Error polling for interviewId:', err);
       return null;
     }
   }, [isMockMode]);
@@ -195,7 +196,7 @@ export default function Results() {
     
     // In mock mode, load mock data immediately and skip polling
     if (isMockMode) {
-      console.log('[RESULTS] Mock mode enabled - loading mock data');
+      devLog.log('[RESULTS] Mock mode enabled - loading mock data');
       setResults(mockInterviewResults as InterviewResults);
       setIsPolling(false);
       return;
@@ -243,7 +244,7 @@ export default function Results() {
           setResults(initialData);
           const evalStatus = getEvaluationStatus(initialData);
           
-          console.log('[RESULTS] Initial fetch:', {
+          devLog.log('[RESULTS] Initial fetch:', {
             interviewId: effectiveInterviewId,
             hasEvaluation: !!initialData.evaluation,
             evaluationStatus: initialData.evaluation?.status || 'null',
@@ -281,7 +282,7 @@ export default function Results() {
                     }
                   }
                 } catch (err) {
-                  console.error('Error during polling:', err);
+                  devLog.error('Error during polling:', err);
                 }
                 
                 pollAttempts++;
@@ -315,7 +316,7 @@ export default function Results() {
           }
         }
       } catch (err: any) {
-        console.error('Error loading results:', err);
+        devLog.error('Error loading results:', err);
         if (err.status === 404) {
           setError('Interview not found');
         } else {
@@ -400,7 +401,7 @@ export default function Results() {
       const status = results.evaluation.status;
       if (status === 'processing') {
         // Check if we have transcript - if yes, we're analyzing; if no, still processing transcript
-        if (results.transcript) {
+        if (results.interview.transcript) {
           currentStep = 3; // Analyzing responses
           stepDescription = "Evaluating your answers using AI...";
         } else {
@@ -517,9 +518,9 @@ export default function Results() {
                                 Estimated time remaining: ~{estimatedTimeRemaining}s
                               </p>
                             )}
-                            {currentStep === 3 && results?.transcript && (
+                            {currentStep === 3 && results?.interview.transcript && (
                               <p className="text-xs text-blue-600 mt-1 font-medium">
-                                Analyzing {results.transcript.split(/\n+/).filter(l => l.trim().length > 10).length} responses...
+                                Analyzing {results.interview.transcript.split(/\n+/).filter(l => l.trim().length > 10).length} responses...
                               </p>
                             )}
                           </>
@@ -780,7 +781,6 @@ export default function Results() {
                     <motion.div 
                       initial={{ opacity: 0, x: 10 }}
                       animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
                       transition={{ duration: 0.3, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
                       className="flex flex-col gap-3 text-white"
                     >
