@@ -9,6 +9,11 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
       "@shared": path.resolve(__dirname, "./shared"),
     },
+    dedupe: ['react', 'react-dom'], // Ensure only one instance of React is loaded
+  },
+  optimizeDeps: {
+    include: ['react', 'react-dom'], // Pre-bundle React to ensure single instance
+    force: false, // Only force if needed
   },
   server: {
     host: '0.0.0.0',
@@ -45,8 +50,9 @@ export default defineConfig({
         manualChunks: (id) => {
           // Split vendor chunks for better caching and smaller initial bundle
           if (id.includes('node_modules')) {
-            // React and React DOM
-            if (id.includes('react') || id.includes('react-dom')) {
+            // React and React DOM - MUST be in same chunk to avoid duplicate React instances
+            if (id.includes('react') || id.includes('react-dom') || 
+                id.includes('/react/') || id.includes('/react-dom/')) {
               return 'react-vendor';
             }
             // Radix UI components
