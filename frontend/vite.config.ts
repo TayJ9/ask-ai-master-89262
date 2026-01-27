@@ -105,6 +105,20 @@ export default defineConfig({
             if (id.includes('router')) {
               return 'router-vendor';
             }
+            // PERFORMANCE: Split large vendor chunk by library type for better caching
+            // Heavy form/table libraries
+            if (id.includes('react-hook-form') || id.includes('react-table') || 
+                id.includes('react-day-picker') || id.includes('date-fns')) {
+              return 'form-vendor';
+            }
+            // Chart/visualization libraries
+            if (id.includes('recharts') || id.includes('chart') || id.includes('d3')) {
+              return 'chart-vendor';
+            }
+            // Animation libraries (not framer-motion - that's in entry)
+            if (id.includes('embla-carousel') || id.includes('carousel')) {
+              return 'animation-vendor';
+            }
             // Other node_modules - split into smaller chunks if still too large
             return 'vendor';
           }

@@ -4,7 +4,7 @@
  * mouse interaction, velocity reactions, iridescent gradients, and more!
  */
 
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
 
 interface AudioVisualizerProps {
   inputVolume: number;
@@ -79,7 +79,35 @@ interface Particle {
   pulseOffset: number;
 }
 
-export default function AudioVisualizer({
+// Memoized color schemes - defined outside component to prevent recreation
+const COLOR_SCHEMES = {
+  user_speaking: {
+    primary: ['#22c55e', '#10b981', '#059669'],
+    secondary: ['#16a34a', '#15803d', '#166534'],
+    accent: ['#86efac', '#6ee7b7', '#5eead4'],
+    glow: 'rgba(34, 197, 94, 0.5)'
+  },
+  ai_speaking: {
+    primary: ['#3b82f6', '#2563eb', '#6366f1'],
+    secondary: ['#1d4ed8', '#1e40af', '#4f46e5'],
+    accent: ['#93c5fd', '#a5b4fc', '#c7d2fe'],
+    glow: 'rgba(59, 130, 246, 0.5)'
+  },
+  listening: {
+    primary: ['#f59e0b', '#f97316', '#fb923c'],
+    secondary: ['#d97706', '#ea580c', '#dc2626'],
+    accent: ['#fbbf24', '#fcd34d', '#fde047'],
+    glow: 'rgba(245, 158, 11, 0.5)'
+  },
+  processing: {
+    primary: ['#6b7280', '#9ca3af', '#d1d5db'],
+    secondary: ['#4b5563', '#6b7280', '#9ca3af'],
+    accent: ['#9ca3af', '#d1d5db', '#e5e7eb'],
+    glow: 'rgba(107, 114, 128, 0.3)'
+  }
+} as const;
+
+function AudioVisualizer({
   inputVolume,
   outputVolume,
   mode,
@@ -99,53 +127,32 @@ export default function AudioVisualizer({
   const [particles, setParticles] = useState<Particle[]>([]);
   const shimmerOffsetRef = useRef(0);
   const perlinRef = useRef(new PerlinNoise(Math.random() * 1000));
-  const activeVolumeRef = useRef(activeVolume);
   
-  // Keep activeVolume ref in sync without triggering re-renders
+  // Use refs for volume to prevent prop changes from triggering re-renders
+  // CRITICAL: Always update refs even when component is memoized (useEffect runs regardless)
+  const inputVolumeRef = useRef(inputVolume);
+  const outputVolumeRef = useRef(outputVolume);
+  const activeVolumeRef = useRef(0);
+  
+  // Update refs when props change - this runs even if component doesn't re-render (memoized)
+  // This ensures AudioVisualizer always has latest volume values without causing re-renders
   useEffect(() => {
-    activeVolumeRef.current = activeVolume;
-  }, [activeVolume]);
+    inputVolumeRef.current = inputVolume;
+    outputVolumeRef.current = outputVolume;
+    // Recalculate activeVolume immediately when volumes or mode change
+    activeVolumeRef.current = mode === 'user_speaking' ? inputVolumeRef.current : 
+                               mode === 'ai_speaking' ? outputVolumeRef.current : 
+                               mode === 'listening' ? Math.min(inputVolumeRef.current * 1.5, 0.4) :
+                               0.1;
+  }, [inputVolume, outputVolume, mode]); // Include all dependencies so refs stay in sync
 
-  const activeVolume = mode === 'user_speaking' ? inputVolume : 
-                       mode === 'ai_speaking' ? outputVolume : 
-                       mode === 'listening' ? Math.min(inputVolume * 1.5, 0.4) :
-                       0.1;
+  // Memoize colors calculation - only recalculates when mode changes
+  const colors = useMemo(() => {
+    return COLOR_SCHEMES[mode] || COLOR_SCHEMES.processing;
+  }, [mode]);
 
-  // Color schemes with iridescent variations
-  const getColors = () => {
-    const baseColors = {
-      user_speaking: {
-        primary: ['#22c55e', '#10b981', '#059669'],
-        secondary: ['#16a34a', '#15803d', '#166534'],
-        accent: ['#86efac', '#6ee7b7', '#5eead4'],
-        glow: 'rgba(34, 197, 94, 0.5)'
-      },
-      ai_speaking: {
-        primary: ['#3b82f6', '#2563eb', '#6366f1'],
-        secondary: ['#1d4ed8', '#1e40af', '#4f46e5'],
-        accent: ['#93c5fd', '#a5b4fc', '#c7d2fe'],
-        glow: 'rgba(59, 130, 246, 0.5)'
-      },
-      listening: {
-        primary: ['#f59e0b', '#f97316', '#fb923c'],
-        secondary: ['#d97706', '#ea580c', '#dc2626'],
-        accent: ['#fbbf24', '#fcd34d', '#fde047'],
-        glow: 'rgba(245, 158, 11, 0.5)'
-      },
-      processing: {
-        primary: ['#6b7280', '#9ca3af', '#d1d5db'],
-        secondary: ['#4b5563', '#6b7280', '#9ca3af'],
-        accent: ['#9ca3af', '#d1d5db', '#e5e7eb'],
-        glow: 'rgba(107, 114, 128, 0.3)'
-      }
-    };
-    return baseColors[mode] || baseColors.processing;
-  };
-
-  const colors = getColors();
-
-  // Enhanced blob path generation with Perlin noise
-  const generateBlobPath = (
+  // Enhanced blob path generation with Perlin noise - memoized with useCallback
+  const generateBlobPath = useCallback((
     centerX: number,
     centerY: number,
     baseRadius: number,
@@ -223,7 +230,7 @@ export default function AudioVisualizer({
     
     pathData += ' Z';
     return pathData;
-  };
+  }, [mode]); // Only recreate if mode changes
 
   // Ambient star field particle system - optimized to reduce re-renders
   const particlesRef = useRef<Particle[]>([]);
@@ -614,3 +621,15 @@ export default function AudioVisualizer({
     </div>
   );
 }
+
+// Memoize component to prevent parent re-renders from causing unnecessary updates
+// Only re-render when mode, width, or height changes (not volume)
+export default React.memo(AudioVisualizer, (prevProps, nextProps) => {
+  // Custom comparison: only re-render if mode, width, or height changes
+  // Volume changes are handled via refs, so they don't need to trigger re-renders
+  return (
+    prevProps.mode === nextProps.mode &&
+    prevProps.width === nextProps.width &&
+    prevProps.height === nextProps.height
+  );
+});

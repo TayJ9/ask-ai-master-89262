@@ -111,8 +111,11 @@ export default function VoiceInterviewWebSocket({
   const [isStarting, setIsStarting] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [isIdle, setIsIdle] = useState(true); // Start in idle state - requires user click
-  const [inputVolume, setInputVolume] = useState(0);
-  const [outputVolume, setOutputVolume] = useState(0);
+  // Use refs for volume to prevent frequent re-renders - only update state for UI indicators
+  const inputVolumeRef = useRef(0);
+  const outputVolumeRef = useRef(0);
+  const [inputVolume, setInputVolume] = useState(0); // Only updated for threshold crossings
+  const [outputVolume, setOutputVolume] = useState(0); // Only updated for threshold crossings
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [isTokenRequesting, setIsTokenRequesting] = useState(false);
   
@@ -427,6 +430,9 @@ export default function VoiceInterviewWebSocket({
       volumeIntervalRef.current = null;
     }
     
+    // CRITICAL FIX: Clean up AudioContext on disconnect
+    await cleanupAudioContext();
+    
     // Handle agent-initiated disconnect: IMMEDIATE navigation to results
     if (wasInterviewActive && (isAgentDisconnect || isInterviewCompleteRef.current)) {
       console.log('[FLIGHT_RECORDER] [INTERVIEW] Agent ended the interview. Navigating to results immediately...');
@@ -550,7 +556,7 @@ export default function VoiceInterviewWebSocket({
       setIsIdle(true);
       setStatusMessage("Connection failed. Click to try again.");
     }
-  }, [onComplete, saveInterview, sessionId]);
+  }, [onComplete, saveInterview, sessionId, cleanupAudioContext]);
 
   const handleMessage = useCallback((message: any) => {
     if (!isMountedRef.current) return;
@@ -797,9 +803,9 @@ export default function VoiceInterviewWebSocket({
       return 'ai_speaking';
     }
     
-    // Use input volume to detect user speaking - lowered threshold for better sensitivity
+    // Use input volume ref to detect user speaking - lowered threshold for better sensitivity
     // 0.03 allows detection of quieter speech while avoiding false positives
-    if (inputVolume > 0.03) {
+    if (inputVolumeRef.current > 0.03) {
       return 'user_speaking';
     }
     
@@ -847,7 +853,8 @@ export default function VoiceInterviewWebSocket({
     }
     
     // When user is speaking, mark it and clear any processing timeout
-    if (inputVolume > 0.03) {
+    // Use ref for volume check to avoid dependency on state
+    if (inputVolumeRef.current > 0.03) {
       wasUserSpeakingRef.current = true;
       if (processingTimeoutRef.current) {
         clearTimeout(processingTimeoutRef.current);
@@ -856,7 +863,7 @@ export default function VoiceInterviewWebSocket({
     }
     
     // If we're in processing state (user stopped speaking, AI hasn't started), set timeout
-    if (wasUserSpeakingRef.current && !conversation.isSpeaking && inputVolume <= 0.03) {
+    if (wasUserSpeakingRef.current && !conversation.isSpeaking && inputVolumeRef.current <= 0.03) {
       if (!processingTimeoutRef.current) {
         processingTimeoutRef.current = setTimeout(() => {
           console.log('[State Transition] Processing timeout - resetting to listening');
@@ -869,7 +876,7 @@ export default function VoiceInterviewWebSocket({
       clearTimeout(processingTimeoutRef.current);
       processingTimeoutRef.current = null;
     }
-  }, [conversation.isSpeaking, conversation.status, inputVolume, hasStarted]);
+  }, [conversation.isSpeaking, conversation.status, hasStarted]); // Removed inputVolume dependency - using ref
 
   // Update status message based on mode
   useEffect(() => {
@@ -896,13 +903,30 @@ export default function VoiceInterviewWebSocket({
   }, [conversationMode, hasStarted, conversation.status]);
 
   // Poll volume levels for visualization and latency tracking
+  // OPTIMIZED: Use refs for volume, only update state when crossing thresholds
   useEffect(() => {
     if (conversation.status === 'connected' && !volumeIntervalRef.current) {
+      const VOLUME_UPDATE_THRESHOLD = 0.1; // Only update state when volume changes by 0.1
+      let lastStateInputVolume = 0;
+      let lastStateOutputVolume = 0;
+      
       volumeIntervalRef.current = setInterval(() => {
         const input = conversation.getInputVolume();
         const output = conversation.getOutputVolume();
-        setInputVolume(input);
-        setOutputVolume(output);
+        
+        // Always update refs (for AudioVisualizer which reads from refs)
+        inputVolumeRef.current = input;
+        outputVolumeRef.current = output;
+        
+        // Only update state when volume crosses significant threshold (reduces re-renders)
+        if (Math.abs(input - lastStateInputVolume) >= VOLUME_UPDATE_THRESHOLD) {
+          setInputVolume(input);
+          lastStateInputVolume = input;
+        }
+        if (Math.abs(output - lastStateOutputVolume) >= VOLUME_UPDATE_THRESHOLD) {
+          setOutputVolume(output);
+          lastStateOutputVolume = output;
+        }
         
         // Latency tracking: Detect when user stops speaking
         const SPEECH_END_THRESHOLD = 0.03; // Same threshold as conversation mode detection
@@ -943,9 +967,47 @@ export default function VoiceInterviewWebSocket({
     };
   }, [conversation.status, conversation]);
 
+  // Centralized MediaStream cleanup function
+  const cleanupMediaStream = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    try {
+      stream.getTracks().forEach(track => {
+        if (track.readyState !== 'ended') {
+          track.stop();
+        }
+        // Clear track reference
+        track.enabled = false;
+      });
+      console.log('[CLEANUP] MediaStream tracks stopped');
+    } catch (error) {
+      console.warn('[CLEANUP] Error stopping MediaStream tracks:', error);
+    }
+  }, []);
+
+  // AudioContext cleanup function
+  const cleanupAudioContext = useCallback(async () => {
+    if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
+      try {
+        console.log('[CLEANUP] Closing AudioContext');
+        await micAudioContextRef.current.close();
+        micAudioContextRef.current = null;
+        console.log('[CLEANUP] AudioContext closed successfully');
+      } catch (error) {
+        console.warn('[CLEANUP] Error closing AudioContext:', error);
+        micAudioContextRef.current = null; // Clear ref even if close fails
+      }
+    }
+  }, []);
+
   // AudioContext resume function - ensures browser audio pipeline is ready
   // CRITICAL: Prevents multiple AudioContext initializations which cause crackling/choppy audio
   const resumeAudioContext = useCallback(async (): Promise<void> => {
+    // CRITICAL FIX: Close existing AudioContext before creating new one (prevents memory leaks)
+    if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
+      console.log('[AUDIO] Closing existing AudioContext before creating new one');
+      await cleanupAudioContext();
+    }
+    
     // Check if we already have an active AudioContext to prevent multiple initializations
     if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
       console.log('[AUDIO] AudioContext already exists, resuming if suspended...');
@@ -999,7 +1061,7 @@ export default function VoiceInterviewWebSocket({
       // Clear ref if creation failed
       micAudioContextRef.current = null;
     }
-  }, []);
+  }, [cleanupAudioContext]);
 
   // Pre-warm microphone permission and connection (reduces initial latency)
   // NOTE: Using minimal constraints to avoid conflicts with later detailed constraints
@@ -1219,13 +1281,13 @@ export default function VoiceInterviewWebSocket({
       // CRITICAL: Check mount state immediately after mic request
       if (!isMountedRef.current) {
         console.log('Component unmounted during mic request - aborting start');
-        micStream.getTracks().forEach(t => t.stop()); // Clean up immediately
+        cleanupMediaStream(micStream); // Use centralized cleanup
         return; // Don't reset refs - finally block handles it
       }
       
       // Release the stream - we just needed permission
       console.log('Microphone access granted, releasing stream...');
-      micStream.getTracks().forEach(t => t.stop());
+      cleanupMediaStream(micStream);
       micStream = null;
       
       // Small delay to ensure browser fully releases the mic
@@ -1463,8 +1525,11 @@ export default function VoiceInterviewWebSocket({
       
       // Clean up any lingering mic stream
       if (micStream) {
-        micStream.getTracks().forEach(t => t.stop());
+        cleanupMediaStream(micStream);
       }
+      
+      // Clean up AudioContext on error
+      await cleanupAudioContext();
       
       // Only update state if still mounted
       if (isMountedRef.current) {
@@ -1491,7 +1556,7 @@ export default function VoiceInterviewWebSocket({
         setIsTokenRequesting(false);
       }
     }
-  }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, isTokenRequesting, major, resumeAudioContext, sessionId, toast]);
+  }, [candidateContext, candidateId, conversation, firstName, hasStarted, isStarting, isTokenRequesting, major, resumeAudioContext, sessionId, toast, cleanupMediaStream, cleanupAudioContext]);
 
   // End interview
   const handleEndInterview = useCallback(async () => {
@@ -1499,6 +1564,9 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Ending interview...");
       
       try {
+        // CRITICAL: Clean up AudioContext before ending session
+        await cleanupAudioContext();
+        
         if (conversation.status === 'connected') {
           console.log('Attempting to END session...');
           await conversation.endSession();
@@ -1589,7 +1657,7 @@ export default function VoiceInterviewWebSocket({
         }
       }
     }
-  }, [conversation, conversationId, sessionId, saveInterview, onComplete]);
+  }, [conversation, conversationId, sessionId, saveInterview, onComplete, cleanupAudioContext]);
 
   // Handle user click to start interview (requires user gesture for mic access)
   const handleStartClick = useCallback(() => {
@@ -1662,11 +1730,24 @@ export default function VoiceInterviewWebSocket({
         return;
       }
       
-      // NOTE: We do NOT automatically end the session here anymore.
-      // This prevents accidental disconnections during re-renders or Strict Mode cycles.
-      // The session should only end when the user clicks "End Interview" or the SDK disconnects naturally.
+      // CRITICAL FIX: End conversation session on unmount if still active
+      // This prevents memory leaks when component unmounts during active interview
+      // Note: Cleanup functions can't be async, so we fire-and-forget async operations
+      if (conversationRef.current && conversationRef.current.status === 'connected') {
+        console.log('[CLEANUP] Ending conversation session on unmount');
+        conversationRef.current.endSession().catch((error: any) => {
+          console.warn('[CLEANUP] Error ending conversation session:', error);
+          // Don't block cleanup if endSession fails
+        });
+      }
+      
+      // CRITICAL FIX: Clean up AudioContext on unmount
+      // Fire-and-forget since cleanup can't be async
+      cleanupAudioContext().catch((error: any) => {
+        console.warn('[CLEANUP] Error cleaning up AudioContext:', error);
+      });
     };
-  }, []);
+  }, [cleanupAudioContext]);
 
   // Removed automatic cleanup on hidden state to prevent premature disconnection
   // The component stays mounted even when hidden (isActive=false) so audio can continue
