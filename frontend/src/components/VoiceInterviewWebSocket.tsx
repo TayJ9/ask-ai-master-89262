@@ -360,6 +360,38 @@ export default function VoiceInterviewWebSocket({
     isStartingRef.current = false;
   }, []);
 
+  // Centralized MediaStream cleanup function - defined early so it can be used in other callbacks
+  const cleanupMediaStream = useCallback((stream: MediaStream | null) => {
+    if (!stream) return;
+    try {
+      stream.getTracks().forEach(track => {
+        if (track.readyState !== 'ended') {
+          track.stop();
+        }
+        // Clear track reference
+        track.enabled = false;
+      });
+      console.log('[CLEANUP] MediaStream tracks stopped');
+    } catch (error) {
+      console.warn('[CLEANUP] Error stopping MediaStream tracks:', error);
+    }
+  }, []);
+
+  // AudioContext cleanup function - defined early so it can be used in other callbacks
+  const cleanupAudioContext = useCallback(async () => {
+    if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
+      try {
+        console.log('[CLEANUP] Closing AudioContext');
+        await micAudioContextRef.current.close();
+        micAudioContextRef.current = null;
+        console.log('[CLEANUP] AudioContext closed successfully');
+      } catch (error) {
+        console.warn('[CLEANUP] Error closing AudioContext:', error);
+        micAudioContextRef.current = null; // Clear ref even if close fails
+      }
+    }
+  }, []);
+
   const handleDisconnect = useCallback(async (reason: any) => {
     console.error("🔥🔥🔥 CRITICAL: SDK DISCONNECTED 🔥🔥🔥");
     console.error("Reason:", typeof reason === 'object' ? JSON.stringify(reason, null, 2) : reason);
@@ -966,38 +998,6 @@ export default function VoiceInterviewWebSocket({
       }
     };
   }, [conversation.status, conversation]);
-
-  // Centralized MediaStream cleanup function
-  const cleanupMediaStream = useCallback((stream: MediaStream | null) => {
-    if (!stream) return;
-    try {
-      stream.getTracks().forEach(track => {
-        if (track.readyState !== 'ended') {
-          track.stop();
-        }
-        // Clear track reference
-        track.enabled = false;
-      });
-      console.log('[CLEANUP] MediaStream tracks stopped');
-    } catch (error) {
-      console.warn('[CLEANUP] Error stopping MediaStream tracks:', error);
-    }
-  }, []);
-
-  // AudioContext cleanup function
-  const cleanupAudioContext = useCallback(async () => {
-    if (micAudioContextRef.current && micAudioContextRef.current.state !== 'closed') {
-      try {
-        console.log('[CLEANUP] Closing AudioContext');
-        await micAudioContextRef.current.close();
-        micAudioContextRef.current = null;
-        console.log('[CLEANUP] AudioContext closed successfully');
-      } catch (error) {
-        console.warn('[CLEANUP] Error closing AudioContext:', error);
-        micAudioContextRef.current = null; // Clear ref even if close fails
-      }
-    }
-  }, []);
 
   // AudioContext resume function - ensures browser audio pipeline is ready
   // CRITICAL: Prevents multiple AudioContext initializations which cause crackling/choppy audio
