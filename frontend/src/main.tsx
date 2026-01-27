@@ -16,6 +16,24 @@ console.log("[App] Starting React app render");
 console.log("[App] React version:", React.version);
 console.log("[App] Root element:", rootElement);
 
+// Verify React.Children is available before proceeding
+if (!React.Children) {
+  const error = new Error("React.Children is not available. React may not be fully initialized.");
+  console.error("[App] React initialization check failed:", error);
+  rootElement.innerHTML = `
+    <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 2rem; text-align: center; font-family: system-ui, -apple-system, sans-serif;">
+      <h1 style="color: #dc2626; margin-bottom: 1rem;">React Initialization Error</h1>
+      <p style="color: #666; margin-bottom: 2rem;">React is not fully initialized. Please refresh the page.</p>
+      <button onclick="window.location.reload()" style="padding: 0.5rem 1rem; background: #2563eb; color: white; border: none; border-radius: 0.375rem; cursor: pointer;">
+        Reload Page
+      </button>
+    </div>
+  `;
+  throw error;
+}
+
+console.log("[App] React.Children check passed - React is ready");
+
 try {
   const root = createRoot(rootElement);
   console.log("[App] Root created, rendering App component...");

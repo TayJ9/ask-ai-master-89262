@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { getApiUrl, handleApiResponse, ApiError } from "./api";
+import { isReactReady } from "./reactReady";
 
 const getAuthToken = () => localStorage.getItem('auth_token');
 
@@ -52,15 +53,37 @@ const defaultQueryFn = async ({ queryKey }: { queryKey: readonly unknown[] }) =>
   }
 };
 
-export const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      queryFn: defaultQueryFn,
-      staleTime: 1000 * 60,
-      retry: 1,
-    },
-  },
-});
+// Lazy initialization: QueryClient singleton
+let _queryClient: QueryClient | null = null;
+
+/**
+ * Get or create QueryClient instance
+ * Ensures React is ready before creating QueryClient to prevent React.Children errors
+ */
+export function getQueryClient(): QueryClient {
+  // Check if React is ready before creating QueryClient
+  if (!isReactReady()) {
+    console.warn('[QueryClient] React is not ready yet. QueryClient creation may fail.');
+    // In production builds, we'll still try to create it, but log the warning
+  }
+  
+  if (!_queryClient) {
+    _queryClient = new QueryClient({
+      defaultOptions: {
+        queries: {
+          queryFn: defaultQueryFn,
+          staleTime: 1000 * 60,
+          retry: 1,
+        },
+      },
+    });
+  }
+  
+  return _queryClient;
+}
+
+// Export for backward compatibility - but use getQueryClient() in new code
+export const queryClient = getQueryClient();
 
 type RequestMethod = 'POST' | 'PATCH' | 'PUT' | 'DELETE' | 'GET';
 

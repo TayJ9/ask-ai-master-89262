@@ -64,22 +64,33 @@ export default defineConfig({
                 id === 'react' || id === 'react-dom') {
               return undefined; // Keep in entry bundle, don't chunk
             }
-            // Radix UI components
+            // Radix UI components - keep with React to prevent loading order issues
             if (id.includes('@radix-ui')) {
-              return 'radix-ui';
+              return undefined; // Keep in entry bundle with React
             }
-            // React Query
+            // React Query - keep with React to prevent loading order issues
             if (id.includes('@tanstack/react-query')) {
-              return 'query-vendor';
+              return undefined; // Keep in entry bundle with React
+            }
+            // Wouter router - keep with React to prevent loading order issues
+            // Wouter also accesses React.Children and needs React to be available
+            if (id.includes('wouter')) {
+              return undefined; // Keep in entry bundle with React
+            }
+            // ElevenLabs React SDK - keep with React to prevent loading order issues
+            // @elevenlabs/react also depends on React and may access React.Children
+            if (id.includes('@elevenlabs/react')) {
+              return undefined; // Keep in entry bundle with React
             }
             // UI utilities
             if (id.includes('lucide-react') || id.includes('class-variance-authority') || 
                 id.includes('clsx') || id.includes('tailwind-merge')) {
               return 'ui-vendor';
             }
-            // Framer Motion (can be large)
+            // Framer Motion - keep with React to prevent loading order issues
+            // Don't chunk framer-motion separately - it needs React to be available
             if (id.includes('framer-motion')) {
-              return 'framer-motion';
+              return undefined; // Keep in entry bundle with React
             }
             // Validation libraries (Zod can be large)
             if (id.includes('zod')) {
@@ -90,8 +101,8 @@ export default defineConfig({
                 id.includes('media') || id.includes('recorder')) {
               return 'media-vendor';
             }
-            // Router and navigation
-            if (id.includes('wouter') || id.includes('router')) {
+            // Other router libraries (not wouter)
+            if (id.includes('router')) {
               return 'router-vendor';
             }
             // Other node_modules - split into smaller chunks if still too large
