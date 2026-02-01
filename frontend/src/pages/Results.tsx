@@ -129,7 +129,9 @@ export default function Results() {
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollStartTime, setPollStartTime] = useState<number | null>(null);
-  
+  /** Reveal main results content only after paint to avoid showing a half-rendered page. */
+  const [contentReady, setContentReady] = useState(false);
+
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
@@ -391,6 +393,22 @@ export default function Results() {
     );
   }, [results?.evaluation?.evaluation?.questions]);
 
+  // Reveal main results content only after the browser has painted (avoids half-rendered flash).
+  const showingResultsUI = !!(results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview));
+  useEffect(() => {
+    if (!showingResultsUI) return;
+    setContentReady(false);
+    let raf1: number;
+    let raf2: number;
+    raf1 = requestAnimationFrame(() => {
+      raf2 = requestAnimationFrame(() => setContentReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(raf1);
+      if (typeof raf2 === 'number') cancelAnimationFrame(raf2);
+    };
+  }, [showingResultsUI]);
+
   // Render Processing UI
   const renderProcessingUI = () => {
     // Determine which step we're on based on evaluation status
@@ -608,6 +626,14 @@ export default function Results() {
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
       <AnimatedBackground fixedDecor className="py-4 sm:py-8 px-4">
+        <motion.div
+          className="relative z-10 min-h-full"
+          initial={false}
+          animate={{ opacity: contentReady ? 1 : 0 }}
+          transition={{ duration: 0.2, ease: [0.33, 1, 0.68, 1] }}
+          style={{ pointerEvents: contentReady ? 'auto' : 'none' }}
+          aria-hidden={!contentReady}
+        >
         <div
           className="max-w-4xl mx-auto space-y-6 relative z-10 pb-16"
           style={{ 
@@ -1295,6 +1321,7 @@ export default function Results() {
           </Card>
         </div>
         </div>
+        </motion.div>
       </AnimatedBackground>
     );
   }
