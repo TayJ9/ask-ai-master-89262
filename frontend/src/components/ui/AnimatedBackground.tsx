@@ -131,9 +131,11 @@ export default function AnimatedBackground({ className = "", children, fixedDeco
     </>
   );
 
+  /* When fixedDecor is true, decor is in a fixed viewport box; omit overflow-hidden on root
+     to avoid bottom-of-page clipping/paint artifacts during scroll (Results page). */
   return (
     <div
-      className={`relative min-h-screen overflow-hidden ${className}`}
+      className={`relative min-h-screen ${fixedDecor ? '' : 'overflow-hidden'} ${className}`}
       style={{ backgroundColor: '#D4A574', transform: 'translateZ(0)' }}
     >
       {fixedDecor ? (
