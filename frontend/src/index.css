@@ -118,18 +118,10 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
-  /* Smooth scroll with fallback for older browsers */
-  /* Supported in: Chrome 61+, Firefox 36+, Safari 15.4+, Edge 79+ */
-  /* Falls back gracefully to instant scroll in unsupported browsers */
+  /* PERF: Global smooth scroll can make long/programmatic scrolls lag on low-end devices.
+   * Use .scroll-smooth utility on specific containers or anchor links instead. */
   html {
-    scroll-behavior: smooth;
-  }
-
-  /* Fallback for browsers that don't support scroll-behavior */
-  @supports not (scroll-behavior: smooth) {
-    html {
-      scroll-behavior: auto; /* Instant scroll fallback */
-    }
+    scroll-behavior: auto;
   }
 
   body {
@@ -143,6 +135,11 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  /* PERF: Apply only to elements that need smooth scroll (e.g. anchor buttons), not globally. */
+  .scroll-smooth {
+    scroll-behavior: smooth;
+  }
+
   .gradient-primary {
     background: var(--gradient-primary);
   }
@@ -165,6 +162,15 @@ All colors MUST be HSL.
 
   .animate-scale-in {
     animation: scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* PERF: Transform/opacity only; used for hero primary button subtle pulse instead of Framer loops. */
+  .btn-pulse-hero {
+    animation: btnPulseHero 2s ease-in-out infinite;
+  }
+  @keyframes btnPulseHero {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.9; transform: scale(1.02); }
   }
 
   @keyframes scaleIn {

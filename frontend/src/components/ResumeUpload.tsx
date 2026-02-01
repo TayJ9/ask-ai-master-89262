@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, memo } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,7 +18,7 @@ interface ResumeUploadProps {
   onBack?: () => void;
 }
 
-export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
+function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   const [resumeText, setResumeText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
@@ -510,3 +510,4 @@ export default function ResumeUpload({ onResumeUploaded, onSkip, onBack }: Resum
   );
 }
 
+export default memo(ResumeUpload);

@@ -1,10 +1,20 @@
 /**
+ * PERF SUMMARY:
+ * - Wrap in React.memo; throttle path setState to ~30fps; use one SVG filter (glow).
+ * - Throttle mousemove; reduce path points to 12 to lower CPU cost.
+ */
+/**
  * Audio Visualizer Component - Enhanced Morphing Blob
  * Features: Multiple layers, Perlin noise, shimmer effects, advanced particles,
  * mouse interaction, velocity reactions, iridescent gradients, and more!
  */
 
 import React, { useEffect, useRef, useState, useMemo, useCallback } from 'react';
+
+// PERF: Throttle path updates to ~30fps to reduce setState/re-renders (was ~60fps).
+const PATH_UPDATE_INTERVAL_MS = 33;
+// PERF: Throttle mousemove to reduce work on every pointer move.
+const MOUSE_THROTTLE_MS = 100;
 
 interface AudioVisualizerProps {
   inputVolume: number;
@@ -160,7 +170,8 @@ function AudioVisualizer({
     time: number,
     layerOffset: number = 0
   ) => {
-    const points = 16; // Fewer points for smoother, lumpier shapes
+    // PERF: 12 points reduces CPU cost on low-end devices (was 16).
+    const points = 12;
     const pathPoints: { x: number; y: number }[] = [];
 
     const intensity = mode === 'user_speaking' 
@@ -290,20 +301,31 @@ function AudioVisualizer({
     setParticles([...particlesRef.current]);
   };
 
-  // Mouse tracking
+  // PERF: Throttle mousemove to avoid work on every pointer move.
   useEffect(() => {
+    let lastCall = 0;
+    let rafId: number | null = null;
     const handleMouseMove = (e: MouseEvent) => {
-      if (containerRef.current) {
-        const rect = containerRef.current.getBoundingClientRect();
-        mouseRef.current = {
-          x: e.clientX - rect.left,
-          y: e.clientY - rect.top
-        };
-      }
+      const now = Date.now();
+      if (now - lastCall < MOUSE_THROTTLE_MS) return;
+      lastCall = now;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        if (containerRef.current) {
+          const rect = containerRef.current.getBoundingClientRect();
+          mouseRef.current = {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+          };
+        }
+      });
     };
-
     window.addEventListener('mousemove', handleMouseMove);
-    return () => window.removeEventListener('mousemove', handleMouseMove);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, []);
 
   // Main animation loop - optimized to not restart on volume changes
@@ -337,11 +359,10 @@ function AudioVisualizer({
       
       rotationRef.current += targetRotationSpeed;
 
-      // Update shimmer offset (use ref, only update state occasionally)
       shimmerOffsetRef.current = (shimmerOffsetRef.current + 2) % 360;
 
-      // Throttle path updates to ~60fps max (update every ~16ms)
-      if (now - lastPathUpdate >= 16) {
+      // PERF: Throttle path updates to ~30fps to reduce setState and re-renders.
+      if (now - lastPathUpdate >= PATH_UPDATE_INTERVAL_MS) {
         lastPathUpdate = now;
         
         // Generate multi-layer paths
@@ -461,28 +482,7 @@ function AudioVisualizer({
               </feMerge>
             </filter>
 
-            {/* Soft glow for inner core */}
-            <filter id="softGlow">
-              <feGaussianBlur stdDeviation="8" result="blur"/>
-              <feFlood floodColor={currentAccent} floodOpacity="0.8"/>
-              <feComposite in2="blur" operator="in"/>
-              <feMerge>
-                <feMergeNode/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
-
-            {/* Sparkle glow - intense sharp glow */}
-            <filter id="sparkleGlow">
-              <feGaussianBlur stdDeviation="2" result="blur1"/>
-              <feGaussianBlur stdDeviation="6" result="blur2"/>
-              <feMerge>
-                <feMergeNode in="blur2"/>
-                <feMergeNode in="blur1"/>
-                <feMergeNode in="blur1"/>
-                <feMergeNode in="SourceGraphic"/>
-              </feMerge>
-            </filter>
+            {/* PERF: Single glow filter kept; softGlow/sparkleGlow removed to reduce filter cost. */}
 
             {/* Star shape path */}
             <path id="starShape" d="M 0,-5 L 1.5,-1.5 L 5,0 L 1.5,1.5 L 0,5 L -1.5,1.5 L -5,0 L -1.5,-1.5 Z" />
@@ -491,7 +491,7 @@ function AudioVisualizer({
             <path id="crossShape" d="M 0,-4 L 0,-1 L -1,0 L -4,0 L -1,0 L 0,1 L 0,4 L 0,1 L 1,0 L 4,0 L 1,0 L 0,-1 Z" />
           </defs>
 
-          {/* Outer glow layer */}
+          {/* PERF: No filter on outer/background layers to reduce paint cost. */}
           <g opacity={0.15 + activeVolumeRef.current * 0.25}>
             <path
               d={paths.outer}
@@ -499,12 +499,9 @@ function AudioVisualizer({
               style={{
                 transform: `scale(${blobScale * 0.7865})`,
                 transformOrigin: 'center',
-                filter: 'blur(12px)',
               }}
             />
           </g>
-
-          {/* Background glow layer */}
           <g opacity={0.25 + activeVolumeRef.current * 0.35}>
             <path
               d={paths.main}
@@ -512,7 +509,6 @@ function AudioVisualizer({
               style={{
                 transform: `scale(${blobScale * 0.8848}) rotate(${-rotationRef.current * 0.7}deg)`,
                 transformOrigin: 'center',
-                filter: 'blur(10px)',
               }}
             />
           </g>
@@ -538,14 +534,13 @@ function AudioVisualizer({
             />
           </g>
 
-          {/* Inner core glow */}
+          {/* PERF: Inner core without filter (softGlow removed). */}
           <g opacity={0.5 + activeVolumeRef.current * 0.5}>
             <circle
               cx={width / 2}
               cy={height / 2}
               r={(15 + activeVolumeRef.current * 25) * 1.3}
               fill={currentAccent}
-              filter="url(#softGlow)"
               style={{
                 transform: `scale(${1 + Math.abs(velocityRef.current) * 0.5})`,
                 transformOrigin: 'center',

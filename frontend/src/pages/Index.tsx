@@ -1,3 +1,7 @@
+/**
+ * PERF SUMMARY:
+ * - useCallback for handlers passed to children (onSelectRole, onResumeUploaded, onSkip, onComplete, onInterviewEnd, onBack) to avoid unnecessary re-renders of memoized RoleSelection, ResumeUpload, VoiceInterviewWebSocket.
+ */
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
@@ -106,20 +110,20 @@ export default function Index() {
     }
   }, []);
 
-  const handleAuthSuccess = (userData: any, token: string) => {
+  const handleAuthSuccess = useCallback((userData: any, _token: string) => {
     setUser(userData);
-  };
+  }, []);
 
-  const handleSignOut = () => {
+  const handleSignOut = useCallback(() => {
     localStorage.removeItem('auth_token');
     localStorage.removeItem('user');
     localStorage.removeItem('candidate_context');
     setUser(null);
     setCurrentView("roles");
     setSelectedRole("");
-  };
+  }, []);
 
-  const handleSelectRole = (role: string, mode: "text" | "voice" = "voice") => {
+  const handleSelectRole = useCallback((role: string, mode: "text" | "voice" = "voice") => {
     // Ensure role is never empty - default to "General Interview"
     const normalizedRole = role?.trim() || "General Interview";
     devLog.log('handleSelectRole called with:', normalizedRole, mode);
@@ -130,9 +134,9 @@ export default function Index() {
     // Show resume upload step before starting interview
     setCurrentView("resume");
     devLog.log('View changed to resume upload');
-  };
+  }, [resetInterviewState]);
 
-  const handleResumeUploaded = async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
+  const handleResumeUploaded = useCallback(async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
     setResumeText(resume);
     
     // Store candidate info for voice interview
@@ -269,9 +273,9 @@ export default function Index() {
         });
       }
     }
-  };
+  }, [selectedRole, user, toast]);
 
-  const handleSkipResume = async () => {
+  const handleSkipResume = useCallback(async () => {
     // Check authentication before starting interview
     const token = localStorage.getItem('auth_token');
     if (!token) {
@@ -319,9 +323,9 @@ export default function Index() {
         });
       }
     }
-  };
+  }, [toast]);
 
-  const handleCompleteInterview = (results?: any) => {
+  const handleCompleteInterview = useCallback((results?: any) => {
     // Navigate to results page with interviewId in state (preferred) or sessionId as fallback
     const sessionId = voiceSessionId || results?.sessionId;
     const conversationId = results?.conversationId;
@@ -395,15 +399,15 @@ export default function Index() {
       title: "Interview Complete!",
       description: "Loading your results...",
     });
-  };
+  }, [voiceSessionId, toast]);
 
-  const handleBackHome = () => {
+  const handleBackHome = useCallback(() => {
     resetInterviewState();
-  };
+  }, [resetInterviewState]);
 
-  const handlePracticeAgain = () => {
+  const handlePracticeAgain = useCallback(() => {
     resetInterviewState();
-  };
+  }, [resetInterviewState]);
 
   if (!user) {
     return <Auth onAuthSuccess={handleAuthSuccess} />;

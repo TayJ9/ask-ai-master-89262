@@ -1,3 +1,10 @@
+/**
+ * PERF SUMMARY:
+ * - Replace looping Framer Motion with CSS keyframes (transform/opacity only).
+ * - Reduce backdrop-blur to one card; use solid/semi-opaque elsewhere.
+ * - Replace feature card whileHover with CSS transition; simplify shadows.
+ */
+import { memo } from "react";
 import { Button } from "@/components/ui/button";
 import { ArrowRight, Mic, Zap, MessageSquare, BarChart3, Clock } from "lucide-react";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
@@ -8,7 +15,7 @@ interface RoleSelectionProps {
   onSelectRole: (role: string, mode?: "text" | "voice") => void;
 }
 
-export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
+function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   const [, setLocation] = useLocation();
 
   const handleBeginInterview = () => {
@@ -43,9 +50,9 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   return (
     <AnimatedBackground className="flex items-center justify-center min-h-screen p-6">
       <div className="max-w-4xl mx-auto space-y-10 animate-scale-in flex flex-col items-center justify-center w-full py-12">
-        {/* Heading with entrance animation */}
+        {/* PERF: Entrance uses opacity + y only; no blur here to reduce repaint cost. */}
         <motion.div 
-          className="text-center space-y-4 bg-white/60 backdrop-blur-sm px-8 py-6 rounded-2xl shadow-lg border border-white/30"
+          className="text-center space-y-4 bg-white/70 px-8 py-6 rounded-2xl shadow-lg border border-white/30"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1] }}
@@ -58,42 +65,24 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           </p>
         </motion.div>
 
-        {/* Buttons Section with Enhanced Card Background */}
+        {/* PERF: One card with backdrop-blur; smaller shadow to reduce paint cost. */}
         <motion.div 
-          className="w-full max-w-md space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl shadow-2xl border border-white/40"
+          className="w-full max-w-md space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/40 shadow-xl"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.15, ease: [0.33, 1, 0.68, 1] }}
-          style={{
-            boxShadow: '0 20px 60px rgba(0, 0, 0, 0.2), 0 0 40px rgba(255, 255, 255, 0.3)',
-          }}
         >
-          {/* Begin Interview Button with Pulsing Animation */}
+          {/* PERF: Removed JS-driven blur glow and Mic scale loop; use CSS-only subtle pulse. */}
           <div className="relative">
-            <motion.div
-              className="absolute inset-0 rounded-lg bg-gradient-to-r from-primary to-secondary opacity-75 blur-xl"
-              animate={{
-                scale: [1, 1.05, 1],
-                opacity: [0.5, 0.7, 0.5]
-              }}
-              transition={{
-                duration: 2,
-                repeat: Infinity,
-                ease: "easeInOut"
-              }}
-            />
             <Button
               onClick={handleBeginInterview}
               size="lg"
-              className="relative w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6 hover:scale-105 transition-all duration-300"
+              className="relative w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6 hover:scale-[1.02] transition-transform duration-300"
               data-testid="button-begin-interview"
             >
-              <motion.div
-                animate={{ scale: [1, 1.2, 1] }}
-                transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
-              >
+              <span className="btn-pulse-hero inline-flex">
                 <Mic className="w-5 h-5 mr-2" />
-              </motion.div>
+              </span>
               Begin Interview
               <ArrowRight className="w-5 h-5 ml-2" />
             </Button>
@@ -116,41 +105,19 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
             </div>
           </div>
 
-          {/* Demo Button with Shimmer Effect */}
+          {/* PERF: Removed Zap rotate and badge boxShadow/shimmer loops; keep CSS hover shimmer only. */}
           <Button
             onClick={handleTryDemo}
             size="lg"
             variant="outline"
-            className="relative w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-lg text-lg px-8 py-6 transition-all duration-300 overflow-hidden group"
+            className="relative w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-lg text-lg px-8 py-6 transition-transform duration-300 overflow-hidden group"
           >
-            {/* Shimmer effect overlay */}
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-1000"></div>
-            
-            <motion.div
-              animate={{ rotate: [0, 10, -10, 0] }}
-              transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
-            >
-              <Zap className="w-5 h-5 mr-2" />
-            </motion.div>
+            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
+            <Zap className="w-5 h-5 mr-2 inline" />
             See Quick Demo
-            <motion.span 
-              className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold relative overflow-hidden"
-              animate={{
-                boxShadow: [
-                  "0 0 0 0 rgba(168, 85, 247, 0.4)",
-                  "0 0 0 4px rgba(168, 85, 247, 0)",
-                  "0 0 0 0 rgba(168, 85, 247, 0)"
-                ]
-              }}
-              transition={{ duration: 1.5, repeat: Infinity }}
-            >
-              <motion.span
-                className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent"
-                animate={{ x: ["-100%", "100%"] }}
-                transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-              />
-              <span className="relative">Instant Results</span>
-            </motion.span>
+            <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+              Instant Results
+            </span>
           </Button>
           <p 
             className="text-xs text-center text-gray-700 font-medium"
@@ -162,7 +129,7 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           </p>
         </motion.div>
 
-        {/* Feature Cards - Compact Design */}
+        {/* PERF: CSS hover scale instead of Framer spring; no backdrop-blur, simpler shadow. */}
         <motion.div 
           className="flex flex-wrap justify-center gap-3 w-full max-w-2xl"
           initial={{ opacity: 0, y: 20 }}
@@ -170,26 +137,23 @@ export default function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           transition={{ duration: 0.6, delay: 0.6, ease: "easeOut" }}
         >
           {features.map((feature, index) => (
-            <motion.div
+            <div
               key={index}
-              className="flex items-center gap-2 bg-white/90 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-gray-300/60 hover:shadow-xl hover:border-orange-400/40 transition-all duration-300 group"
-              whileHover={{ scale: 1.05 }}
-              transition={{ type: "spring", stiffness: 400, damping: 10 }}
-              style={{
-                boxShadow: '0 4px 15px rgba(0, 0, 0, 0.1), 0 0 20px rgba(255, 255, 255, 0.4)',
-              }}
+              className="flex items-center gap-2 bg-white/95 px-4 py-2 rounded-full shadow-md border border-gray-300/60 hover:shadow-lg hover:border-orange-400/40 hover:scale-105 transition-transform duration-200 group"
             >
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 group-hover:from-orange-200 group-hover:to-amber-200 transition-all duration-300 shadow-sm">
-                <feature.icon className="w-4 h-4 text-orange-600 group-hover:scale-110 transition-transform duration-300" />
+              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 group-hover:from-orange-200 group-hover:to-amber-200 transition-colors duration-200 shadow-sm">
+                <feature.icon className="w-4 h-4 text-orange-600 group-hover:scale-110 transition-transform duration-200" />
               </div>
               <div className="flex flex-col">
                 <span className="text-sm font-semibold text-gray-900">{feature.title}</span>
                 <span className="text-xs text-gray-600 font-medium">{feature.description}</span>
               </div>
-            </motion.div>
+            </div>
           ))}
         </motion.div>
       </div>
     </AnimatedBackground>
   );
 }
+
+export default memo(RoleSelection);

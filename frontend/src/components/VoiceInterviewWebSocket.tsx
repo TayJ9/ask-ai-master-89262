@@ -1,9 +1,15 @@
 /**
+ * PERF SUMMARY:
+ * - Stable keys for transcript list (timestamp + index); PERF note for virtualization if list grows.
+ * - Volume interval already threshold-based; AudioVisualizer is memoized.
+ * - Consider AnimatedBackground variant="minimal" for interview room to reduce GPU cost.
+ */
+/**
  * Voice Interview Component using ElevenLabs Conversational AI SDK
  * Clean, production-grade implementation with server-side VAD and optimal latency
  */
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -84,6 +90,29 @@ interface TranscriptMessage {
 }
 
 type ConversationMode = 'ai_speaking' | 'listening' | 'user_speaking' | 'processing';
+
+// PERF: Memoized row to avoid re-rendering unchanged transcript items when list grows.
+const TranscriptRow = memo(function TranscriptRow({ transcript }: { transcript: TranscriptMessage }) {
+  return (
+    <div
+      className={`p-3 rounded-lg ${
+        transcript.type === 'ai'
+          ? 'bg-blue-50 border-l-4 border-blue-500'
+          : 'bg-green-50 border-l-4 border-green-500'
+      }`}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-xs font-semibold text-muted-foreground">
+          {transcript.type === 'ai' ? 'AI Interviewer' : 'You'}
+        </span>
+        {!transcript.isFinal && (
+          <span className="text-xs text-muted-foreground">Typing...</span>
+        )}
+      </div>
+      <p className="text-sm">{transcript.text}</p>
+    </div>
+  );
+});
 
 export default function VoiceInterviewWebSocket({
   sessionId,
@@ -934,8 +963,7 @@ export default function VoiceInterviewWebSocket({
     }
   }, [conversationMode, hasStarted, conversation.status]);
 
-  // Poll volume levels for visualization and latency tracking
-  // OPTIMIZED: Use refs for volume, only update state when crossing thresholds
+  // PERF: Volume state only updates when crossing threshold (0.1) to limit re-renders; refs always updated for AudioVisualizer.
   useEffect(() => {
     if (conversation.status === 'connected' && !volumeIntervalRef.current) {
       const VOLUME_UPDATE_THRESHOLD = 0.1; // Only update state when volume changes by 0.1
@@ -2002,7 +2030,7 @@ export default function VoiceInterviewWebSocket({
           </CardContent>
         </Card>
 
-        {/* Transcript Card */}
+        {/* PERF: Stable keys for reconciliation; consider virtualization (e.g. react-window) if transcript items exceed ~50. */}
         <Card className="shadow-xl">
           <CardContent className="p-6">
             <h3 className="text-lg font-semibold mb-4">Live Transcript</h3>
@@ -2013,24 +2041,10 @@ export default function VoiceInterviewWebSocket({
                 </p>
               ) : (
                 transcripts.map((transcript, index) => (
-                  <div
-                    key={index}
-                    className={`p-3 rounded-lg ${
-                      transcript.type === 'ai'
-                        ? 'bg-blue-50 border-l-4 border-blue-500'
-                        : 'bg-green-50 border-l-4 border-green-500'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-semibold text-muted-foreground">
-                        {transcript.type === 'ai' ? 'AI Interviewer' : 'You'}
-                      </span>
-                      {!transcript.isFinal && (
-                        <span className="text-xs text-muted-foreground">Typing...</span>
-                      )}
-                    </div>
-                    <p className="text-sm">{transcript.text}</p>
-                  </div>
+                  <TranscriptRow
+                    key={`${transcript.timestamp ?? index}-${index}`}
+                    transcript={transcript}
+                  />
                 ))
               )}
             </div>

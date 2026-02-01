@@ -1,3 +1,7 @@
+/**
+ * PERF SUMMARY:
+ * - Remove or dev-guard console.log in AppContent to avoid work on every route render.
+ */
 // Import React first to ensure it's available before lazy components
 import React, { useState, useEffect } from "react";
 import { Suspense, lazy } from "react";
@@ -30,9 +34,9 @@ const pageVariants = fadeInVariants;
 
 const AppContent = () => {
   const [location] = useLocation();
-  
-  // Debug logging
-  console.log("[AppContent] Rendering with location:", location);
+  if (import.meta.env.DEV) {
+    console.log("[AppContent] Rendering with location:", location);
+  }
 
   return (
     <div

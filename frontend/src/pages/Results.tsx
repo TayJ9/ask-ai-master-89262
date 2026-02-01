@@ -1209,7 +1209,7 @@ export default function Results() {
                 </>
               )}
 
-              {/* Transcript - Optimized for scroll performance */}
+              {/* PERF: Transcript list - for very long transcripts (e.g. 30+ blocks), consider virtualization (e.g. react-window) to keep scroll smooth. */}
               {results.interview?.transcript && (
                 <div>
                   <Card className="shadow-lg border-0 bg-white/95">
