@@ -124,6 +124,13 @@ All colors MUST be HSL.
     scroll-behavior: auto;
   }
 
+  /* Prevent overscroll rubber-banding to avoid weird visuals at bottom of long pages (e.g. Results). */
+  @supports (overscroll-behavior-y: none) {
+    html {
+      overscroll-behavior-y: none;
+    }
+  }
+
   /* Reserve space for scrollbar to avoid layout shift when content is long (e.g. Results page). */
   @supports (scrollbar-gutter: stable) {
     html {
