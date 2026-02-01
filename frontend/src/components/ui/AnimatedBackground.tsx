@@ -9,9 +9,11 @@ import { useEffect } from "react";
 interface AnimatedBackgroundProps {
   className?: string;
   children?: React.ReactNode;
+  /** When true, decorative layers are viewport-fixed to prevent bottom-of-page scroll artifacts. */
+  fixedDecor?: boolean;
 }
 
-export default function AnimatedBackground({ className = "", children }: AnimatedBackgroundProps) {
+export default function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
   // PERF: Inject keyframes once; only 3 blob + 2 particle animations to reduce composite cost.
   useEffect(() => {
     const styleId = 'animated-background-styles';
@@ -72,11 +74,8 @@ export default function AnimatedBackground({ className = "", children }: Animate
     };
   }, []);
 
-  return (
-    <div
-      className={`relative min-h-screen overflow-hidden ${className}`}
-      style={{ backgroundColor: '#D4A574', transform: 'translateZ(0)' }}
-    >
+  const decorLayers = (
+    <>
       {/* PERF: 3 blobs only; blur-lg instead of blur-2xl; will-change on first blob only. */}
       <div className="absolute inset-0 overflow-hidden z-[1]">
         <div
@@ -129,6 +128,25 @@ export default function AnimatedBackground({ className = "", children }: Animate
           background: 'linear-gradient(180deg, rgba(15, 23, 42, 0.5) 0%, rgba(30, 41, 59, 0.4) 50%, rgba(15, 23, 42, 0.5) 100%)',
         }}
       />
+    </>
+  );
+
+  return (
+    <div
+      className={`relative min-h-screen overflow-hidden ${className}`}
+      style={{ backgroundColor: '#D4A574', transform: 'translateZ(0)' }}
+    >
+      {fixedDecor ? (
+        <div
+          className="fixed inset-0 w-full pointer-events-none z-0"
+          style={{ height: '100vh' }}
+          aria-hidden
+        >
+          {decorLayers}
+        </div>
+      ) : (
+        decorLayers
+      )}
 
       <div className="relative z-10">
         {children}

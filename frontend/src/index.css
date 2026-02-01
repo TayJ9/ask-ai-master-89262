@@ -124,6 +124,13 @@ All colors MUST be HSL.
     scroll-behavior: auto;
   }
 
+  /* Reserve space for scrollbar to avoid layout shift when content is long (e.g. Results page). */
+  @supports (scrollbar-gutter: stable) {
+    html {
+      scrollbar-gutter: stable;
+    }
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "cv11", "ss01";

@@ -426,7 +426,7 @@ export default function Results() {
     const estimatedTimeRemaining = Math.max(0, 60 - elapsedTime);
 
     return (
-      <AnimatedBackground className="flex items-center justify-center py-4 px-4">
+      <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
@@ -554,7 +554,7 @@ export default function Results() {
   // Render Error UI
   if (error && !results) {
     return (
-      <AnimatedBackground className="flex items-center justify-center py-4 px-4">
+      <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -607,7 +607,7 @@ export default function Results() {
   // Show Results UI if completed or if we have data (even if evaluation failed)
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
-      <AnimatedBackground className="py-4 sm:py-8 px-4">
+      <AnimatedBackground fixedDecor className="py-4 sm:py-8 px-4">
         <div
           className="max-w-4xl mx-auto space-y-6 relative z-10"
           style={{ 
@@ -1301,7 +1301,7 @@ export default function Results() {
 
   // Loading state (initial load)
   return (
-    <AnimatedBackground className="flex items-center justify-center py-4 px-4">
+    <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
