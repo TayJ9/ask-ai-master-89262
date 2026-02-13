@@ -158,7 +158,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             <Mic className="w-8 h-8 text-white" />
           </div>
           <div>
-            <CardTitle className="text-3xl" data-testid="text-app-title">AI Interview Coach</CardTitle>
+            <CardTitle className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" data-testid="text-app-title">Mockly</CardTitle>
             <CardDescription className="text-base mt-2">
               Practice interviews with AI-powered feedback
             </CardDescription>
