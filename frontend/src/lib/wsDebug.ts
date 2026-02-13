@@ -7,9 +7,27 @@ const SENTINEL = 'SENTINEL_PHRASE_9Q3K';
 const isBrowser = typeof window !== 'undefined';
 
 const getDebugFlag = (): boolean => {
-  const envFlag =
-    process.env.NEXT_PUBLIC_DEBUG_ELEVEN === 'true' ||
-    process.env.DEBUG_ELEVEN === 'true';
+  // In Vite, use import.meta.env instead of process.env
+  // Support both Vite (import.meta.env) and Next.js (process.env) conventions
+  let envFlag = false;
+  
+  // Check Vite environment variables (import.meta.env is always available in Vite)
+  try {
+    const viteEnv = (import.meta as any)?.env;
+    envFlag = 
+      viteEnv?.VITE_DEBUG_ELEVEN === 'true' ||
+      viteEnv?.NEXT_PUBLIC_DEBUG_ELEVEN === 'true';
+  } catch {
+    // Ignore if import.meta is not available
+  }
+  
+  // Fallback to process.env (for Node.js/Next.js environments)
+  if (!envFlag && typeof process !== 'undefined' && process.env) {
+    envFlag = 
+      process.env.NEXT_PUBLIC_DEBUG_ELEVEN === 'true' ||
+      process.env.DEBUG_ELEVEN === 'true';
+  }
+  
   if (!isBrowser) return envFlag;
   try {
     const localFlag = localStorage.getItem('DEBUG_ELEVEN') === 'true';

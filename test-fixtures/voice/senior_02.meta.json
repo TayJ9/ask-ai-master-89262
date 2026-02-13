@@ -1,0 +1,10 @@
+{
+  "level": "senior",
+  "prompt_question": "Tell me about a time when you had to make a technical trade-off.",
+  "candidate_answer_text": "We were building a real-time feature and had to choose between polling and WebSockets. Polling was simpler and would work for our scale, but WebSockets would scale better long-term. I wrote a short design doc comparing latency, server load, and implementation complexity. We went with WebSockets and used a managed service to avoid operational overhead. It paid off when we 10x'd our user base.",
+  "tts_audio_file": "senior_02.mp3",
+  "stt_transcript_text_file": "senior_02.txt",
+  "transcript_word_count": 66,
+  "clarity_score": 13.2,
+  "stt_source": "elevenlabs_scribe_v2"
+}

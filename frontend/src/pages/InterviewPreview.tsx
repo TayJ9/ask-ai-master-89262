@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Mic, Volume2, Loader2, User, Headphones, ArrowLeft, Volume1, VolumeX } from "lucide-react";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
-import AudioVisualizer from "@/components/ui/AudioVisualizer";
+import ChatGPTVoiceOrb from "@/components/ui/ChatGPTVoiceOrb";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
 import { useAmbientSound } from "@/hooks/useAmbientSound";
@@ -142,13 +142,13 @@ export default function InterviewPreview() {
                 className="flex flex-col items-center justify-center py-12"
                 initial={{ opacity: 0, scale: 0.9 }}
                 animate={{ opacity: 1, scale: 1 }}
-                transition={{ duration: 0.5, ease: "easeOut" }}
+                transition={{ duration: 0.65, ease: "easeOut" }}
               >
                 <motion.div 
                   className="text-center mb-8"
                   initial={{ opacity: 0, y: 20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: 0.2 }}
+                  transition={{ duration: 0.55, delay: 0.3 }}
                 >
                   <h3 className="text-xl font-semibold mb-2">Ready to Begin</h3>
                   <p className="text-muted-foreground max-w-md">
@@ -160,7 +160,7 @@ export default function InterviewPreview() {
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.5, delay: 0.4 }}
+                  transition={{ duration: 0.65, delay: 0.5 }}
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                 >
@@ -180,7 +180,7 @@ export default function InterviewPreview() {
                   className="text-xs text-muted-foreground mt-4"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 1 }}
-                  transition={{ duration: 0.4, delay: 0.6 }}
+                  transition={{ duration: 0.55, delay: 0.8 }}
                 >
                   Make sure you're in a quiet environment
                 </motion.p>
@@ -192,7 +192,7 @@ export default function InterviewPreview() {
                   className="text-center mb-6"
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4 }}
+                  transition={{ duration: 0.55 }}
                 >
                   {!isConnected ? (
                     <div className="flex items-center justify-center gap-2 text-muted-foreground">
@@ -273,17 +273,18 @@ export default function InterviewPreview() {
                   </p>
                 </motion.div>
 
-                {/* Audio Visualizer */}
+                {/* Voice Orb Visualizer */}
                 <motion.div 
                   className="mb-6 flex flex-col items-center justify-center"
                   initial={{ opacity: 0, scale: 0.9 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.4, delay: 0.2 }}
+                  transition={{ duration: 0.55, delay: 0.3 }}
                 >
-                  <AudioVisualizer
+                  <ChatGPTVoiceOrb
                     inputVolume={conversationMode === 'user_speaking' ? manualInputVolume : conversationMode === 'listening' ? manualInputVolume * 0.4 : 0}
                     outputVolume={conversationMode === 'ai_speaking' ? manualOutputVolume : 0}
                     mode={conversationMode === 'idle' ? 'listening' : conversationMode}
+                    size={280}
                   />
                 </motion.div>
               </>

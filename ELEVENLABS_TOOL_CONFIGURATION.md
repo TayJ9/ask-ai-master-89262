@@ -73,15 +73,20 @@ The tool needs to send the following data in the request body. Add these as **Bo
    - **Constant Value**: `completed`
    - **Description**: "Interview completion status"
 
-6. **`duration`** (Number, Optional)
+6. **`year`** (String, Optional)
+   - **Value Type**: `Dynamic Variable`
+   - **Variable Name**: `year`
+   - **Description**: "Academic level (Freshman, Sophomore, Junior, Senior, etc.) - used for question tailoring and evaluation context"
+
+7. **`duration`** (Number, Optional)
    - **Value Type**: `LLM Extracted` or `Dynamic Variable`
    - **Description**: "Interview duration in seconds"
 
-7. **`started_at`** (String, Optional)
+8. **`started_at`** (String, Optional)
    - **Value Type**: `LLM Extracted` or `Dynamic Variable`
    - **Description**: "ISO 8601 timestamp when interview started"
 
-8. **`ended_at`** (String, Optional)
+9. **`ended_at`** (String, Optional)
    - **Value Type**: `LLM Extracted` or `Dynamic Variable`
    - **Description**: "ISO 8601 timestamp when interview ended"
 

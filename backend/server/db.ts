@@ -26,6 +26,7 @@ const isNeonDatabase = process.env.DATABASE_URL.includes('neon.tech') ||
                        process.env.USE_NEON === 'true';
 
 let pool: NeonPool | PgPool | undefined;
+let sqlite: Database | undefined;
 let db: ReturnType<typeof drizzlePg>;
 
 if (isSqliteDatabase) {
@@ -33,7 +34,7 @@ if (isSqliteDatabase) {
   const dbPath = process.env.DATABASE_URL.replace('file:', '');
   console.log('🗄️  Using SQLite database:', dbPath);
   
-  const sqlite = new Database(dbPath);
+  sqlite = new Database(dbPath);
   // Enable WAL mode for better concurrency
   sqlite.pragma('journal_mode = WAL');
   
@@ -76,4 +77,4 @@ if (isSqliteDatabase) {
   console.log('✅ PostgreSQL database connected successfully');
 }
 
-export { pool, db };
+export { pool, db, sqlite };

@@ -1,0 +1,1 @@
+Hi, I'm a freshman computer science major at State University. I've taken Intro to Programming, and I'm really enjoying it. I built a simple calculator in Python for my first project. I'm excited to learn more about software development!

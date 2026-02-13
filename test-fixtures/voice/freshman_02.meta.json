@@ -1,0 +1,10 @@
+{
+  "level": "freshman",
+  "prompt_question": "Tell me about a time when you worked with a team.",
+  "candidate_answer_text": "In my programming class we had a group project. We had to build a simple website together. I did the HTML part and my teammate did the CSS. We met once a week and shared our progress. It was fun and we got an A.",
+  "tts_audio_file": "freshman_02.mp3",
+  "stt_transcript_text_file": "freshman_02.txt",
+  "transcript_word_count": 45,
+  "clarity_score": 9,
+  "stt_source": "elevenlabs_scribe_v2"
+}

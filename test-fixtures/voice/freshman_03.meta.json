@@ -1,0 +1,10 @@
+{
+  "level": "freshman",
+  "prompt_question": "How do you handle stress or deadlines?",
+  "candidate_answer_text": "I try to start assignments early so I'm not cramming. I use a planner to keep track of due dates. When I feel stressed I take short breaks and maybe go for a walk. It usually helps me focus better.",
+  "tts_audio_file": "freshman_03.mp3",
+  "stt_transcript_text_file": "freshman_03.txt",
+  "transcript_word_count": 40,
+  "clarity_score": 10,
+  "stt_source": "elevenlabs_scribe_v2"
+}

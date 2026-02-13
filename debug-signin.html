@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Debug Sign In</title>
+</head>
+<body>
+    <h1>Debug Sign In</h1>
+    <button onclick="testSignIn()">Test Sign In</button>
+    <pre id="output"></pre>
+    
+    <script>
+        async function testSignIn() {
+            const output = document.getElementById('output');
+            output.textContent = 'Testing sign in...\n';
+            
+            try {
+                // Test 1: Direct backend call
+                output.textContent += '\n=== Test 1: Direct Backend Call ===\n';
+                try {
+                    const directResponse = await fetch('http://localhost:3000/api/auth/signin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: 'test123@gmail.com', password: 'Test123' })
+                    });
+                    const directData = await directResponse.json();
+                    output.textContent += `Status: ${directResponse.status}\n`;
+                    output.textContent += `Response: ${JSON.stringify(directData, null, 2)}\n`;
+                } catch (e) {
+                    output.textContent += `Error: ${e.message}\n`;
+                }
+                
+                // Test 2: Proxy call
+                output.textContent += '\n=== Test 2: Proxy Call (via /api) ===\n';
+                try {
+                    const proxyResponse = await fetch('/api/auth/signin', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: 'test123@gmail.com', password: 'Test123' })
+                    });
+                    const proxyData = await proxyResponse.json();
+                    output.textContent += `Status: ${proxyResponse.status}\n`;
+                    output.textContent += `Response: ${JSON.stringify(proxyData, null, 2)}\n`;
+                } catch (e) {
+                    output.textContent += `Error: ${e.message}\n`;
+                }
+                
+                // Test 3: Check backend health
+                output.textContent += '\n=== Test 3: Backend Health Check ===\n';
+                try {
+                    const healthResponse = await fetch('http://localhost:3000/health');
+                    const healthData = await healthResponse.json();
+                    output.textContent += `Status: ${healthResponse.status}\n`;
+                    output.textContent += `Response: ${JSON.stringify(healthData, null, 2)}\n`;
+                } catch (e) {
+                    output.textContent += `Error: ${e.message}\n`;
+                }
+                
+            } catch (error) {
+                output.textContent += `\nFatal Error: ${error.message}\n`;
+            }
+        }
+    </script>
+</body>
+</html>

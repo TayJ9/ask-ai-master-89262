@@ -24,9 +24,8 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
     onSelectRole("General Interview", "voice");
   };
 
-  const handleTryDemo = () => {
-    // Instantly navigate to results with mock data
-    setLocation('/results?mock=true&interviewId=demo&demo=true');
+  const handleTryDemo = (variant: 'tech' | 'business' = 'tech') => {
+    setLocation(`/results?mock=true&interviewId=demo&demo=${variant}`);
   };
 
   const features = [
@@ -55,29 +54,29 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           className="text-center space-y-4 bg-white/70 px-8 py-6 rounded-2xl shadow-lg border border-white/30"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1] }}
         >
           <h1 className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Start Your Interview
           </h1>
           <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Practice your interview skills with our AI-powered voice interview system
+            Practice your interview skills with our AI-powered voice interview platform
           </p>
         </motion.div>
 
         {/* PERF: One card with backdrop-blur; smaller shadow to reduce paint cost. */}
         <motion.div 
-          className="w-full max-w-md space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/40 shadow-xl"
+          className="w-full max-w-xl space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/40 shadow-xl"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, delay: 0.15, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.55, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
         >
           {/* PERF: Removed JS-driven blur glow and Mic scale loop; use CSS-only subtle pulse. */}
           <div className="relative">
             <Button
               onClick={handleBeginInterview}
               size="lg"
-              className="relative w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6 hover:scale-[1.02] transition-transform duration-300"
+              className="relative w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6 hover:scale-[1.02] transition-transform duration-[400ms]"
               data-testid="button-begin-interview"
             >
               <span className="btn-pulse-hero inline-flex">
@@ -94,7 +93,7 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
               className="absolute inset-0 flex items-center"
               initial={{ scaleX: 0 }}
               animate={{ scaleX: 1 }}
-              transition={{ duration: 0.8, delay: 0.6 }}
+              transition={{ duration: 1, delay: 0.8 }}
             >
               <div className="w-full h-px bg-gradient-to-r from-transparent via-purple-300 to-transparent"></div>
             </motion.div>
@@ -105,27 +104,50 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
             </div>
           </div>
 
-          {/* PERF: Removed Zap rotate and badge boxShadow/shimmer loops; keep CSS hover shimmer only. */}
-          <Button
-            onClick={handleTryDemo}
-            size="lg"
-            variant="outline"
-            className="relative w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-lg text-lg px-8 py-6 transition-transform duration-300 overflow-hidden group"
-          >
-            <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
-            <Zap className="w-5 h-5 mr-2 inline" />
-            See Quick Demo
-            <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
-              Instant Results
-            </span>
-          </Button>
+          {/* Quick Demo: Tech and Business options */}
+          <div className="flex flex-row gap-3 w-full">
+            <Button
+              onClick={() => handleTryDemo('tech')}
+              size="lg"
+              variant="outline"
+              className="relative flex-1 min-w-0 border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-lg text-sm sm:text-base px-4 sm:px-6 py-5 transition-transform duration-300 overflow-hidden group"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
+              <span className="inline-flex items-center gap-0">
+                <span className="inline-flex items-center gap-x-1">
+                  <Zap className="w-5 h-5 shrink-0" />
+                  Technical
+                </span>
+                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold shrink-0">
+                  Instant
+                </span>
+              </span>
+            </Button>
+            <Button
+              onClick={() => handleTryDemo('business')}
+              size="lg"
+              variant="outline"
+              className="relative flex-1 min-w-0 border-2 border-teal-500 text-teal-700 hover:bg-teal-50 hover:border-teal-600 hover:text-teal-700 shadow-md hover:shadow-lg text-sm sm:text-base px-4 sm:px-6 py-5 transition-transform duration-300 overflow-hidden group"
+            >
+              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
+              <span className="inline-flex items-center gap-0">
+                <span className="inline-flex items-center gap-x-1">
+                  <Zap className="w-5 h-5 shrink-0" />
+                  Non-Tech
+                </span>
+                <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-semibold shrink-0">
+                  Instant
+                </span>
+              </span>
+            </Button>
+          </div>
           <p 
             className="text-xs text-center text-gray-700 font-medium"
             style={{
               textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)',
             }}
           >
-            See sample results instantly without doing an interview
+            See sample results—Technical (engineering) or Non-Technical (marketing, business)
           </p>
         </motion.div>
 
@@ -134,7 +156,7 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           className="flex flex-wrap justify-center gap-3 w-full max-w-2xl"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.6, ease: "easeOut" }}
+          transition={{ duration: 0.8, delay: 0.9, ease: "easeOut" }}
         >
           {features.map((feature, index) => (
             <div

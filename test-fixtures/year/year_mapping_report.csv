@@ -1,0 +1,21 @@
+inputYear,normalizedYear,technicaldifficulty,technicaldepth,behavioralratio
+Freshman,freshman,basic,introductory,65
+freshman,freshman,basic,introductory,65
+I'm a freshman,i'm a freshman,basic,introductory,65
+High School,high school,foundational,basic,70
+high school senior,high school senior,foundational,basic,70
+Junior,junior,intermediate,moderate,50
+junior,junior,intermediate,moderate,50
+I'm a junior CS major,i'm a junior cs major,intermediate,moderate,50
+Sophomore,sophomore,basic-intermediate,foundational,60
+Senior,senior,intermediate-advanced,advanced,45
+senior,senior,intermediate-advanced,advanced,45
+Post Grad,post grad,advanced,expert,40
+postgrad,postgrad,advanced,expert,40
+Graduate student,graduate student,advanced,expert,40
+(undefined),(empty),moderate,intermediate,50
+,(empty),moderate,intermediate,50
+   ,   ,moderate,intermediate,50
+random,random,moderate,intermediate,50
+3rd year,3rd year,moderate,intermediate,50
+Year 2,year 2,moderate,intermediate,50

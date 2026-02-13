@@ -148,6 +148,8 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Could mention specific achievements or metrics from projects",
             "Consider briefly mentioning what drew you to software development"
           ],
+          question_type: "informational",
+          improvement_quote: "I've completed several projects including an e-commerce platform",
         },
         {
           question: "Can you tell me about a time when you had to work in a team to solve a difficult technical problem?",
@@ -164,6 +166,8 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Could mention more about team dynamics and how decisions were made",
             "Consider discussing what you would do differently if faced with similar situation"
           ],
+          question_type: "behavioral",
+          star_breakdown: { situation: "strong", task: "strong", action: "strong", result: "strong" },
         },
         {
           question: "Can you explain what RESTful API design principles are and why they're important?",
@@ -180,6 +184,7 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Could mention versioning strategies for APIs",
             "Consider discussing HATEOAS or other advanced REST concepts"
           ],
+          question_type: "technical",
         },
         {
           question: "What would you do if you were assigned to work on a project using a technology stack you've never used before?",
@@ -196,6 +201,7 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Could mention how you prioritize which resources to use first",
             "Consider discussing how you measure your progress when learning"
           ],
+          question_type: "situational",
         },
         {
           question: "How do you handle tight deadlines or high-pressure situations in your work?",
@@ -212,6 +218,9 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Could provide more specific metrics on the bug fix timeline",
             "Consider discussing how you prioritize when multiple urgent tasks arise"
           ],
+          question_type: "behavioral",
+          star_breakdown: { situation: "strong", task: "strong", action: "strong", result: "weak" },
+          improvement_quote: "I quickly identified the root cause",
         },
         {
           question: "What are you looking for in your next role, and why are you interested in this position?",
@@ -228,6 +237,9 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
             "Consider mentioning what type of impact you want to make",
             "Could express more passion and energy in delivery"
           ],
+          question_type: "informational",
+          improvement_quote: "I'm looking for a role where I can grow as a developer",
+          sample_better_answer: "I'm looking for a role where I can deepen my expertise in React and Node.js while contributing to products that scale. Based on my internship at TechCorp where I optimized APIs and my e-commerce project on AWS, I'm particularly excited about full-stack roles that value both performance and user experience. I want to learn from senior engineers through code reviews and pair programming, and I'm eager to take on ownership of features. This role appeals to me because it uses the exact stack I've been building with, and the team's emphasis on mentorship aligns with how I learn best."
         }
       ]
     },
@@ -238,5 +250,175 @@ Candidate: I'm looking for a role where I can grow as a developer while working 
   metadata: {
     userId: "demo-user-alex-chen",
     userEmail: "alex.chen@stateuniversity.edu",
+  },
+};
+
+/**
+ * Business/non-technical demo for Marketing, Business Admin, etc.
+ * Use ?demo=business&mock=true
+ */
+export const mockInterviewResultsBusiness = {
+  interview: {
+    id: "demo-interview-marcus-williams-2025",
+    conversationId: "demo-conversation-business-789",
+    agentId: "agent_demo_marketing_coordinator",
+    transcript: `Interviewer: Can you tell me about yourself and your background?
+
+Candidate: Hi! I'm Marcus Williams, a senior business administration major at State University, graduating in May 2025. I've been interested in marketing and brand strategy since I led a student organization's social media campaign in my sophomore year. I completed a marketing internship at RetailPlus last summer where I supported campaign planning and analyzed customer engagement data. I've also worked as a campus ambassador for a local startup, helping them grow their presence on campus. I'm excited about this opportunity because I love connecting brands with audiences and want to grow my skills in digital marketing and analytics.
+
+Interviewer: Tell me about a time when you had to work with a difficult team member.
+
+Candidate: During my internship, I worked with someone who often missed deadlines. The situation was stressful because our campaign launch was at risk. I scheduled a one-on-one to understand their workload and challenges. I offered to help break tasks into smaller steps and we set up weekly check-ins. As a result, they improved their delivery and we launched the campaign on time. I learned that communication and support often resolve conflict better than confrontation.
+
+Interviewer: How would you measure the success of a marketing campaign?
+
+Candidate: I'd look at key metrics like engagement rate, conversion rate, and ROI. Engagement would include likes, shares, comments, and time spent. Conversion would track how many people took the desired action—sign-ups, purchases, or downloads. ROI compares the revenue generated to the campaign cost. I'd also use A/B testing to see what messaging resonates. During my internship we used Google Analytics and social insights to track these.
+
+Interviewer: What would you do if you had to present to a client with little notice?
+
+Candidate: I'd first clarify the scope—what do they need to see and how much time do I have? Then I'd prioritize the most important points and create a simple deck. I'd lean on any existing materials or data we have. I'd practice my delivery once to stay within time. I've had to do this before when a teammate was sick—I presented our campaign results to a small group. It went well because I focused on clarity over perfection.
+
+Interviewer: How do you prioritize when you have multiple deadlines?
+
+Candidate: I list everything out and rank by urgency and impact. I communicate with stakeholders early about what's feasible. I use tools like Trello or a simple spreadsheet to track progress. During finals and my internship overlap, I blocked time for each priority and told my manager when I'd need flexibility. I also build in buffer time for unexpected issues.
+
+Interviewer: Why are you interested in this role and our company?
+
+Candidate: I'm looking for a role where I can apply my marketing experience and learn from seasoned professionals. I'm drawn to your focus on data-driven decision making and your company culture. I want to grow in campaign strategy and analytics while contributing to real projects. This role seems like a great fit because it aligns with my skills and offers the mentorship I'm looking for.`,
+    durationSeconds: 420,
+    startedAt: new Date(Date.now() - 420000).toISOString(),
+    endedAt: new Date().toISOString(),
+    status: "completed",
+    createdAt: new Date(Date.now() - 420000).toISOString(),
+  },
+  evaluation: {
+    status: "complete",
+    overallScore: 84,
+    evaluation: {
+      overall_score: 84,
+      overall_strengths: [
+        "Strong communication and relationship-building skills",
+        "Demonstrates data-driven thinking with marketing metrics",
+        "Shows adaptability and professionalism under pressure",
+        "Clear alignment between experience and career goals"
+      ],
+      overall_improvements: [
+        "Add more specific metrics and outcomes where possible",
+        "Consider discussing how you handle feedback and iteration",
+        "Could expand on cross-functional collaboration examples"
+      ],
+      questions: [
+        {
+          question: "Can you tell me about yourself and your background?",
+          answer: "Hi! I'm Marcus Williams, a senior business administration major at State University, graduating in May 2025. I've been interested in marketing and brand strategy since I led a student organization's social media campaign in my sophomore year. I completed a marketing internship at RetailPlus last summer where I supported campaign planning and analyzed customer engagement data. I've also worked as a campus ambassador for a local startup, helping them grow their presence on campus. I'm excited about this opportunity because I love connecting brands with audiences and want to grow my skills in digital marketing and analytics.",
+          score: 88,
+          strengths: [
+            "Clear timeline and relevant experience",
+            "Shows passion for marketing and brand work",
+            "Mentions specific roles (internship, ambassador)",
+            "Connects background to the role"
+          ],
+          improvements: [
+            "Could add specific metrics from campaigns",
+            "Consider mentioning what drew you to marketing initially"
+          ],
+          question_type: "informational",
+          improvement_quote: "I've also worked as a campus ambassador",
+        },
+        {
+          question: "Tell me about a time when you had to work with a difficult team member.",
+          answer: "During my internship, I worked with someone who often missed deadlines. The situation was stressful because our campaign launch was at risk. I scheduled a one-on-one to understand their workload and challenges. I offered to help break tasks into smaller steps and we set up weekly check-ins. As a result, they improved their delivery and we launched the campaign on time. I learned that communication and support often resolve conflict better than confrontation.",
+          score: 85,
+          strengths: [
+            "Uses STAR structure with clear Situation, Task, Action, Result",
+            "Shows empathy and problem-solving approach",
+            "Demonstrates outcome—campaign launched on time",
+            "Reflects on learning"
+          ],
+          improvements: [
+            "Could add more detail on the specific actions you took",
+            "Consider quantifying the improvement (e.g., timeline)"
+          ],
+          question_type: "behavioral",
+          star_breakdown: { situation: "strong", task: "strong", action: "strong", result: "strong" },
+        },
+        {
+          question: "How would you measure the success of a marketing campaign?",
+          answer: "I'd look at key metrics like engagement rate, conversion rate, and ROI. Engagement would include likes, shares, comments, and time spent. Conversion would track how many people took the desired action—sign-ups, purchases, or downloads. ROI compares the revenue generated to the campaign cost. I'd also use A/B testing to see what messaging resonates. During my internship we used Google Analytics and social insights to track these.",
+          score: 86,
+          strengths: [
+            "Covers core marketing metrics (engagement, conversion, ROI)",
+            "Provides concrete examples (Google Analytics)",
+            "Mentions A/B testing as a method",
+            "Ties to internship experience"
+          ],
+          improvements: [
+            "Could mention specific benchmarks or targets",
+            "Consider discussing how you report findings to stakeholders"
+          ],
+          question_type: "technical",
+        },
+        {
+          question: "What would you do if you had to present to a client with little notice?",
+          answer: "I'd first clarify the scope—what do they need to see and how much time do I have? Then I'd prioritize the most important points and create a simple deck. I'd lean on any existing materials or data we have. I'd practice my delivery once to stay within time. I've had to do this before when a teammate was sick—I presented our campaign results to a small group. It went well because I focused on clarity over perfection.",
+          score: 82,
+          strengths: [
+            "Structured, logical approach",
+            "Prioritizes clarity and preparation",
+            "Uses specific past example",
+            "Shows adaptability"
+          ],
+          improvements: [
+            "Could add how you handle Q&A or curveballs",
+            "Consider mentioning how you stay calm under pressure"
+          ],
+          question_type: "situational",
+        },
+        {
+          question: "How do you prioritize when you have multiple deadlines?",
+          answer: "I list everything out and rank by urgency and impact. I communicate with stakeholders early about what's feasible. I use tools like Trello or a simple spreadsheet to track progress. During finals and my internship overlap, I blocked time for each priority and told my manager when I'd need flexibility. I also build in buffer time for unexpected issues.",
+          score: 83,
+          strengths: [
+            "Clear prioritization framework",
+            "Mentions communication with stakeholders",
+            "Uses specific tools (Trello)",
+            "Shows real-world example (finals + internship)"
+          ],
+          improvements: [
+            "Could provide a specific example of a trade-off you made",
+            "Consider discussing how you say no when necessary"
+          ],
+          question_type: "behavioral",
+          star_breakdown: { situation: "strong", task: "strong", action: "weak", result: "weak" },
+          improvement_quote: "I list everything out and rank by urgency",
+        },
+        {
+          question: "Why are you interested in this role and our company?",
+          answer: "I'm looking for a role where I can apply my marketing experience and learn from seasoned professionals. I'm drawn to your focus on data-driven decision making and your company culture. I want to grow in campaign strategy and analytics while contributing to real projects. This role seems like a great fit because it aligns with my skills and offers the mentorship I'm looking for.",
+          score: 78,
+          strengths: [
+            "Shows genuine interest in the company",
+            "Mentions specific aspects (data-driven, culture)",
+            "Connects skills to role",
+            "Expresses desire for growth"
+          ],
+          improvements: [
+            "Could be more specific about what excites you about the company",
+            "Consider mentioning what type of impact you want to make",
+            "Could express more energy and enthusiasm"
+          ],
+          question_type: "informational",
+          improvement_quote: "I'm looking for a role where I can apply my marketing experience",
+          sample_better_answer: "I'm excited about this role because it combines my marketing internship experience with my interest in data-driven analytics. I'm drawn to your company's focus on customer-centric campaigns and your commitment to mentorship. I want to deepen my skills in campaign strategy and learn how to measure ROI across channels. Based on what I've learned about this role, it seems like a perfect fit—I'd love to contribute to real projects while growing alongside your team. I'm particularly interested in the work you've done with [specific campaign or product] and would love to be part of that."
+        }
+      ]
+    },
+    error: null,
+    createdAt: new Date(Date.now() - 300000).toISOString(),
+    updatedAt: new Date().toISOString(),
+  },
+  metadata: {
+    userId: "demo-user-marcus-williams",
+    userEmail: "marcus.williams@stateuniversity.edu",
   },
 };

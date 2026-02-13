@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interview Preview - Mockly</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        .animate-pulse {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes gradient {
+            0% { background-position: 0% 50%; }
+            50% { background-position: 100% 50%; }
+            100% { background-position: 0% 50%; }
+        }
+        .gradient-bg {
+            background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+            background-size: 400% 400%;
+            animation: gradient 15s ease infinite;
+        }
+        .blob {
+            border-radius: 30% 70% 70% 30% / 30% 30% 70% 70%;
+            transition: all 0.3s ease;
+        }
+    </style>
+</head>
+<body class="gradient-bg min-h-screen p-6 flex items-center justify-center">
+    <div class="max-w-6xl mx-auto w-full">
+        <div class="bg-white/90 backdrop-blur-md shadow-2xl border-2 border-blue-200 rounded-lg p-8">
+            <!-- Header -->
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h2 class="text-2xl font-bold">Voice Interview Preview</h2>
+                    <p class="text-gray-600">
+                        Computer Science • Junior
+                    </p>
+                </div>
+                <div class="flex items-center gap-4">
+                    <!-- Connection Status Indicator -->
+                    <div id="connectionStatus" class="flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium bg-green-100 text-green-700">
+                        <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                        <span>Connected</span>
+                    </div>
+                    
+                    <!-- Sound Toggle Button -->
+                    <button id="soundToggle" class="px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition">
+                        <span>🔊</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Mode Selector -->
+            <div class="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <p class="text-sm font-medium text-blue-900 mb-3">Preview Mode Selector:</p>
+                <div class="flex flex-wrap gap-2">
+                    <button onclick="setMode('idle')" class="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 transition">Idle</button>
+                    <button onclick="setMode('listening')" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition">Listening</button>
+                    <button onclick="setMode('user_speaking')" class="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 transition">User Speaking</button>
+                    <button onclick="setMode('ai_speaking')" class="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 transition">AI Speaking</button>
+                    <button onclick="setMode('processing')" class="px-4 py-2 bg-gray-200 rounded-md hover:bg-gray-300 transition">Processing</button>
+                </div>
+            </div>
+
+            <!-- Idle State -->
+            <div id="idleState" class="flex flex-col items-center justify-center py-12">
+                <div class="text-center mb-8">
+                    <h3 class="text-xl font-semibold mb-2">Ready to Begin</h3>
+                    <p class="text-gray-600 max-w-md">
+                        Click the button below to start your voice interview. 
+                        You'll be asked to allow microphone access.
+                    </p>
+                </div>
+                
+                <button onclick="setMode('listening')" class="w-48 h-48 rounded-full text-xl font-bold shadow-2xl bg-gradient-to-br from-blue-600 to-blue-800 hover:from-blue-700 hover:to-blue-900 transition-all flex flex-col items-center justify-center gap-2 text-white">
+                    <span class="text-5xl">🎤</span>
+                    <span>Start Interview</span>
+                </button>
+                
+                <p class="text-xs text-gray-500 mt-4">
+                    Make sure you're in a quiet environment
+                </p>
+            </div>
+
+            <!-- Active State -->
+            <div id="activeState" class="hidden">
+                <!-- Status Indicator -->
+                <div id="statusIndicator" class="text-center mb-6">
+                    <div class="flex items-center justify-center gap-2 text-blue-600">
+                        <div class="w-5 h-5 bg-blue-600 rounded-full animate-pulse"></div>
+                        <span class="font-medium text-lg">AI is speaking...</span>
+                    </div>
+                </div>
+
+                <!-- Volume Control Sliders -->
+                <div class="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg max-w-md mx-auto">
+                    <p class="text-sm font-medium text-purple-900 mb-3">🎛️ Test Audio Reactivity:</p>
+                    
+                    <!-- User Input Volume -->
+                    <div class="mb-4">
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-xs font-medium text-purple-700">
+                                User Voice Volume
+                            </label>
+                            <span id="inputVolumeDisplay" class="text-xs text-purple-600 font-mono">70%</span>
+                        </div>
+                        <input type="range" id="inputVolume" min="0" max="100" value="70" class="w-full cursor-pointer" oninput="updateVolumes()">
+                    </div>
+
+                    <!-- AI Output Volume -->
+                    <div>
+                        <div class="flex items-center justify-between mb-2">
+                            <label class="text-xs font-medium text-purple-700">
+                                AI Voice Volume
+                            </label>
+                            <span id="outputVolumeDisplay" class="text-xs text-purple-600 font-mono">80%</span>
+                        </div>
+                        <input type="range" id="outputVolume" min="0" max="100" value="80" class="w-full cursor-pointer" oninput="updateVolumes()">
+                    </div>
+
+                    <p class="text-xs text-purple-600 mt-3 text-center">
+                        Adjust sliders to see how the blob reacts to different audio levels
+                    </p>
+                </div>
+
+                <!-- Audio Visualizer (Blob) -->
+                <div class="mb-6 flex flex-col items-center justify-center">
+                    <div id="audioBlob" class="blob w-64 h-64 bg-gradient-to-br from-blue-400 to-purple-500 shadow-2xl flex items-center justify-center">
+                        <div class="text-white text-4xl">🎤</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentMode = 'idle';
+        let inputVolume = 0.7;
+        let outputVolume = 0.8;
+
+        function setMode(mode) {
+            currentMode = mode;
+            
+            // Update button states
+            document.querySelectorAll('button').forEach(btn => {
+                if (btn.textContent.includes('Idle') || btn.textContent.includes('Listening') || 
+                    btn.textContent.includes('User Speaking') || btn.textContent.includes('AI Speaking') || 
+                    btn.textContent.includes('Processing')) {
+                    btn.classList.remove('bg-blue-600', 'text-white');
+                    btn.classList.add('bg-gray-200');
+                }
+            });
+            
+            const activeBtn = Array.from(document.querySelectorAll('button')).find(btn => {
+                const text = btn.textContent.trim();
+                return (mode === 'idle' && text === 'Idle') ||
+                       (mode === 'listening' && text === 'Listening') ||
+                       (mode === 'user_speaking' && text === 'User Speaking') ||
+                       (mode === 'ai_speaking' && text === 'AI Speaking') ||
+                       (mode === 'processing' && text === 'Processing');
+            });
+            
+            if (activeBtn) {
+                activeBtn.classList.remove('bg-gray-200');
+                activeBtn.classList.add('bg-blue-600', 'text-white');
+            }
+
+            // Show/hide states
+            const idleState = document.getElementById('idleState');
+            const activeState = document.getElementById('activeState');
+            
+            if (mode === 'idle') {
+                idleState.classList.remove('hidden');
+                activeState.classList.add('hidden');
+            } else {
+                idleState.classList.add('hidden');
+                activeState.classList.remove('hidden');
+                updateStatusIndicator(mode);
+                updateBlob(mode);
+            }
+        }
+
+        function updateStatusIndicator(mode) {
+            const indicator = document.getElementById('statusIndicator');
+            let html = '';
+            
+            if (mode === 'ai_speaking') {
+                html = `
+                    <div class="flex items-center justify-center gap-2 text-blue-600">
+                        <div class="w-5 h-5 bg-blue-600 rounded-full animate-pulse"></div>
+                        <span class="font-medium text-lg">AI is speaking...</span>
+                    </div>
+                `;
+            } else if (mode === 'user_speaking') {
+                html = `
+                    <div class="flex items-center justify-center gap-2 text-green-600">
+                        <span class="text-2xl animate-pulse">👤</span>
+                        <span class="font-medium text-lg">You are speaking...</span>
+                    </div>
+                `;
+            } else if (mode === 'listening') {
+                html = `
+                    <div class="flex items-center justify-center gap-2 text-amber-600">
+                        <span class="text-2xl">🎧</span>
+                        <span class="font-medium text-lg">Listening... Speak when ready</span>
+                    </div>
+                `;
+            } else if (mode === 'processing') {
+                html = `
+                    <div class="flex items-center justify-center gap-2 text-purple-600">
+                        <span class="text-2xl animate-pulse">⚙️</span>
+                        <span class="font-medium text-lg">Processing...</span>
+                    </div>
+                `;
+            }
+            
+            indicator.innerHTML = html;
+        }
+
+        function updateBlob(mode) {
+            const blob = document.getElementById('audioBlob');
+            let scale = 1;
+            let color = 'from-blue-400 to-purple-500';
+            
+            if (mode === 'ai_speaking') {
+                scale = 1.2 + (outputVolume * 0.3);
+                color = 'from-blue-500 to-indigo-600';
+            } else if (mode === 'user_speaking') {
+                scale = 1.2 + (inputVolume * 0.3);
+                color = 'from-green-400 to-emerald-500';
+            } else if (mode === 'listening') {
+                scale = 1.0 + (inputVolume * 0.2);
+                color = 'from-amber-400 to-orange-500';
+            } else if (mode === 'processing') {
+                scale = 1.1;
+                color = 'from-purple-400 to-pink-500';
+            }
+            
+            blob.style.transform = `scale(${scale})`;
+            blob.className = `blob w-64 h-64 bg-gradient-to-br ${color} shadow-2xl flex items-center justify-center transition-all duration-300`;
+        }
+
+        function updateVolumes() {
+            inputVolume = document.getElementById('inputVolume').value / 100;
+            outputVolume = document.getElementById('outputVolume').value / 100;
+            
+            document.getElementById('inputVolumeDisplay').textContent = Math.round(inputVolume * 100) + '%';
+            document.getElementById('outputVolumeDisplay').textContent = Math.round(outputVolume * 100) + '%';
+            
+            if (currentMode !== 'idle') {
+                updateBlob(currentMode);
+            }
+        }
+
+        // Animate blob continuously
+        setInterval(() => {
+            if (currentMode !== 'idle') {
+                updateBlob(currentMode);
+            }
+        }, 100);
+    </script>
+</body>
+</html>

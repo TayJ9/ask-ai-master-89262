@@ -5,12 +5,44 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Upload, FileText, X, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Upload, FileText, X, CheckCircle2, ArrowLeft, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { motion } from "framer-motion";
 import { devLog } from "@/lib/utils";
+
+/**
+ * Lightweight heuristic: does the text look like a resume?
+ * Checks for common resume keywords and minimum length.
+ * Returns { ok: true } if it passes, or { ok: false, reason: string } if suspicious.
+ */
+function checkResumeContent(text: string): { ok: boolean; reason?: string } {
+  const trimmed = text.trim();
+
+  // Too short to be a real resume
+  if (trimmed.length < 80) {
+    return { ok: false, reason: "The uploaded document contains very little text. It may be a scanned image or the wrong file." };
+  }
+
+  // Check for at least a couple of common resume-related keywords
+  const keywords = [
+    "experience", "education", "skills", "work", "project",
+    "university", "college", "school", "degree", "gpa",
+    "intern", "job", "employment", "volunteer", "certification",
+    "resume", "objective", "summary", "reference", "award",
+    "bachelor", "master", "major", "minor", "coursework",
+    "leadership", "proficien", "responsible", "manage", "develop",
+  ];
+  const lower = trimmed.toLowerCase();
+  const matchCount = keywords.filter(kw => lower.includes(kw)).length;
+
+  if (matchCount < 2) {
+    return { ok: false, reason: "This document doesn't appear to be a resume. Make sure you uploaded the right file." };
+  }
+
+  return { ok: true };
+}
 
 interface ResumeUploadProps {
   onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => void;
@@ -25,6 +57,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   const [candidateFirstName, setCandidateFirstName] = useState("");
   const [candidateMajor, setCandidateMajor] = useState("");
   const [candidateYear, setCandidateYear] = useState("");
+  const [resumeWarning, setResumeWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
@@ -166,6 +199,22 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
       
       setResumeText(extractedResumeText);
       
+      // Soft content check -- warn but don't block
+      const contentCheck = checkResumeContent(extractedResumeText);
+      if (!contentCheck.ok) {
+        setResumeWarning(contentCheck.reason ?? null);
+        devLog.warn('[ResumeUpload] Content warning:', contentCheck.reason);
+        toast({
+          title: "Heads up -- this may not be a resume",
+          description: contentCheck.reason + " You can still continue if this is correct.",
+          variant: "destructive",
+          duration: 8000,
+        });
+        // Don't auto-proceed; let the user review and click "Continue with Resume"
+        return;
+      }
+
+      setResumeWarning(null);
       toast({
         title: "Resume uploaded successfully!",
         description: "Your resume has been processed and is ready for your interview.",
@@ -271,25 +320,43 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
       return;
     }
 
-    if (resumeText.trim()) {
-      // Generate sessionId for text-only uploads (when no file was uploaded)
-      const sessionId = generateSessionId();
-      
-      const candidateInfo = {
-        firstName: candidateFirstName.trim(),
-        major: candidateMajor.trim(),
-        year: candidateYear.trim(),
-        sessionId: sessionId,
-        resumeSource: "text_resume"
-      };
-      onResumeUploaded(resumeText, candidateInfo);
-    } else {
+    if (!resumeText.trim()) {
       toast({
         title: "No resume",
         description: "Please upload a resume or paste your resume text before continuing.",
         variant: "destructive",
       });
+      return;
     }
+
+    // Soft content check on first click -- warn but allow a second click to proceed
+    const contentCheck = checkResumeContent(resumeText);
+    if (!contentCheck.ok && !resumeWarning) {
+      // First attempt with suspicious content: show warning, don't proceed yet
+      setResumeWarning(contentCheck.reason ?? null);
+      toast({
+        title: "Heads up -- this may not be a resume",
+        description: (contentCheck.reason ?? "") + " Click \"Continue\" again if you're sure.",
+        variant: "destructive",
+        duration: 8000,
+      });
+      return;
+    }
+
+    // Either content looks fine, or user already saw the warning and clicked again
+    setResumeWarning(null);
+
+    // Generate sessionId for text-only uploads (when no file was uploaded)
+    const sessionId = generateSessionId();
+    
+    const candidateInfo = {
+      firstName: candidateFirstName.trim(),
+      major: candidateMajor.trim(),
+      year: candidateYear.trim(),
+      sessionId: sessionId,
+      resumeSource: uploadedFileName ? "pdf_upload" : "text_resume"
+    };
+    onResumeUploaded(resumeText, candidateInfo);
   };
 
   return (
@@ -297,7 +364,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
+        transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1] }}
         className="max-w-2xl w-full"
       >
       <Card className="shadow-xl">
@@ -306,7 +373,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             className="flex items-start justify-between mb-2"
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.3, delay: 0.08, ease: [0.33, 1, 0.68, 1] }}
+            transition={{ duration: 0.45, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
           >
             {onBack && (
               <Button
@@ -324,7 +391,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.2 }}
+            transition={{ duration: 0.55, delay: 0.3 }}
           >
             <CardTitle className="text-3xl">Upload Your Resume</CardTitle>
             <CardDescription className="text-base">
@@ -338,7 +405,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             className="space-y-4"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.18, ease: [0.33, 1, 0.68, 1] }}
+            transition={{ duration: 0.45, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
           >
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <div className="space-y-2">
@@ -389,7 +456,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             className="space-y-4"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.18, ease: [0.33, 1, 0.68, 1] }}
+            transition={{ duration: 0.45, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
           >
             <div className="flex items-center gap-4">
               <input
@@ -418,6 +485,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
                     onClick={() => {
                       setUploadedFileName(null);
                       setResumeText("");
+                      setResumeWarning(null);
                       if (fileInputRef.current) {
                         fileInputRef.current.value = "";
                       }
@@ -461,13 +529,30 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             </div>
           </motion.div>
 
+          {/* Resume Content Warning */}
+          {resumeWarning && (
+            <motion.div
+              className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg"
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4 }}
+            >
+              <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-amber-800">This may not be a resume</p>
+                <p className="text-sm text-amber-700">{resumeWarning}</p>
+                <p className="text-xs text-amber-600">You can still continue if this is the correct file.</p>
+              </div>
+            </motion.div>
+          )}
+
           {/* Resume Preview */}
           {resumeText && (
             <motion.div 
               className="p-4 bg-muted rounded-lg space-y-2"
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.3 }}
+              transition={{ duration: 0.45 }}
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Resume Preview</span>
@@ -486,7 +571,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             className="flex gap-3 pt-4"
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
+            transition={{ duration: 0.45, delay: 0.35, ease: [0.33, 1, 0.68, 1] }}
           >
             <Button
               onClick={onSkip}

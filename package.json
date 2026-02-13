@@ -17,7 +17,8 @@
     "node": ">=18.0.0"
   },
   "devDependencies": {
-    "drizzle-kit": "^0.31.7"
+    "drizzle-kit": "^0.31.7",
+    "ws": "^8.18.0"
   },
   "dependencies": {
     "next": "^16.0.10"

@@ -1,0 +1,10 @@
+{
+  "level": "freshman",
+  "prompt_question": "Can you tell me about yourself and your background?",
+  "candidate_answer_text": "Hi, I'm a freshman computer science major at State University. I've taken intro to programming and I'm really enjoying it. I built a simple calculator in Python for my first project. I'm excited to learn more about software development.",
+  "tts_audio_file": "freshman_01.mp3",
+  "stt_transcript_text_file": "freshman_01.txt",
+  "transcript_word_count": 39,
+  "clarity_score": 9.75,
+  "stt_source": "elevenlabs_scribe_v2"
+}

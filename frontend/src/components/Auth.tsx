@@ -272,21 +272,39 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               </div>
             </div>
 
-            {/* Quick Demo Button */}
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=true')}
-              className="w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 shadow-md hover:shadow-lg transition-all duration-300"
-            >
-              <Zap className="w-4 h-4 mr-2" />
-              See Quick Demo
-              <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
-                No Sign-Up
-              </span>
-            </Button>
+            {/* Quick Demo Buttons */}
+            <div className="space-y-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=true')}
+                className="group w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-xl hover:scale-100 transition-[box-shadow,background-color,border-color] duration-300"
+              >
+                <span className="inline-flex items-center group-hover:font-bold">
+                  <Zap className="w-4 h-4 mr-2 shrink-0" />
+                  Technical
+                </span>
+                <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+                  No Sign-Up
+                </span>
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=business')}
+                className="group w-full border-2 border-teal-500 text-teal-700 hover:bg-teal-50 hover:border-teal-600 hover:text-teal-700 shadow-md hover:shadow-xl hover:scale-100 transition-[box-shadow,background-color,border-color] duration-300"
+              >
+                <span className="inline-flex items-center group-hover:font-bold">
+                  <Zap className="w-4 h-4 mr-2 shrink-0" />
+                  Non-Technical
+                </span>
+                <span className="ml-2 text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-semibold">
+                  No Sign-Up
+                </span>
+              </Button>
+            </div>
             <p className="text-xs text-center text-gray-500">
-              See sample interview results instantly
+              See sample results—Technical (engineering) or Non-Technical (marketing, business)
             </p>
           </form>
         </CardContent>

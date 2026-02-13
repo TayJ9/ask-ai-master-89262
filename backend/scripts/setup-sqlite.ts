@@ -132,6 +132,7 @@ try {
       interview_id TEXT REFERENCES interviews(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'started',
       ended_by TEXT,
+      candidate_context TEXT,
       started_at TEXT DEFAULT (datetime('now')),
       ended_at TEXT,
       client_ended_at TEXT,
@@ -140,6 +141,26 @@ try {
     );
   `);
   console.log('✅ Created elevenlabs_interview_sessions table');
+
+  // Add candidate_context if missing (migration for existing DBs)
+  try {
+    db.exec(`ALTER TABLE elevenlabs_interview_sessions ADD COLUMN candidate_context TEXT`);
+    console.log('✅ Added candidate_context column');
+  } catch {
+    // Column exists, ignore
+  }
+
+  // Create resumes table (resume upload)
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS resumes (
+      interview_id TEXT PRIMARY KEY,
+      resume_fulltext TEXT,
+      resume_profile TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+  `);
+  console.log('✅ Created resumes table');
 
   // Create indexes for better performance
   db.exec(`

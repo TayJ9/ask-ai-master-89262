@@ -1,0 +1,1 @@
+I'm a junior computer science major at State University. I've done two internships so far, one at a local startup where I worked on their React front end, and one at a larger company doing API testing. I've also been a TA for data structures. I'm particularly interested in full stack development.

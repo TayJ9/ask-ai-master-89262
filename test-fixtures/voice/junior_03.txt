@@ -1,0 +1,1 @@
+REST is a way to design APIs that use HTTP. You have different URLs for different resources, and you use HTTP methods like GET to fetch data and POST to create something. Each endpoint does one thing. It's like a library where you ask for a specific book by its call number.

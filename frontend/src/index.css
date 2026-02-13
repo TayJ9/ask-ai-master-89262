@@ -122,6 +122,8 @@ All colors MUST be HSL.
    * Use .scroll-smooth utility on specific containers or anchor links instead. */
   html {
     scroll-behavior: auto;
+    /* Fallback background matching AnimatedBackground so fast-scroll never reveals white. */
+    background-color: #E8A052;
   }
 
   /* Prevent overscroll rubber-banding to avoid weird visuals at bottom of long pages (e.g. Results). */
@@ -131,11 +133,10 @@ All colors MUST be HSL.
     }
   }
 
-  /* Reserve space for scrollbar to avoid layout shift when content is long (e.g. Results page). */
-  @supports (scrollbar-gutter: stable) {
-    html {
-      scrollbar-gutter: stable;
-    }
+  /* Use overlay scrollbar so it doesn't push content or leave a gutter gap */
+  html {
+    overflow-y: auto;
+    scrollbar-width: thin;
   }
 
   body {
@@ -178,23 +179,43 @@ All colors MUST be HSL.
     animation: scaleIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
+  /* PERF: GPU-composited spin override - prevents layout shifts from non-composited transform.
+     The default Tailwind animate-spin can cause CLS because Chrome can't always accelerate
+     transform:rotate on inline SVGs. Adding will-change + translate3d forces a compositor layer. */
+  .animate-spin {
+    will-change: transform;
+    backface-visibility: hidden;
+    transform: translate3d(0, 0, 0);
+  }
+  @keyframes spin {
+    to { transform: translate3d(0, 0, 0) rotate(360deg); }
+  }
+
+  /* PERF: GPU-composited pulse override */
+  .animate-pulse {
+    will-change: opacity;
+    backface-visibility: hidden;
+  }
+
   /* PERF: Transform/opacity only; used for hero primary button subtle pulse instead of Framer loops. */
   .btn-pulse-hero {
     animation: btnPulseHero 2s ease-in-out infinite;
+    will-change: transform, opacity;
+    backface-visibility: hidden;
   }
   @keyframes btnPulseHero {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.9; transform: scale(1.02); }
+    0%, 100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+    50% { opacity: 0.9; transform: translate3d(0, 0, 0) scale(1.02); }
   }
 
   @keyframes scaleIn {
     from {
       opacity: 0;
-      transform: scale(0.9);
+      transform: translate3d(0, 0, 0) scale(0.9);
     }
     to {
       opacity: 1;
-      transform: scale(1);
+      transform: translate3d(0, 0, 0) scale(1);
     }
   }
 

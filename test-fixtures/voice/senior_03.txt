@@ -1,0 +1,1 @@
+I'd use a sliding window or token bucket algorithm. For distributed systems, Redis or a similar store works well with atomic increments. You'd need to decide on the key, user ID, IP, or API key. I'd also add a circuit breaker for cascading failures. In production, I'd use something like Kong or Envoy rather than building from scratch.

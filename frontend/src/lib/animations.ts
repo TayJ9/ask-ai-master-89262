@@ -13,17 +13,17 @@ export const smoothEasing = [0.33, 1, 0.68, 1] as [number, number, number, numbe
 export const gentleEasing = [0.25, 0.1, 0.25, 1] as [number, number, number, number]; // easeInOut
 
 /**
- * Standard transition timings
+ * Standard transition timings (slower for smoother feel)
  */
 export const transitions = {
-  fast: { duration: 0.2, ease: smoothEasing },
-  normal: { duration: 0.3, ease: smoothEasing },
-  slow: { duration: 0.4, ease: smoothEasing },
+  fast: { duration: 0.3, ease: smoothEasing },
+  normal: { duration: 0.45, ease: smoothEasing },
+  slow: { duration: 0.6, ease: smoothEasing },
 } as const;
 
 /**
- * Fade-in variants - optimized for smooth appearance
- * Uses easeOut for natural deceleration
+ * Fade-in variants - optimized for smooth crossfades
+ * Slight scale (0.998) keeps compositor layer stable during transitions
  */
 export const fadeInVariants: Variants = {
   initial: {
@@ -80,15 +80,16 @@ export const fadeInUpVariants: Variants = {
 export const staggerContainer: Variants = {
   animate: {
     transition: {
-      staggerChildren: 0.05, // Small delay between children
+      staggerChildren: 0.08, // Slightly longer delay for smoother succession
     },
   },
 };
 
 /**
- * Default transition for fade-ins
+ * Default transition for fade-ins and page crossfades
+ * Slower (0.5s) for smoother overall feel; gentle easing for natural flow
  */
 export const defaultFadeTransition: Transition = {
-  duration: 0.3,
-  ease: smoothEasing,
+  duration: 0.35,
+  ease: gentleEasing,
 };

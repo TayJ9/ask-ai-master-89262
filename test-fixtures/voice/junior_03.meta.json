@@ -1,0 +1,10 @@
+{
+  "level": "junior",
+  "prompt_question": "How would you explain REST APIs to someone new to coding?",
+  "candidate_answer_text": "REST is a way to design APIs that use HTTP. You have different URLs for different resources, and you use HTTP methods like GET to fetch data and POST to create something. Each endpoint does one thing. It's like a library where you ask for a specific book by its call number.",
+  "tts_audio_file": "junior_03.mp3",
+  "stt_transcript_text_file": "junior_03.txt",
+  "transcript_word_count": 52,
+  "clarity_score": 13,
+  "stt_source": "elevenlabs_scribe_v2"
+}

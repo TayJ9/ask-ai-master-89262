@@ -7,23 +7,158 @@
 
 import { z } from "zod";
 
+// STAR breakdown rating: strong | weak | missing
+const StarRatingSchema = z.enum(["strong", "weak", "missing"]);
+
+// Optional fields for enhanced coaching UI; safe for older evaluations.
+const QuestionItemSchema = z.object({
+  question: z.string(),
+  answer: z.string(),
+  score: z.number().int().min(0).max(100),
+  strengths: z.array(z.string()).min(1).max(3),
+  improvements: z.array(z.string()).min(1).max(3),
+  // Optional fields for enhanced coaching UI; safe for older evaluations.
+  question_type: z.enum(["behavioral", "technical", "situational", "informational"]).optional(),
+  star_breakdown: z.object({
+    situation: StarRatingSchema,
+    task: StarRatingSchema,
+    action: StarRatingSchema,
+    result: StarRatingSchema,
+  }).optional(),
+  improvement_quote: z.string().optional(),
+  sample_better_answer: z.string().optional(),
+});
+
 // Zod schema for evaluation output
 export const EvaluationJsonSchema = z.object({
   overall_score: z.number().int().min(0).max(100),
   overall_strengths: z.array(z.string()).min(1).max(5),
   overall_improvements: z.array(z.string()).min(1).max(5),
-  questions: z.array(
-    z.object({
-      question: z.string(),
-      answer: z.string(),
-      score: z.number().int().min(0).max(100),
-      strengths: z.array(z.string()).min(1).max(3),
-      improvements: z.array(z.string()).min(1).max(3),
-    })
-  ).min(1),
+  questions: z.array(QuestionItemSchema).min(1),
 });
 
 export type EvaluationJson = z.infer<typeof EvaluationJsonSchema>;
+
+/** Input QA pairs passed to the evaluator (for filling missing question/answer) */
+export type InputQAPair = { question: string; answer: string };
+
+/**
+ * Normalize raw OpenAI (or any) evaluation response into canonical EvaluationJson.
+ * Handles: raw.questions, raw.evaluations, raw.evaluation (array or single object).
+ * Uses inputQAPairs to fill missing question/answer when possible.
+ */
+export function normalizeEvaluationJson(
+  raw: any,
+  inputQAPairs: InputQAPair[] = []
+): EvaluationJson {
+  // Resolve per-question array: questions | evaluations | evaluation (array or single object)
+  let items: any[] = [];
+  if (Array.isArray(raw.questions) && raw.questions.length > 0) {
+    items = raw.questions;
+  } else if (Array.isArray(raw.evaluations) && raw.evaluations.length > 0) {
+    items = raw.evaluations;
+  } else if (raw.evaluation != null) {
+    const ev = raw.evaluation;
+    items = Array.isArray(ev) ? ev : [ev];
+  } else if (raw.evaluation?.evaluation != null) {
+    const ev = raw.evaluation.evaluation;
+    items = Array.isArray(ev) ? ev : [ev];
+  }
+
+  if (items.length === 0 && inputQAPairs.length > 0) {
+    // API returned no per-question data; build minimal items from input QA pairs
+    const overall = typeof raw.overall_score === "number"
+      ? Math.max(0, Math.min(100, Math.round(raw.overall_score)))
+      : 0;
+    items = inputQAPairs.map((qa) => ({
+      question: qa.question,
+      answer: qa.answer,
+      score: overall,
+      strengths: ["Response received"],
+      improvements: ["Could provide more specific details"],
+    }));
+  }
+  if (items.length === 0) {
+    throw new Error("No questions found in evaluation response");
+  }
+
+  // Map each item to canonical question shape
+  const questions = items.map((item: any, index: number) => {
+    const qa = inputQAPairs[index];
+    let score = 0;
+    if (typeof item.score === "number") {
+      score = Math.round(item.score);
+    } else if (item.score && typeof item.score === "object") {
+      if (typeof item.score.total === "number") {
+        score = Math.round(item.score.total);
+      } else {
+        const vals = Object.values(item.score).filter((v) => typeof v === "number") as number[];
+        if (vals.length > 0) score = Math.round(vals.reduce((a, b) => a + b, 0));
+      }
+    }
+    score = Math.max(0, Math.min(100, score));
+
+    const strengths = Array.isArray(item.strengths) ? item.strengths : [];
+    const improvements = Array.isArray(item.improvements) ? item.improvements : [];
+    const question = (qa?.question ?? item.question ?? `Question ${index + 1}`).toString();
+    const answer = (qa?.answer ?? item.answer ?? "").toString();
+
+    const sb = item.star_breakdown;
+    const hasValidStarBreakdown =
+      sb &&
+      typeof sb === "object" &&
+      "situation" in sb &&
+      "task" in sb &&
+      "action" in sb &&
+      "result" in sb;
+
+    return {
+      question,
+      answer,
+      score,
+      strengths: strengths.length > 0 ? strengths : ["Provided a response to the question"],
+      improvements: improvements.length > 0 ? improvements : ["Could provide more specific details"],
+      ...(item.question_type && { question_type: item.question_type }),
+      ...(hasValidStarBreakdown && { star_breakdown: sb }),
+      ...(item.improvement_quote != null && { improvement_quote: item.improvement_quote }),
+      ...(item.sample_better_answer != null && { sample_better_answer: item.sample_better_answer }),
+    };
+  });
+
+  // Overall score
+  let overallScore = 0;
+  if (typeof raw.overall_score === "number") {
+    overallScore = Math.round(raw.overall_score);
+  } else {
+    const scores = questions.map((q) => q.score);
+    overallScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+  }
+  overallScore = Math.max(0, Math.min(100, overallScore));
+
+  // Overall strengths/improvements
+  const allStrengths = new Set<string>();
+  questions.forEach((q) => (q.strengths || []).forEach((s: string) => allStrengths.add(s)));
+  let overall_strengths: string[] =
+    Array.isArray(raw.overall_strengths) && raw.overall_strengths.length > 0
+      ? raw.overall_strengths.slice(0, 5)
+      : Array.from(allStrengths).slice(0, 5);
+  if (overall_strengths.length === 0) overall_strengths = ["Demonstrated technical knowledge"];
+
+  const allImprovements = new Set<string>();
+  questions.forEach((q) => (q.improvements || []).forEach((i: string) => allImprovements.add(i)));
+  let overall_improvements: string[] =
+    Array.isArray(raw.overall_improvements) && raw.overall_improvements.length > 0
+      ? raw.overall_improvements.slice(0, 5)
+      : Array.from(allImprovements).slice(0, 5);
+  if (overall_improvements.length === 0) overall_improvements = ["Could provide more specific examples"];
+
+  return {
+    overall_score: overallScore,
+    overall_strengths,
+    overall_improvements,
+    questions,
+  };
+}
 
 // JSON Schema for OpenAI Structured Outputs
 const evaluationJsonSchema = {
@@ -84,6 +219,30 @@ const evaluationJsonSchema = {
               maxItems: 3,
               description: "Specific areas for improvement in this answer",
             },
+            // Optional fields for enhanced coaching UI; safe for older evaluations.
+            question_type: {
+              type: "string",
+              enum: ["behavioral", "technical", "situational", "informational"],
+              description: "Question classification for adaptive rubric",
+            },
+            star_breakdown: {
+              type: "object",
+              properties: {
+                situation: { type: "string", enum: ["strong", "weak", "missing"] },
+                task: { type: "string", enum: ["strong", "weak", "missing"] },
+                action: { type: "string", enum: ["strong", "weak", "missing"] },
+                result: { type: "string", enum: ["strong", "weak", "missing"] },
+              },
+              description: "STAR structure rating (for behavioral questions only)",
+            },
+            improvement_quote: {
+              type: "string",
+              description: "Exact substring from the candidate answer that could be improved",
+            },
+            sample_better_answer: {
+              type: "string",
+              description: "Short rewrite (2-6 sentences) showing a stronger answer",
+            },
           },
           required: ["question", "answer", "score", "strengths", "improvements"],
         },
@@ -102,6 +261,14 @@ interface ScoreInterviewParams {
   major?: string;
   resumeText?: string;
   questions: Array<{ question: string; answer: string }>;
+  /** Optional: student year context for evaluation (e.g. "Freshman", "Senior") */
+  studentYear?: string;
+  /** Optional: technical difficulty level (e.g. "basic", "advanced") */
+  technicalDifficulty?: string;
+  /** Optional: technical depth (e.g. "introductory", "deep") */
+  technicalDepth?: string;
+  /** Optional: behavioral question ratio 0-100 */
+  behavioralRatio?: number | string;
 }
 
 /**
@@ -112,6 +279,10 @@ export async function scoreInterview({
   major,
   resumeText,
   questions,
+  studentYear,
+  technicalDifficulty,
+  technicalDepth,
+  behavioralRatio,
 }: ScoreInterviewParams): Promise<EvaluationJson> {
   // Store questions for transformation if needed
   const inputQuestions = questions;
@@ -131,6 +302,14 @@ export async function scoreInterview({
   }
   if (major) {
     contextParts.push(`Major: ${major}`);
+  }
+  if (studentYear || technicalDifficulty || technicalDepth || behavioralRatio != null) {
+    const yearParts: string[] = [];
+    if (studentYear) yearParts.push(`Academic year: ${studentYear}`);
+    if (technicalDifficulty) yearParts.push(`Technical difficulty: ${technicalDifficulty}`);
+    if (technicalDepth) yearParts.push(`Technical depth: ${technicalDepth}`);
+    if (behavioralRatio != null) yearParts.push(`Behavioral ratio: ${behavioralRatio}`);
+    if (yearParts.length > 0) contextParts.push(`(${yearParts.join(", ")})`);
   }
   const context = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(", ")}` : "";
 
@@ -203,20 +382,32 @@ CONSTRAINTS:
 - Be encouraging but honest - even lower scores should have constructive feedback.
 - Overall strengths/improvements should synthesize patterns across all answers.
 - For entry-level candidates, emphasize potential and coachability over extensive experience.
-- All scores must be positive integers (0-100), no decimals.`;
+- All scores must be positive integers (0-100), no decimals.
+
+REQUIRED ENHANCED FIELDS (per question):
+- question_type: REQUIRED for every question. One of: behavioral, technical, situational, informational.
+- star_breakdown: ONLY when question_type = behavioral. Rate each STAR component (situation, task, action, result) as "strong", "weak", or "missing". Omit for non-behavioral questions.
+- improvement_quote: ONLY when an improvement cites vagueness or a specific weak phrase. MUST be copied verbatim from the candidate's answer—exact substring only. If you cannot find a suitable quote, omit this key entirely. Do not paraphrase or invent.
+- sample_better_answer: ONLY for the single lowest-scoring question OR any question with score < 60. Keep 2-6 sentences. Ground it in the candidate's own answer and resume context—do not invent facts, roles, or experiences not in the transcript or resume. Omit for higher-scoring answers.`;
 
   const userPrompt = `Evaluate this interview${context}${resumeContext}
 
 ${questionsText}
 
 IMPORTANT INSTRUCTIONS:
-1. For EACH question, first classify it as: behavioral, technical, situational, or informational
+1. For EACH question, set question_type (required): behavioral, technical, situational, or informational
 2. Apply the appropriate rubric weights based on question type
-3. STAR Structure should ONLY be evaluated for behavioral questions (0 points for other types)
+3. If question_type = behavioral, add star_breakdown with situation/task/action/result rated strong/weak/missing
 4. For entry-level candidates, give significant weight to coachability (15 points) when appropriate
 5. If a resume is provided, note any alignment or inconsistencies between answers and resume claims
 
-Provide a strict JSON evaluation matching the schema. Score each answer individually using the adaptive rubric, then calculate the overall_score as a weighted average (weighted by question importance if applicable, otherwise simple average). All scores must be integers (round to nearest whole number).`;
+OUTPUT RULES (minimal hallucination):
+- Quote exact phrases only: improvement_quote must be a verbatim substring from the candidate's answer. If no suitable phrase exists, omit improvement_quote.
+- Do not invent facts: Use only what appears in the transcript or resume. No fabricated roles, companies, or experiences.
+- sample_better_answer: Add ONLY for the lowest-scoring question OR any question with score < 60. One per evaluation. Ground in candidate's answer and resume.
+- Keep it concise: This feeds a UI—short, actionable feedback. No essays.
+
+Provide a strict JSON evaluation matching the schema. Score each answer individually using the adaptive rubric, then calculate the overall_score as a weighted average. All scores must be integers (round to nearest whole number).`;
 
   try {
     // Use json_object format for compatibility (works with all models)
@@ -248,7 +439,6 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       throw new Error("OpenAI did not return content");
     }
 
-    // Parse JSON
     let parsed: any;
     try {
       parsed = JSON.parse(content);
@@ -256,155 +446,15 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       throw new Error(`Failed to parse OpenAI response as JSON: ${parseError.message}`);
     }
 
-    // Log what we received for debugging
-    console.log('[OPENAI_EVALUATOR] Raw OpenAI response:', {
-      hasOverallScore: 'overall_score' in parsed,
-      hasOverallStrengths: 'overall_strengths' in parsed,
-      hasOverallImprovements: 'overall_improvements' in parsed,
-      hasQuestions: 'questions' in parsed,
-      hasEvaluations: 'evaluations' in parsed,
-      questionsCount: parsed.questions?.length || 0,
-      evaluationsCount: parsed.evaluations?.length || 0,
-      keys: Object.keys(parsed),
-      parsedPreview: JSON.stringify(parsed).substring(0, 500),
-    });
-
-    // Transform OpenAI response to match our schema if needed
-    let transformed = parsed;
-    
-    // If OpenAI returned "evaluations" instead of "questions", transform it
-    if (parsed.evaluations && !parsed.questions) {
-      console.log('[OPENAI_EVALUATOR] Transforming "evaluations" to "questions" format');
-      transformed = {
-        ...parsed,
-        questions: parsed.evaluations.map((evalItem: any, index: number) => {
-          // Find the corresponding question from our input
-          const qaPair = inputQuestions[index];
-          
-          // Handle score - could be a number, object with breakdown, or object with 'total'
-          let score = 0;
-          if (typeof evalItem.score === 'number') {
-            score = Math.round(evalItem.score);
-          } else if (evalItem.score && typeof evalItem.score === 'object') {
-            // If score is an object, try to get 'total' field or sum the values
-            if (typeof evalItem.score.total === 'number') {
-              score = Math.round(evalItem.score.total);
-            } else {
-              // Sum all numeric values in the score object
-              const scoreValues = Object.values(evalItem.score).filter(v => typeof v === 'number') as number[];
-              if (scoreValues.length > 0) {
-                score = Math.round(scoreValues.reduce((sum, val) => sum + val, 0));
-              }
-            }
-          }
-          
-          // Ensure score is in valid range
-          score = Math.max(0, Math.min(100, score));
-          
-          // Ensure strengths and improvements are arrays
-          const strengths = Array.isArray(evalItem.strengths) ? evalItem.strengths : [];
-          const improvements = Array.isArray(evalItem.improvements) ? evalItem.improvements : [];
-          
-          return {
-            question: qaPair?.question || evalItem.question || `Question ${index + 1}`,
-            answer: qaPair?.answer || evalItem.answer || '',
-            score: score,
-            strengths: strengths.length > 0 ? strengths : ['Provided a response to the question'],
-            improvements: improvements.length > 0 ? improvements : ['Could provide more specific details'],
-          };
-        }),
-      };
-      delete transformed.evaluations;
-    }
-
-    // Generate overall_strengths and overall_improvements if missing
-    if (!transformed.overall_strengths && transformed.questions) {
-      console.log('[OPENAI_EVALUATOR] Generating overall_strengths from question strengths');
-      const allStrengths = new Set<string>();
-      transformed.questions.forEach((q: any) => {
-        if (Array.isArray(q.strengths)) {
-          q.strengths.forEach((s: string) => allStrengths.add(s));
-        }
-      });
-      transformed.overall_strengths = Array.from(allStrengths).slice(0, 5);
-      if (transformed.overall_strengths.length === 0) {
-        transformed.overall_strengths = ['Demonstrated technical knowledge'];
-      }
-    }
-
-    if (!transformed.overall_improvements && transformed.questions) {
-      console.log('[OPENAI_EVALUATOR] Generating overall_improvements from question improvements');
-      const allImprovements = new Set<string>();
-      transformed.questions.forEach((q: any) => {
-        if (Array.isArray(q.improvements)) {
-          q.improvements.forEach((i: string) => allImprovements.add(i));
-        }
-      });
-      transformed.overall_improvements = Array.from(allImprovements).slice(0, 5);
-      if (transformed.overall_improvements.length === 0) {
-        transformed.overall_improvements = ['Could provide more specific examples'];
-      }
-    }
-
-    // Ensure questions array exists and is properly formatted
-    if (!transformed.questions && transformed.evaluations) {
-      transformed.questions = transformed.evaluations;
-      delete transformed.evaluations;
-    }
-
-    // Ensure schema compliance: fix empty strengths arrays and round scores to integers
-    if (transformed.questions) {
-      transformed.questions = transformed.questions.map((q: any) => {
-        // Round score to integer
-        if (typeof q.score === 'number') {
-          q.score = Math.round(q.score);
-        } else {
-          q.score = 0;
-        }
-        
-        // Ensure score is in valid range
-        q.score = Math.max(0, Math.min(100, q.score));
-        
-        // Ensure strengths array has at least 1 item
-        if (!Array.isArray(q.strengths) || q.strengths.length === 0) {
-          q.strengths = ['Provided a response to the question'];
-        }
-        
-        // Ensure improvements is an array
-        if (!Array.isArray(q.improvements)) {
-          q.improvements = [];
-        }
-        
-        return q;
-      });
-    }
-    
-    // Round overall_score to integer
-    if (typeof transformed.overall_score === 'number') {
-      transformed.overall_score = Math.round(transformed.overall_score);
-      transformed.overall_score = Math.max(0, Math.min(100, transformed.overall_score));
-    } else {
-      transformed.overall_score = 0;
-    }
-
-    // Validate with Zod (ensures schema compliance)
     try {
-      const validated = EvaluationJsonSchema.parse(transformed);
-      console.log('[OPENAI_EVALUATOR] ✅ Schema validation passed after transformation');
-      return validated;
-    } catch (zodError: any) {
-      if (zodError instanceof z.ZodError) {
-        console.error('[OPENAI_EVALUATOR] Schema validation failed. Received:', {
-          keys: Object.keys(parsed),
-          overallScore: parsed.overall_score,
-          overallStrengths: parsed.overall_strengths,
-          overallImprovements: parsed.overall_improvements,
-          questions: parsed.questions,
-          errors: zodError.errors.map(e => `${e.path.join('.')}: ${e.message}`),
-        });
-        throw new Error(`Schema validation failed: ${zodError.errors.map(e => `${e.path.join('.')}: ${e.message}`).join(", ")}`);
+      const normalized = normalizeEvaluationJson(parsed, inputQuestions);
+      return EvaluationJsonSchema.parse(normalized);
+    } catch (normErr: any) {
+      if (normErr instanceof z.ZodError) {
+        const msgs = normErr.errors.map((e) => `${e.path.join(".")}: ${e.message}`);
+        throw new Error(`Schema validation failed: ${msgs.join(", ")}`);
       }
-      throw zodError;
+      throw normErr;
     }
   } catch (error: any) {
     if (error instanceof z.ZodError) {

@@ -1,0 +1,51 @@
+{
+  "interview": {
+    "id": "fixture-enhanced",
+    "conversationId": null,
+    "agentId": "agent_test",
+    "transcript": "Interviewer: Tell me about a conflict you resolved.\nCandidate: We disagreed on the API design. I scheduled a meeting and we chose a hybrid approach.",
+    "durationSeconds": 120,
+    "startedAt": "2025-01-01T12:00:00.000Z",
+    "endedAt": "2025-01-01T12:02:00.000Z",
+    "status": "completed",
+    "createdAt": "2025-01-01T12:00:00.000Z"
+  },
+  "evaluation": {
+    "status": "complete",
+    "overallScore": 72,
+    "evaluation": {
+      "overall_score": 72,
+      "overall_strengths": ["Showed conflict resolution", "Technical awareness"],
+      "overall_improvements": ["Add more specific metrics", "Expand on collaboration"],
+      "questions": [
+        {
+          "question": "Tell me about a time when you had to resolve a conflict with a teammate.",
+          "answer": "We disagreed on the API design. I scheduled a meeting and we chose a hybrid approach.",
+          "score": 68,
+          "strengths": ["Took initiative to schedule meeting"],
+          "improvements": ["Add more detail on the conflict and outcome"],
+          "question_type": "behavioral",
+          "star_breakdown": { "situation": "weak", "task": "strong", "action": "weak", "result": "missing" },
+          "improvement_quote": "we chose a hybrid approach",
+          "sample_better_answer": "At my last role, a teammate and I disagreed on REST vs GraphQL for a new feature. I scheduled a call, presented pros/cons for each, and we agreed on a hybrid: REST for reads, GraphQL for complex queries. We shipped on time and reduced backend complexity by 20%."
+        },
+        {
+          "question": "Explain the difference between REST and GraphQL.",
+          "answer": "REST uses HTTP and URLs. GraphQL is different—you send a query. I think REST is simpler for basic stuff.",
+          "score": 55,
+          "strengths": ["Recognized both paradigms"],
+          "improvements": ["Provide more technical depth", "Give concrete examples"],
+          "question_type": "technical",
+          "improvement_quote": "I think REST is simpler for basic stuff"
+        }
+      ]
+    },
+    "error": null,
+    "createdAt": "2025-01-01T12:02:05.000Z",
+    "updatedAt": "2025-01-01T12:02:05.000Z"
+  },
+  "metadata": {
+    "userId": "fixture-user",
+    "userEmail": "test@example.com"
+  }
+}

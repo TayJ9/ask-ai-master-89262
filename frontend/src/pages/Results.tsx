@@ -6,17 +6,27 @@
  */
 
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
-import { useLocation } from "wouter";
+import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, CheckCircle2, AlertCircle, RefreshCw, ArrowLeft, Home, Clock, Sparkles, TrendingUp, Award } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, AlertTriangle, XCircle, RefreshCw, ArrowLeft, Home, Clock, Sparkles, TrendingUp, Award } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
-import { mockInterviewResults } from "@/mocks/resultsMockData";
+import { mockInterviewResults, mockInterviewResultsBusiness } from "@/mocks/resultsMockData";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { devLog } from "@/lib/utils";
+// Dev-only fixtures for UI render verification (enhanced vs legacy evaluation shape)
+import fixtureEnhanced from "@/__fixtures__/evaluation_enhanced.json";
+import fixtureLegacy from "@/__fixtures__/evaluation_legacy.json";
+import { checkFixturesRenderable } from "@/__fixtures__/validateFixtures";
+
+if (import.meta.env.DEV) {
+  const { enhanced, legacy } = checkFixturesRenderable(fixtureEnhanced, fixtureLegacy);
+  if (!enhanced.ok) devLog.warn("[FIXTURES] Enhanced fixture validation:", enhanced.errors);
+  if (!legacy.ok) devLog.warn("[FIXTURES] Legacy fixture validation:", legacy.errors);
+}
 
 interface InterviewResults {
   interview: {
@@ -43,6 +53,16 @@ interface InterviewResults {
         score: number;
         strengths: string[];
         improvements: string[];
+        // Optional fields for enhanced coaching UI; safe for older evaluations
+        question_type?: "behavioral" | "technical" | "situational" | "informational";
+        star_breakdown?: {
+          situation: "strong" | "weak" | "missing";
+          task: "strong" | "weak" | "missing";
+          action: "strong" | "weak" | "missing";
+          result: "strong" | "weak" | "missing";
+        };
+        improvement_quote?: string;
+        sample_better_answer?: string;
       }>;
     } | null;
     error: string | null;
@@ -65,6 +85,13 @@ const PROCESSING_STEPS = [
 
 const POLL_INTERVAL = 3000; // 3 seconds
 const POLL_TIMEOUT = 60000; // 60 seconds
+
+/** Readiness Score labels for presentation—avoids binary hiring framing. */
+function getReadinessLabel(score: number): { label: string; colorClass: string } {
+  if (score >= 90) return { label: '🚀 Interview Ready', colorClass: 'text-green-300' };
+  if (score >= 70) return { label: '📈 Competitive Candidate', colorClass: 'text-cyan-300' };
+  return { label: '🛠️ Needs Practice', colorClass: 'text-amber-300' };
+}
 
 // Format transcript with proper line breaks and speaker labels
 const formatTranscript = (transcript: string): string => {
@@ -103,38 +130,82 @@ export default function Results() {
     setLocation('/');
   };
   
-  // Parse query params
-  const { finalInterviewId, finalSessionId, isMockMode, isDemoMode } = useMemo(() => {
+  // useSearch triggers re-render when URL search changes (e.g. demo switcher); useLocation only has pathname
+  const searchString = useSearch();
+  const { finalInterviewId, finalSessionId, isMockMode, isDemoMode, demoVariant, fixtureMode } = useMemo(() => {
     const urlParts = location.split('?');
     const queryString = urlParts.length > 1 ? urlParts[1] : '';
     const params = new URLSearchParams(queryString);
-    
-    // Also check window.location as fallback
-    const windowParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+    const windowParams = typeof window !== 'undefined' ? new URLSearchParams(searchString ? '?' + searchString : '') : null;
     
     const interviewId = windowParams?.get('interviewId') || params.get("interviewId");
     const sessionId = windowParams?.get('sessionId') || params.get("sessionId");
     const mock = windowParams?.get('mock') || params.get("mock");
     const demo = windowParams?.get('demo') || params.get("demo");
+    const fixture = windowParams?.get('fixture') || params.get("fixture");
     
     return { 
       finalInterviewId: interviewId, 
       finalSessionId: sessionId,
       isMockMode: mock === 'true' || mock === '1',
-      isDemoMode: demo === 'true' || demo === '1'
+      isDemoMode: demo === 'true' || demo === '1' || demo === 'business' || demo === 'tech',
+      demoVariant: demo === 'business' ? 'business' : 'tech',
+      fixtureMode: import.meta.env.DEV && (fixture === 'enhanced' || fixture === 'legacy') ? fixture : null
     };
-  }, [location]);
+  }, [location, searchString]);
   
-  const [results, setResults] = useState<InterviewResults | null>(null);
+  // PERF: In mock mode, initialize with mock data immediately to skip the loading-spinner
+  // render cycle. This eliminates the CLS caused by the brief spinner flash (the non-composited
+  // `spin` animation on the SVG icon triggers a layout shift before results replace it).
+  // Dev-only: ?fixture=enhanced|legacy loads fixture for UI render verification.
+  const getInitialResults = (): InterviewResults | null => {
+    if (fixtureMode === 'enhanced') return fixtureEnhanced as InterviewResults;
+    if (fixtureMode === 'legacy') return fixtureLegacy as InterviewResults;
+    if (isMockMode) return (demoVariant === 'business' ? mockInterviewResultsBusiness : mockInterviewResults) as InterviewResults;
+    return null;
+  };
+  const [results, setResults] = useState<InterviewResults | null>(getInitialResults);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
   const [pollStartTime, setPollStartTime] = useState<number | null>(null);
   /** Reveal main results content only after paint to avoid showing a half-rendered page. */
   const [contentReady, setContentReady] = useState(false);
+  /** Simulated progress for initial loading bar (0–95%, time-based). */
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const loadStartTimeRef = useRef<number | null>(null);
 
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isMountedRef = useRef(true);
+  const prevDemoVariantRef = useRef<string | null>(null);
+  const hasShownResultsRef = useRef(false);
+
+  // White transition when switching between Technical and Non-Technical demos
+  const [showWhiteTransition, setShowWhiteTransition] = useState(false);
+  useEffect(() => {
+    if (!isDemoMode) return;
+    const prev = prevDemoVariantRef.current;
+    prevDemoVariantRef.current = demoVariant;
+    if (prev !== null && prev !== demoVariant) {
+      setShowWhiteTransition(true);
+      const t = setTimeout(() => setShowWhiteTransition(false), 550);
+      return () => clearTimeout(t);
+    }
+  }, [isDemoMode, demoVariant]);
+
+  // Simulated progress bar for initial loading (time-based, caps at 95%)
+  const isInitialLoading = !results && !error && (finalInterviewId || finalSessionId) && !isMockMode && !fixtureMode;
+  useEffect(() => {
+    if (!isInitialLoading) return;
+    if (loadStartTimeRef.current === null) loadStartTimeRef.current = Date.now();
+    const interval = setInterval(() => {
+      if (!loadStartTimeRef.current) return;
+      const elapsedSeconds = (Date.now() - loadStartTimeRef.current) / 1000;
+      const progress = Math.min(95, 100 * (1 - Math.exp(-elapsedSeconds / 15)));
+      setLoadingProgress(progress);
+    }, 150);
+    return () => clearInterval(interval);
+  }, [isInitialLoading]);
 
   // Fetch results by interviewId
   const fetchResults = useCallback(async (interviewId: string): Promise<InterviewResults | null> => {
@@ -198,8 +269,17 @@ export default function Results() {
     
     // In mock mode, load mock data immediately and skip polling
     if (isMockMode) {
-      devLog.log('[RESULTS] Mock mode enabled - loading mock data');
-      setResults(mockInterviewResults as InterviewResults);
+      devLog.log('[RESULTS] Mock mode enabled - loading', demoVariant === 'business' ? 'business' : 'tech', 'demo');
+      setResults((demoVariant === 'business' ? mockInterviewResultsBusiness : mockInterviewResults) as InterviewResults);
+      setIsPolling(false);
+      return;
+    }
+    
+    // Dev-only: fixture mode uses fixture data, no polling
+    if (fixtureMode) {
+      devLog.log('[RESULTS] Fixture mode - loading', fixtureMode, 'fixture');
+      setResults(fixtureMode === 'enhanced' ? (fixtureEnhanced as InterviewResults) : (fixtureLegacy as InterviewResults));
+      setError(null);
       setIsPolling(false);
       return;
     }
@@ -257,7 +337,8 @@ export default function Results() {
           // If pending or processing OR evaluation is null (not created yet), start polling
           if (evalStatus === 'pending' || evalStatus === 'processing' || !initialData.evaluation) {
             setIsPolling(true);
-            setPollStartTime(Date.now());
+            const localPollStartTime = Date.now(); // Use local variable to avoid stale closure
+            setPollStartTime(localPollStartTime);
             
             let pollAttempts = 0;
             
@@ -289,8 +370,8 @@ export default function Results() {
                 
                 pollAttempts++;
                 
-                // Check timeout
-                if (pollStartTime && Date.now() - pollStartTime > POLL_TIMEOUT) {
+                // Check timeout using local variable (not stale state)
+                if (Date.now() - localPollStartTime > POLL_TIMEOUT) {
                   setIsPolling(false);
                   if (pollingIntervalRef.current) {
                     clearInterval(pollingIntervalRef.current);
@@ -340,7 +421,7 @@ export default function Results() {
         pollTimeoutRef.current = null;
       }
     };
-  }, [finalInterviewId, finalSessionId, isMockMode, fetchResults, pollForInterviewId, getEvaluationStatus, toast]);
+  }, [finalInterviewId, finalSessionId, isMockMode, demoVariant, fixtureMode, fetchResults, pollForInterviewId, getEvaluationStatus, toast]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -393,177 +474,205 @@ export default function Results() {
     );
   }, [results?.evaluation?.evaluation?.questions]);
 
+  // Lowest-scoring question that has sample_better_answer (for Better Answer Example card)
+  const betterAnswerQuestion = useMemo(() => {
+    const questions = results?.evaluation?.evaluation?.questions;
+    if (!questions?.length) return null;
+    const withSample = questions.filter((q) => q.sample_better_answer && q.sample_better_answer.trim());
+    if (withSample.length === 0) return null;
+    return withSample.reduce((lowest, q) => (q.score < lowest.score ? q : lowest));
+  }, [results?.evaluation?.evaluation?.questions]);
+
   // Reveal main results content only after the browser has painted (avoids half-rendered flash).
+  // When switching demos, delay reveal by 550ms so white overlay hides first, then content animates in.
   const showingResultsUI = !!(results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview));
   useEffect(() => {
     if (!showingResultsUI) return;
     setContentReady(false);
-    let raf1: number;
-    let raf2: number;
-    raf1 = requestAnimationFrame(() => {
-      raf2 = requestAnimationFrame(() => setContentReady(true));
-    });
-    return () => {
-      cancelAnimationFrame(raf1);
-      if (typeof raf2 === 'number') cancelAnimationFrame(raf2);
-    };
-  }, [showingResultsUI]);
+    const isDemoSwitch = isDemoMode && hasShownResultsRef.current;
+    hasShownResultsRef.current = true;
+    const delayMs = isDemoSwitch ? 550 : 0;
+    const t = setTimeout(() => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setContentReady(true));
+      });
+    }, delayMs);
+    return () => clearTimeout(t);
+  }, [showingResultsUI, isDemoMode, demoVariant]);
+
+  // Smooth time-based progress for processing UI
+  const [smoothProgress, setSmoothProgress] = useState(0);
+  const processingStartRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const isProcessing = results && (evalStatus === 'pending' || evalStatus === 'processing' || isPolling);
+    if (!isProcessing) {
+      // Reset when not processing
+      processingStartRef.current = null;
+      setSmoothProgress(0);
+      return;
+    }
+
+    if (processingStartRef.current === null) processingStartRef.current = Date.now();
+
+    // Determine a base boost from actual evaluation status
+    let statusBoost = 0;
+    if (results?.evaluation) {
+      const status = results.evaluation.status;
+      if (status === 'pending') statusBoost = 15;
+      else if (status === 'processing') statusBoost = 40;
+      else if (status === 'complete') statusBoost = 90;
+    }
+
+    const interval = setInterval(() => {
+      if (!processingStartRef.current) return;
+      const elapsed = (Date.now() - processingStartRef.current) / 1000;
+      // Smooth exponential curve: rises quickly at first, then slows down, caps at 92%
+      const timeBased = 92 * (1 - Math.exp(-elapsed / 20));
+      // Blend time-based progress with status-based boost (whichever is higher)
+      const blended = Math.max(timeBased, statusBoost);
+      setSmoothProgress(Math.min(92, Math.round(blended)));
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [results, evalStatus, isPolling]);
 
   // Render Processing UI
   const renderProcessingUI = () => {
-    // Determine which step we're on based on evaluation status
-    let currentStep = 1;
-    let stepDescription = "";
-    
+    // Determine step from actual backend status
+    let statusStep = 1;
     if (results?.evaluation) {
       const status = results.evaluation.status;
       if (status === 'processing') {
-        // Check if we have transcript - if yes, we're analyzing; if no, still processing transcript
-        if (results.interview.transcript) {
-          currentStep = 3; // Analyzing responses
-          stepDescription = "Evaluating your answers using AI...";
-        } else {
-          currentStep = 2; // Processing transcript
-          stepDescription = "Converting audio to text...";
-        }
+        statusStep = results.interview.transcript ? 3 : 2;
       } else if (status === 'pending') {
-        currentStep = 2; // Processing transcript
-        stepDescription = "Preparing your interview for analysis...";
+        statusStep = 2;
       } else if (status === 'complete' && results.evaluation.evaluation) {
-        currentStep = 4; // Generating feedback (final step)
-        stepDescription = "Finalizing your results...";
+        statusStep = 4;
       }
-    } else {
-      currentStep = 1; // Just saved
-      stepDescription = "Your interview has been saved";
     }
 
-    // Calculate progress percentage (smooth progression)
-    const progressPercentage = Math.round((currentStep / PROCESSING_STEPS.length) * 100);
-    const elapsedTime = pollStartTime ? Math.floor((Date.now() - pollStartTime) / 1000) : 0;
-    const estimatedTimeRemaining = Math.max(0, 60 - elapsedTime);
+    // Determine step from time-based progress (auto-advance through steps)
+    let timeStep = 1;
+    if (smoothProgress >= 75) timeStep = 4;
+    else if (smoothProgress >= 45) timeStep = 3;
+    else if (smoothProgress >= 15) timeStep = 2;
+
+    // Use whichever is further ahead
+    const currentStep = Math.max(statusStep, timeStep);
+
+    const STEP_DESCRIPTIONS: Record<number, string> = {
+      1: "Your interview has been saved",
+      2: "Preparing your interview for analysis...",
+      3: "Evaluating your answers using AI...",
+      4: "Finalizing your results...",
+    };
+    const stepDescription = STEP_DESCRIPTIONS[currentStep] || "";
+
+    const displayProgress = smoothProgress;
 
     return (
       <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
-            <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
-          <CardHeader>
-            <CardTitle className="text-2xl text-center">Processing Your Interview</CardTitle>
-            <p className="text-sm text-center text-gray-600 mt-2">
-              {stepDescription || "This usually takes 30-60 seconds"}
-            </p>
-          </CardHeader>
-          <CardContent className="pt-6">
-            <div className="flex flex-col gap-6">
-              {/* Overall Progress Bar */}
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-gray-700 font-semibold">Overall Progress</span>
-                  <span className="text-blue-600 font-bold text-base">{progressPercentage}%</span>
+          <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-2xl text-center">Processing Your Interview</CardTitle>
+              <p className="text-sm text-center text-gray-500 mt-1">
+                This usually takes 30–60 seconds
+              </p>
+            </CardHeader>
+            <CardContent className="pt-4">
+              <div className="flex flex-col gap-5">
+                {/* Smooth Progressive Bar */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-gray-600 font-medium">{stepDescription}</span>
+                    <span className="text-blue-600 font-bold tabular-nums">{displayProgress}%</span>
+                  </div>
+                  <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <motion.div
+                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${displayProgress}%` }}
+                      transition={{ duration: 0.6, ease: "easeOut" }}
+                    />
+                    {/* Shimmer effect */}
+                    <motion.div
+                      className="absolute inset-y-0 left-0 w-full"
+                      style={{
+                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)',
+                        backgroundSize: '200% 100%',
+                      }}
+                      animate={{ backgroundPosition: ['200% 0', '-200% 0'] }}
+                      transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                    />
+                  </div>
                 </div>
-                <div className="relative">
-                  <Progress value={progressPercentage} className="h-3 bg-gray-200" />
-                  <motion.div
-                    className="absolute top-0 left-0 h-3 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full"
-                    initial={{ width: 0 }}
-                    animate={{ width: `${progressPercentage}%` }}
-                    transition={{ duration: 0.8, ease: "easeOut" }}
-                  />
-                </div>
-              </div>
 
-              {/* Progress Stepper */}
-              <div className="space-y-4">
-                {PROCESSING_STEPS.map((step) => {
-                  const isCompleted = step.id < currentStep;
-                  const isActive = step.id === currentStep;
-                  
-                  return (
-                    <div
-                      key={step.id}
-                      className={`flex items-center gap-4 transition-opacity duration-200 ${
-                        isActive ? 'opacity-100 scale-105' : isCompleted ? 'opacity-100' : 'opacity-60'
-                      }`}
-                    >
-                      {/* Step Indicator */}
-                      <div className="flex-shrink-0">
-                        {isCompleted ? (
-                          <motion.div
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                            transition={{ type: "spring", stiffness: 200, damping: 15 }}
-                            className="w-12 h-12 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-lg ring-2 ring-green-200"
-                          >
-                            <CheckCircle2 className="w-7 h-7 text-white" />
-                          </motion.div>
-                        ) : isActive ? (
-                          <motion.div
-                            animate={{ scale: [1, 1.1, 1] }}
-                            transition={{ duration: 2, repeat: Infinity }}
-                            className="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg ring-2 ring-blue-200"
-                          >
-                            <Loader2 className="w-7 h-7 text-white animate-spin" />
-                          </motion.div>
-                        ) : (
-                          <div className="w-12 h-12 rounded-full bg-gray-200 flex items-center justify-center ring-2 ring-gray-100">
-                            <div className="w-5 h-5 rounded-full bg-white" />
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* Step Text */}
-                      <div className="flex-1">
-                        <p
-                          className={`text-base font-medium transition-colors duration-300 ${
+                {/* Step Indicators - Compact */}
+                <div className="space-y-3">
+                  {PROCESSING_STEPS.map((step) => {
+                    const isCompleted = step.id < currentStep;
+                    const isActive = step.id === currentStep;
+                    
+                    return (
+                      <div
+                        key={step.id}
+                        className={`flex items-center gap-3 transition-all duration-300 ${
+                          isActive ? 'opacity-100' : isCompleted ? 'opacity-100' : 'opacity-40'
+                        }`}
+                      >
+                        <div className="flex-shrink-0">
+                          {isCompleted ? (
+                            <motion.div
+                              initial={{ scale: 0 }}
+                              animate={{ scale: 1 }}
+                              transition={{ type: "spring", stiffness: 260, damping: 18 }}
+                            >
+                              <CheckCircle2 className="w-5 h-5 text-green-500" />
+                            </motion.div>
+                          ) : isActive ? (
+                            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                          )}
+                        </div>
+                        <span
+                          className={`text-sm font-medium transition-colors duration-300 ${
                             isCompleted
                               ? 'text-green-600'
                               : isActive
-                              ? 'text-blue-600 font-semibold'
-                              : 'text-gray-500'
+                              ? 'text-blue-600'
+                              : 'text-gray-400'
                           }`}
                         >
                           {step.text}
-                        </p>
-                        {isActive && (
-                          <>
-                            {estimatedTimeRemaining > 0 && (
-                              <p className="text-xs text-gray-500 mt-1">
-                                Estimated time remaining: ~{estimatedTimeRemaining}s
-                              </p>
-                            )}
-                            {currentStep === 3 && results?.interview.transcript && (
-                              <p className="text-xs text-blue-600 mt-1 font-medium">
-                                Analyzing {results.interview.transcript.split(/\n+/).filter(l => l.trim().length > 10).length} responses...
-                              </p>
-                            )}
-                          </>
-                        )}
+                        </span>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
+                    );
+                  })}
+                </div>
 
-              {/* Return to Dashboard Button - Always Visible */}
-              <div className="pt-4 border-t">
-                <Button 
-                  onClick={handleReturnToDashboard}
-                  variant="outline"
-                  className="w-full transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
-                  aria-label="Return to dashboard"
-                >
-                  <ArrowLeft className="h-4 w-4 mr-2" />
-                  Return to Dashboard
-                </Button>
+                {/* Return to Dashboard Button */}
+                <div className="pt-3 border-t">
+                  <Button 
+                    onClick={handleReturnToDashboard}
+                    variant="outline"
+                    className="w-full transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
+                    aria-label="Return to dashboard"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Return to Dashboard
+                  </Button>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
         </motion.div>
       </AnimatedBackground>
     );
@@ -576,7 +685,7 @@ export default function Results() {
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
           <Card className="w-full max-w-md shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
@@ -626,43 +735,77 @@ export default function Results() {
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
       <AnimatedBackground fixedDecor className="py-4 sm:py-8 px-4">
+        <AnimatePresence>
+          {showWhiteTransition && (
+            <motion.div
+              key="demo-transition-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
+              className="fixed inset-0 bg-white z-[9999] pointer-events-none"
+              aria-hidden="true"
+              style={{ transform: 'translateZ(0)' }}
+            />
+          )}
+        </AnimatePresence>
         <motion.div
           className="relative z-10 min-h-full"
           initial={false}
           animate={{ opacity: contentReady ? 1 : 0 }}
-          transition={{ duration: 0.2, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1] }}
           style={{ pointerEvents: contentReady ? 'auto' : 'none' }}
           aria-hidden={!contentReady}
         >
         <div
+          key={demoVariant}
           className="max-w-4xl mx-auto space-y-6 relative z-10 pb-16"
-          style={{ 
-            willChange: 'auto',
-            transform: 'translateZ(0)', // GPU acceleration
-          }}
         >
           {/* Demo Mode Banner */}
           {isDemoMode && (
             <motion.div
               initial={{ opacity: 0, y: -20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className="bg-gradient-to-r from-purple-500 via-pink-500 to-rose-500 text-white px-6 py-4 rounded-xl shadow-lg border-2 border-white/30"
+              animate={contentReady ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
+              transition={{ duration: 0.55 }}
+              className={`bg-gradient-to-r ${demoVariant === 'business' ? 'from-teal-500 via-emerald-500 to-green-600' : 'from-purple-500 via-pink-500 to-rose-500'} text-white px-6 py-4 rounded-xl shadow-lg border-2 border-white/30`}
             >
               <div className="flex items-center justify-between flex-wrap gap-4">
                 <div className="flex items-center gap-3">
                   <Sparkles className="h-6 w-6 animate-pulse" />
                   <div>
-                    <p className="font-bold text-lg">Demo Mode</p>
-                    <p className="text-sm text-white/90">This is a sample interview with realistic fake resume and responses demonstrating the evaluation system</p>
+                    <p className="font-bold text-lg">
+                      {demoVariant === 'business' ? 'Non-Technical Demo' : 'Technical Demo'}
+                    </p>
+                    <p className="text-sm text-white/90">
+                      {demoVariant === 'business'
+                        ? 'A sample interview for marketing, business administration, and similar roles—no technical jargon.'
+                        : 'A sample interview for software engineering and technical roles.'}
+                    </p>
                   </div>
                 </div>
-                <Button
-                  onClick={() => setLocation('/')}
-                  className="bg-white text-purple-600 hover:bg-purple-50 font-semibold shadow-md"
-                >
-                  Try Real Interview
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => setLocation(`/results?mock=true&interviewId=demo&demo=${demoVariant === 'business' ? 'tech' : 'business'}`)}
+                    variant="secondary"
+                    className={`group font-semibold shadow-md transition-[transform,box-shadow,background-color,border-color] duration-300 ease-out hover:scale-[1.03] ${
+                      demoVariant === 'business'
+                        ? 'bg-purple-100 text-purple-700 hover:bg-purple-200 hover:text-purple-800 border-2 border-purple-300 hover:shadow-lg'
+                        : 'bg-teal-100 text-teal-700 hover:bg-teal-200 hover:text-teal-800 border-2 border-teal-300 hover:shadow-lg'
+                    }`}
+                  >
+                    <span className="group-hover:font-bold">
+                      {demoVariant === 'business' ? 'See Technical Demo' : 'See Non-Technical Demo'}
+                    </span>
+                  </Button>
+                  <Button
+                    onClick={() => setLocation('/')}
+                    className="group bg-white text-purple-600 hover:bg-purple-50 font-semibold shadow-md hover:shadow-lg transition-[transform,box-shadow,background-color] duration-300 ease-out hover:scale-[1.03]"
+                  >
+                    <span className="group-hover:font-bold">
+                      Try Real Interview
+                    </span>
+                  </Button>
+                </div>
               </div>
             </motion.div>
           )}
@@ -672,8 +815,9 @@ export default function Results() {
             className="sticky top-0 z-50 bg-gradient-to-br from-blue-50/95 via-indigo-50/95 to-purple-50/95 py-3 -mx-4 px-4 mb-4 flex items-center gap-2 text-sm text-gray-600 rounded-lg shadow-sm" 
             style={{ 
               willChange: 'transform',
-              transform: 'translateZ(0)', // GPU acceleration for sticky
+              transform: 'translate3d(0, 0, 0)',
               backfaceVisibility: 'hidden',
+              contain: 'layout style',
             }}
             aria-label="Breadcrumb"
           >
@@ -695,30 +839,29 @@ export default function Results() {
           {overallScore !== null && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1], delay: 0.15 }}
+              animate={contentReady ? { opacity: 1, y: 0 } : { opacity: 0, y: -10 }}
+              transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1], delay: 0.2 }}
               className="mb-8"
             >
               <div
                 className="relative max-w-5xl mx-auto"
               >
-                {/* Outer glow effect */}
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-400 via-indigo-400 to-purple-400 opacity-20 blur-3xl rounded-3xl" />
-                
-                {/* Main banner container */}
-                <div className="relative bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl p-6 sm:p-8 shadow-2xl border-4 border-white/30">
-                  {/* Inner glow effects */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/20 via-transparent to-transparent rounded-3xl" />
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-300/10 rounded-full blur-3xl" />
-                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-pink-300/10 rounded-full blur-3xl" />
+                {/* Main banner container -- no outer glow div; it caused a visible
+                    misaligned arc outside the rounded corners. The gradient + shadow-2xl
+                    + border provide all the depth needed. */}
+                <div className="relative bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl p-6 sm:p-8 shadow-2xl ring-1 ring-white/20 overflow-hidden">
+                  {/* Inner glow -- no rounded-3xl; parent overflow-hidden clips it */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
+                  <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-300/10 rounded-full blur-2xl" />
+                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-pink-300/10 rounded-full blur-2xl" />
                   
                   {/* Content Grid */}
                   <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
                     {/* Left Panel - Interview Stats */}
                     <motion.div 
                       initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
+                      animate={contentReady ? { opacity: 1, x: 0 } : { opacity: 0, x: -10 }}
+                      transition={{ duration: 0.5, delay: 0.3, ease: [0.33, 1, 0.68, 1] }}
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
@@ -748,18 +891,12 @@ export default function Results() {
                     {/* Center Panel - Score */}
                     <motion.div 
                       initial={{ opacity: 0, scale: 0.8 }}
-                      animate={{ opacity: 1, scale: 1 }}
+                      animate={contentReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
                       transition={{ delay: 0.3, type: "spring", stiffness: 200, damping: 15 }}
                       className="flex flex-col items-center gap-4 py-4"
                     >
-                      {/* Icon */}
-                      <motion.div
-                        animate={{ 
-                          rotate: [0, 10, -10, 10, 0],
-                          scale: [1, 1.1, 1, 1.1, 1]
-                        }}
-                        transition={{ duration: 2, repeat: Infinity, repeatDelay: 3 }}
-                      >
+                      {/* Icon -- static to avoid infinite Framer Motion repaints */}
+                      <div>
                         {overallScore >= 80 ? (
                           <Award className="h-20 w-20 text-yellow-300 drop-shadow-lg" />
                         ) : overallScore >= 60 ? (
@@ -767,7 +904,10 @@ export default function Results() {
                         ) : (
                           <CheckCircle2 className="h-20 w-20 text-blue-300 drop-shadow-lg" />
                         )}
-                      </motion.div>
+                      </div>
+                      
+                      {/* Readiness Score label */}
+                      <span className="text-sm text-white/80 font-medium uppercase tracking-wide">Readiness Score</span>
                       
                       {/* Score */}
                       <div className="flex items-baseline gap-2">
@@ -781,33 +921,25 @@ export default function Results() {
                       <div className="w-full max-w-xs bg-white/20 rounded-full h-4 overflow-hidden shadow-inner">
                         <motion.div
                           initial={{ width: 0 }}
-                          animate={{ width: `${overallScore}%` }}
+                          animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
                           transition={{ duration: 1.5, delay: 0.7, ease: [0.4, 0, 0.2, 1] }}
-                          className="h-full bg-gradient-to-r from-yellow-300 via-yellow-200 to-white rounded-full shadow-lg relative overflow-hidden"
-                        >
-                          {/* Shimmer effect */}
-                          <motion.div
-                            className="absolute inset-0 bg-gradient-to-r from-transparent via-white/50 to-transparent"
-                            animate={{ x: ['-100%', '200%'] }}
-                            transition={{ duration: 2, delay: 1.5, ease: "easeInOut", repeat: Infinity, repeatDelay: 2 }}
-                          />
-                        </motion.div>
+                          className="h-full bg-gradient-to-r from-yellow-300 via-yellow-200 to-white rounded-full shadow-lg"
+                        />
                       </div>
                       
-                      {/* Performance label */}
+                      {/* Readiness status label */}
                       <div className="flex flex-col items-center gap-1">
-                        <span className="text-xl text-white font-bold uppercase tracking-widest drop-shadow-lg">
-                          {overallScore >= 80 ? '🌟 Excellent!' : overallScore >= 60 ? '✨ Good Job!' : overallScore >= 40 ? '💪 Fair' : '📈 Keep Improving'}
+                        <span className={`text-xl font-bold uppercase tracking-widest drop-shadow-lg ${getReadinessLabel(overallScore).colorClass}`}>
+                          {getReadinessLabel(overallScore).label}
                         </span>
-                        <span className="text-sm text-white/80 font-medium">Overall Performance</span>
                       </div>
                     </motion.div>
                     
                     {/* Right Panel - Performance Insights */}
                     <motion.div 
                       initial={{ opacity: 0, x: 10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ duration: 0.3, delay: 0.25, ease: [0.33, 1, 0.68, 1] }}
+                      animate={contentReady ? { opacity: 1, x: 0 } : { opacity: 0, x: 10 }}
+                      transition={{ duration: 0.5, delay: 0.35, ease: [0.33, 1, 0.68, 1] }}
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
@@ -839,34 +971,39 @@ export default function Results() {
             </motion.div>
           )}
 
-          {/* Main Results Card - Optimized */}
-          <div>
-            <Card className="mb-6 shadow-xl hover:shadow-2xl transition-all duration-300 border-0 bg-white/95 backdrop-blur-sm">
-              <CardHeader className="pb-4">
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                  <div>
-                    <CardTitle className="text-3xl sm:text-4xl mb-2 font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-                      Interview Results
-                    </CardTitle>
-                    {results.interview?.durationSeconds && (
-                      <div className="flex items-center gap-2 text-sm text-gray-600 font-medium">
-                        <Clock className="h-4 w-4" />
-                        <span>
-                          Duration: {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
-                        </span>
-                      </div>
-                    )}
-                  </div>
+          {/* Results Header Card -- standalone, no giant wrapper.
+              PERF: Removed the monolithic 9,773px Card + backdrop-blur-sm that
+              was causing white-flash checkerboarding during fast scroll and
+              hiding the animated background behind an opaque white wall. */}
+          <Card className="mb-6 shadow-xl border-0 bg-white/90">
+            <CardHeader className="pb-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div>
+                  <CardTitle className="text-3xl sm:text-4xl mb-2 font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
+                    Interview Results
+                  </CardTitle>
+                  {results.interview?.durationSeconds && (
+                    <div className="flex items-center gap-2 text-sm text-gray-600 font-medium">
+                      <Clock className="h-4 w-4" />
+                      <span>
+                        Duration: {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
+                      </span>
+                    </div>
+                  )}
                 </div>
-              </CardHeader>
-            <CardContent>
+              </div>
+            </CardHeader>
+          </Card>
+
+          {/* Each section is now its own card so the animated background shows between them */}
+          <div className="space-y-6">
 
               {/* Evaluation Failed Message */}
               {evalStatus === 'failed' && results.evaluation && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.95 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.4 }}
+                  animate={contentReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.55 }}
                 >
                   <Card className="mb-6 border-2 border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50 shadow-md hover:shadow-lg transition-shadow duration-300">
                     <CardContent className="pt-6">
@@ -987,7 +1124,7 @@ export default function Results() {
                             <div className="relative h-8 bg-gray-200 rounded-full overflow-hidden shadow-inner">
                               <motion.div
                                 initial={{ width: 0 }}
-                                animate={{ width: `${overallScore}%` }}
+                                animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
                                 transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
                                 className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-end pr-2"
                               >
@@ -1146,7 +1283,19 @@ export default function Results() {
                                     <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${scoreColor} opacity-100 transition-width duration-200 group-hover:w-2`} />
                                     <CardContent className="pt-6 pl-6">
                                       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-                                        <h3 className="text-xl font-bold text-gray-900">Question {index + 1}</h3>
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <h3 className="text-xl font-bold text-gray-900">Question {index + 1}</h3>
+                                          {qa.question_type && (
+                                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                                              qa.question_type === "behavioral" ? "bg-amber-100 text-amber-800" :
+                                              qa.question_type === "technical" ? "bg-blue-100 text-blue-800" :
+                                              qa.question_type === "situational" ? "bg-purple-100 text-purple-800" :
+                                              "bg-slate-100 text-slate-700"
+                                            }`}>
+                                              {qa.question_type.charAt(0).toUpperCase() + qa.question_type.slice(1)}
+                                            </span>
+                                          )}
+                                        </div>
                                         <div className="flex items-center gap-3">
                                           <div className="relative w-28 h-2.5 bg-gray-200 rounded-full overflow-hidden">
                                             <div
@@ -1174,6 +1323,48 @@ export default function Results() {
                                           <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Your Answer:</p>
                                           <p className="text-gray-800 leading-relaxed">{qa.answer}</p>
                                         </div>
+
+                                        {qa.star_breakdown && (
+                                          <div className="bg-gradient-to-br from-amber-50 via-orange-50/60 to-amber-50/80 border border-amber-200/80 p-5 rounded-xl shadow-sm">
+                                            <h4 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-4 flex items-center gap-2">
+                                              <Sparkles className="h-4 w-4 text-amber-600" />
+                                              STAR Breakdown
+                                            </h4>
+                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                              {(["situation", "task", "action", "result"] as const).map((key) => {
+                                                const val = qa.star_breakdown![key];
+                                                const label = key.charAt(0).toUpperCase() + key.slice(1);
+                                                const isStrong = val === "strong";
+                                                const isWeak = val === "weak";
+                                                const isMissing = val === "missing";
+                                                const Icon = isStrong ? CheckCircle2 : isWeak ? AlertTriangle : XCircle;
+                                                const cardClass = isStrong
+                                                  ? "bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200/80 text-emerald-800 shadow-sm"
+                                                  : isWeak
+                                                  ? "bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-200/80 text-amber-800 shadow-sm"
+                                                  : "bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200/80 text-slate-600 shadow-sm";
+                                                const iconClass = isStrong ? "text-emerald-600" : isWeak ? "text-amber-600" : "text-slate-400";
+                                                const badgeClass = isStrong
+                                                  ? "bg-emerald-100 text-emerald-700"
+                                                  : isWeak
+                                                  ? "bg-amber-100 text-amber-700"
+                                                  : "bg-slate-100 text-slate-600";
+                                                return (
+                                                  <div
+                                                    key={key}
+                                                    className={`flex flex-col items-center justify-center py-4 px-3 rounded-xl border ${cardClass} transition-all duration-200 hover:shadow-md`}
+                                                  >
+                                                    <Icon className={`h-8 w-8 mb-2 ${iconClass}`} strokeWidth={2.5} />
+                                                    <span className="text-sm font-semibold text-inherit">{label}</span>
+                                                    <span className={`text-xs font-medium mt-1 px-2 py-0.5 rounded-full ${badgeClass}`}>
+                                                      {val.toUpperCase()}
+                                                    </span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                        )}
                                         
                                         {qa.strengths?.length > 0 && (
                                           <div
@@ -1207,6 +1398,12 @@ export default function Results() {
                                               <AlertCircle className="h-5 w-5 flex-shrink-0" />
                                               Areas for Improvement
                                             </h4>
+                                            {qa.improvement_quote && (
+                                              <div className="mb-3 p-3 bg-white/60 rounded-lg border border-orange-200">
+                                                <p className="text-xs font-bold text-orange-700 mb-1">You said:</p>
+                                                <p className="text-sm text-gray-800 italic">&ldquo;{qa.improvement_quote}&rdquo;</p>
+                                              </div>
+                                            )}
                                             <ul className="list-none space-y-2.5">
                                               {qa.improvements.map((improvement, i) => (
                                                 <li 
@@ -1230,6 +1427,47 @@ export default function Results() {
                         </CardContent>
                       </Card>
                     </div>
+
+                    {/* Better Answer Example card - lowest-scoring question with sample_better_answer */}
+                    {betterAnswerQuestion && (
+                      <div>
+                        <Card className="mb-6 border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
+                          <CardHeader>
+                            <div className="flex items-center gap-3">
+                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md">
+                                <Sparkles className="h-5 w-5 text-white" />
+                              </div>
+                              <div>
+                                <CardTitle className="text-2xl font-bold text-gray-900">Better Answer Example</CardTitle>
+                                <p className="text-sm text-gray-600 mt-1 font-medium">A stronger way to answer this question</p>
+                              </div>
+                            </div>
+                          </CardHeader>
+                          <CardContent>
+                            <div className="space-y-4">
+                              <div className="bg-white/60 p-4 rounded-lg border border-indigo-200">
+                                <p className="text-xs font-bold text-indigo-700 uppercase tracking-wider mb-2">Question</p>
+                                <p className="text-gray-900 font-semibold leading-relaxed">{betterAnswerQuestion.question}</p>
+                              </div>
+                              {betterAnswerQuestion.answer && (
+                                <div className="bg-gray-50/80 p-4 rounded-lg border border-gray-200">
+                                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">Your Answer (excerpt)</p>
+                                  <p className="text-sm text-gray-700 leading-relaxed line-clamp-3">
+                                    {betterAnswerQuestion.answer.length > 200
+                                      ? `${betterAnswerQuestion.answer.slice(0, 200)}...`
+                                      : betterAnswerQuestion.answer}
+                                  </p>
+                                </div>
+                              )}
+                              <div className="bg-green-50/80 p-4 rounded-lg border-2 border-green-300">
+                                <p className="text-xs font-bold text-green-700 uppercase tracking-wider mb-2">Stronger Example</p>
+                                <p className="text-gray-800 leading-relaxed">{betterAnswerQuestion.sample_better_answer}</p>
+                              </div>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
+                    )}
                   </>
                 )}
                 </>
@@ -1317,38 +1555,42 @@ export default function Results() {
                   Return to Dashboard
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+          </div>{/* end space-y-6 sections wrapper */}
         </div>
         </motion.div>
       </AnimatedBackground>
     );
   }
 
-  // Loading state (initial load)
+  // Loading state (initial load) - simulated progress bar
   return (
     <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.98 }}
         animate={{ opacity: 1, scale: 1 }}
-        transition={{ duration: 0.35, ease: [0.33, 1, 0.68, 1] }}
-        className="relative z-10 w-full"
+        transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
+        className="relative z-10 w-full max-w-md"
       >
-        <Card className="w-full max-w-md shadow-xl border-0 bg-white/95">
+        <Card className="w-full shadow-xl border-0 bg-white/95">
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-6">
-              <div className="relative">
-                <Loader2 className="h-12 w-12 animate-spin text-blue-600" />
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                  className="absolute inset-0 border-4 border-blue-200 border-t-blue-600 rounded-full"
-                />
-              </div>
-              <div className="text-center">
+              <div className="text-center w-full">
                 <h2 className="text-2xl font-bold mb-2 text-gray-900">Loading Results</h2>
-                <p className="text-gray-600 text-sm font-medium">Fetching your interview data...</p>
+                <p className="text-gray-600 text-sm font-medium mb-4">Fetching your interview data...</p>
+                <div className="space-y-2">
+                  <div className="flex justify-between text-sm">
+                    <span className="text-gray-700 font-semibold">Progress</span>
+                    <span className="text-blue-600 font-bold">{Math.round(loadingProgress)}%</span>
+                  </div>
+                  <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                    <motion.div
+                      className="absolute top-0 left-0 bottom-0 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full"
+                      initial={{ width: 0 }}
+                      animate={{ width: `${loadingProgress}%` }}
+                      transition={{ duration: 0.3, ease: "easeOut" }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </CardContent>

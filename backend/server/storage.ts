@@ -1,5 +1,5 @@
 import { eq, and, desc, sql } from "drizzle-orm";
-import { db, pool } from "./db";
+import { db, pool, sqlite } from "./db";
 import { 
   profiles, 
   interviewQuestions, 
@@ -54,15 +54,27 @@ export class DatabaseStorage implements IStorage {
   private async ensureResumeTable() {
     if (this.resumeTableReady) return;
     try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS resumes (
-          interview_id uuid PRIMARY KEY,
-          resume_fulltext text,
-          resume_profile jsonb,
-          created_at timestamptz DEFAULT NOW(),
-          updated_at timestamptz DEFAULT NOW()
-        );
-      `);
+      if (pool) {
+        await pool.query(`
+          CREATE TABLE IF NOT EXISTS resumes (
+            interview_id uuid PRIMARY KEY,
+            resume_fulltext text,
+            resume_profile jsonb,
+            created_at timestamptz DEFAULT NOW(),
+            updated_at timestamptz DEFAULT NOW()
+          );
+        `);
+      } else if (sqlite) {
+        sqlite.exec(`
+          CREATE TABLE IF NOT EXISTS resumes (
+            interview_id TEXT PRIMARY KEY,
+            resume_fulltext TEXT,
+            resume_profile TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            updated_at TEXT DEFAULT (datetime('now'))
+          );
+        `);
+      }
       this.resumeTableReady = true;
     } catch (error) {
       console.error("Failed to ensure resumes table exists:", error);
@@ -152,16 +164,16 @@ export class DatabaseStorage implements IStorage {
   async upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any): Promise<void> {
     await this.ensureResumeTable();
     try {
-      await db.insert(resumes).values({
-        interviewId,
-        resumeFulltext,
-        resumeProfile,
-      }).onConflictDoUpdate({
+      const now = new Date();
+      const values = pool
+        ? { interviewId, resumeFulltext, resumeProfile }
+        : { interviewId, resumeFulltext, resumeProfile, createdAt: now, updatedAt: now };
+      await db.insert(resumes).values(values).onConflictDoUpdate({
         target: resumes.interviewId,
         set: {
           resumeFulltext,
           resumeProfile,
-          updatedAt: sql`NOW()`,
+          updatedAt: pool ? sql`NOW()` : sql`datetime('now')`,
         },
       });
     } catch (error) {

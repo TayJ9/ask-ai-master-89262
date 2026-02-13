@@ -1,0 +1,4 @@
+scenarioYear,msgIndex,msgType,classification,advancedKeywordHit,excerpt
+Freshman,1,agent,other,no,"""Hi! Let's begin the interview."""
+Junior,1,agent,other,no,"""Hi! Let's begin the interview."""
+Senior,1,agent,other,no,"""Hi! Let's begin the interview."""

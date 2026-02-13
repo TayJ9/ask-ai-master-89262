@@ -2,7 +2,7 @@
  * PERF SUMMARY:
  * - useCallback for handlers passed to children (onSelectRole, onResumeUploaded, onSkip, onComplete, onInterviewEnd, onBack) to avoid unnecessary re-renders of memoized RoleSelection, ResumeUpload, VoiceInterviewWebSocket.
  */
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, startTransition } from "react";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
@@ -52,16 +52,12 @@ export default function Index() {
     console.log('Interview state reset complete');
   }, []);
 
-  // Debug logging
+  // Debug logging (dev-only, minimal for INP)
   useEffect(() => {
-    devLog.log('[FLIGHT_RECORDER] [SETUP] View changed:', {
-      currentView,
-      selectedRole,
-      candidateContextExists: !!candidateContext,
-      candidateContextSessionId: candidateContext?.sessionId || null,
-      timestamp: new Date().toISOString()
-    });
-  }, [currentView, selectedRole, candidateContext]);
+    if (import.meta.env.DEV && shouldDebugEleven()) {
+      devLog.log('[FLIGHT_RECORDER] [SETUP] View changed:', currentView);
+    }
+  }, [currentView]);
 
   // Track location changes to detect navigation from results page
   useEffect(() => {
@@ -119,22 +115,39 @@ export default function Index() {
     localStorage.removeItem('user');
     localStorage.removeItem('candidate_context');
     setUser(null);
-    setCurrentView("roles");
-    setSelectedRole("");
+    startTransition(() => {
+      setCurrentView("roles");
+      setSelectedRole("");
+    });
+  }, []);
+
+  const handleBackToRoles = useCallback(() => {
+    startTransition(() => {
+      setCurrentView("roles");
+      setSelectedRole("");
+      setResumeText("");
+    });
+  }, []);
+
+  const handleViewHistory = useCallback(() => {
+    startTransition(() => setCurrentView("history"));
   }, []);
 
   const handleSelectRole = useCallback((role: string, mode: "text" | "voice" = "voice") => {
-    // Ensure role is never empty - default to "General Interview"
     const normalizedRole = role?.trim() || "General Interview";
-    devLog.log('handleSelectRole called with:', normalizedRole, mode);
-    // Clear any previous interview state before starting new interview
-    resetInterviewState();
-    setSelectedRole(normalizedRole);
-    setInterviewMode("voice"); // Always use voice mode
-    // Show resume upload step before starting interview
-    setCurrentView("resume");
-    devLog.log('View changed to resume upload');
-  }, [resetInterviewState]);
+    // INP: Defer heavy view transition so browser can paint click feedback first
+    startTransition(() => {
+      setCurrentView("resume");
+      setSelectedRole(normalizedRole);
+      setInterviewMode("voice");
+      setResumeText("");
+      setVoiceSessionId(null);
+      setFirstQuestion("");
+      setVoiceInterviewData(null);
+      setCandidateContext(null);
+      localStorage.removeItem("candidate_context");
+    });
+  }, []);
 
   const handleResumeUploaded = useCallback(async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
     setResumeText(resume);
@@ -210,7 +223,7 @@ export default function Index() {
         description: "Please log in to start an interview.",
         variant: "destructive",
       });
-      setCurrentView("roles");
+      startTransition(() => setCurrentView("roles"));
       return;
     }
     
@@ -220,9 +233,8 @@ export default function Index() {
       
       // Voice interview - use WebSocket if we have candidate context and sessionId
       if (candidateInfo && candidateInfo.sessionId) {
-        // Use WebSocket-based voice interview
         setVoiceSessionId(candidateInfo.sessionId);
-        setCurrentView("voice");
+        startTransition(() => setCurrentView("voice"));
         return;
       }
       
@@ -248,7 +260,7 @@ export default function Index() {
         agentResponseText: response.agentResponseText
       });
       setVoiceSessionId(response.sessionId);
-      setCurrentView("voice");
+      startTransition(() => setCurrentView("voice"));
     } catch (error: any) {
       console.error("Error starting interview:", error);
       const errorMessage = error.message || error.error || "Failed to start interview.";
@@ -264,7 +276,7 @@ export default function Index() {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
         setUser(null);
-        setCurrentView("roles");
+        startTransition(() => setCurrentView("roles"));
       } else {
         toast({
           title: "Failed to Start Interview",
@@ -284,7 +296,7 @@ export default function Index() {
         description: "Please log in to start an interview.",
         variant: "destructive",
       });
-      setCurrentView("roles");
+      startTransition(() => setCurrentView("roles"));
       return;
     }
     
@@ -314,7 +326,7 @@ export default function Index() {
         localStorage.removeItem('auth_token');
         localStorage.removeItem('user');
         setUser(null);
-        setCurrentView("roles");
+        startTransition(() => setCurrentView("roles"));
       } else {
         toast({
           title: "Failed to Start Interview",
@@ -418,11 +430,7 @@ export default function Index() {
       <div className="fixed top-2 right-2 sm:top-4 sm:right-4 flex flex-wrap gap-2 z-50 max-w-[calc(100vw-1rem)]">
           {currentView === "resume" && (
             <Button
-              onClick={() => {
-                setCurrentView("roles");
-                setSelectedRole("");
-                setResumeText("");
-              }}
+              onClick={handleBackToRoles}
               variant="outline"
               className="gap-2 bg-card shadow-md text-xs sm:text-sm"
               aria-label="Go back to role selection"
@@ -433,7 +441,7 @@ export default function Index() {
           )}
           {currentView === "roles" && (
             <Button
-              onClick={() => setCurrentView("history")}
+              onClick={handleViewHistory}
               variant="outline"
               className="gap-2 bg-card shadow-md text-xs sm:text-sm"
               data-testid="button-view-history"
@@ -455,7 +463,8 @@ export default function Index() {
           </Button>
         </div>
 
-      <AnimatePresence mode="wait" initial={false}>
+      <div style={{ position: "relative", minHeight: "100vh" }}>
+        <AnimatePresence mode="sync" initial={false}>
           {currentView === "roles" && (
             <motion.div
               key="roles"
@@ -464,7 +473,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ width: "100%", height: "100%" }}
+              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
             >
               <RoleSelection onSelectRole={handleSelectRole} />
             </motion.div>
@@ -478,16 +487,12 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ width: "100%", height: "100%" }}
+              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
             >
               <ResumeUpload
                 onResumeUploaded={handleResumeUploaded}
                 onSkip={handleSkipResume}
-                onBack={() => {
-                  setCurrentView("roles");
-                  setSelectedRole("");
-                  setResumeText("");
-                }}
+                onBack={handleBackToRoles}
               />
             </motion.div>
           )}
@@ -500,12 +505,12 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ width: "100%", height: "100%" }}
+              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
             >
               {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
                   This prevents unmounting during async operations like getUserMedia.
                   Wrapped in ErrorBoundary to catch any errors and show fallback UI. */}
-              <VoiceInterviewErrorBoundary onReset={() => setCurrentView("voice")}>
+              <VoiceInterviewErrorBoundary onReset={() => startTransition(() => setCurrentView("voice"))}>
                 <VoiceInterviewWebSocket
                   sessionId={candidateContext.sessionId}
                   firstName={candidateContext.firstName}
@@ -525,10 +530,11 @@ export default function Index() {
                   onInterviewEnd={(data) => {
                     devLog.log('Interview ended via tool call:', data);
                     // Transition to results screen using the same handler
-                    // Use sessionId and conversationId from callback data, with fallbacks
+                    // Use sessionId, conversationId, and interviewId from callback data, with fallbacks
                     handleCompleteInterview({
                       sessionId: data?.sessionId || candidateContext.sessionId || voiceSessionId,
                       conversationId: data?.conversationId || undefined,
+                      interviewId: data?.interviewId || undefined,
                     });
                   }}
                   isActive={currentView === "voice"}
@@ -545,13 +551,13 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ width: "100%", height: "100%" }}
+              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
             >
-              <SessionHistory userId={user.id} onBack={() => setCurrentView("roles")} />
+              <SessionHistory userId={user.id} onBack={handleBackToRoles} />
             </motion.div>
           )}
         </AnimatePresence>
-
+      </div>
     </>
   );
 }

@@ -9,6 +9,7 @@ import { db } from "./db";
 import { interviews, interviewEvaluations, insertInterviewEvaluationSchema } from "../shared/schema";
 import { eq } from "drizzle-orm";
 import { scoreInterview } from "./llm/openaiEvaluator";
+import { randomUUID } from "crypto";
 
 // Evaluation job queue configuration
 const MAX_CONCURRENT_JOBS = 2;
@@ -157,7 +158,13 @@ class EvaluationQueue {
         interviewId,
         status: 'pending',
       });
-      await db.insert(interviewEvaluations).values(evaluationData as any);
+      // SQLite doesn't have gen_random_uuid() or now() - provide id and timestamps explicitly
+      const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+      const now = new Date();
+      const evaluationValues = isSqlite
+        ? { ...evaluationData, id: randomUUID(), createdAt: now, updatedAt: now }
+        : evaluationData;
+      await db.insert(interviewEvaluations).values(evaluationValues as any);
       console.log(`[EVALUATION] ✅ Created pending evaluation record for interview ${interviewId}`);
     } catch (error: any) {
       // If it already exists, that's fine - continue

@@ -1,0 +1,10 @@
+{
+  "level": "junior",
+  "prompt_question": "Can you tell me about yourself and your background?",
+  "candidate_answer_text": "I'm a junior computer science major at State University. I've done two internships so far: one at a local startup where I worked on their React frontend, and one at a larger company doing API testing. I've also been a TA for Data Structures. I'm particularly interested in full-stack development.",
+  "tts_audio_file": "junior_01.mp3",
+  "stt_transcript_text_file": "junior_01.txt",
+  "transcript_word_count": 52,
+  "clarity_score": 13,
+  "stt_source": "elevenlabs_scribe_v2"
+}

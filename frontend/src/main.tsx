@@ -2,6 +2,7 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
+import { devLog } from "./lib/utils";
 import "./index.css";
 
 // Verify root element exists
@@ -11,10 +12,9 @@ if (!rootElement) {
   throw new Error("Root element '#root' not found in the DOM");
 }
 
-// Log that we're starting to render
-console.log("[App] Starting React app render");
-console.log("[App] React version:", React.version);
-console.log("[App] Root element:", rootElement);
+devLog.log("[App] Starting React app render");
+devLog.log("[App] React version:", React.version);
+devLog.log("[App] Root element:", rootElement);
 
 // Verify React.Children is available before proceeding
 if (!React.Children) {
@@ -32,13 +32,13 @@ if (!React.Children) {
   throw error;
 }
 
-console.log("[App] React.Children check passed - React is ready");
+devLog.log("[App] React.Children check passed - React is ready");
 
 try {
   const root = createRoot(rootElement);
-  console.log("[App] Root created, rendering App component...");
+  devLog.log("[App] Root created, rendering App component...");
   root.render(<App />);
-  console.log("[App] React app rendered successfully");
+  devLog.log("[App] React app rendered successfully");
 } catch (error) {
   console.error("[App] Failed to render React app:", error);
   // Show a user-friendly error message

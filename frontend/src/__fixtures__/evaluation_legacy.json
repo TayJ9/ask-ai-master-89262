@@ -1,0 +1,45 @@
+{
+  "interview": {
+    "id": "fixture-legacy",
+    "conversationId": null,
+    "agentId": "agent_test",
+    "transcript": "Interviewer: Tell me about yourself.\nCandidate: I'm a CS student with an internship.",
+    "durationSeconds": 90,
+    "startedAt": "2025-01-01T12:00:00.000Z",
+    "endedAt": "2025-01-01T12:01:30.000Z",
+    "status": "completed",
+    "createdAt": "2025-01-01T12:00:00.000Z"
+  },
+  "evaluation": {
+    "status": "complete",
+    "overallScore": 75,
+    "evaluation": {
+      "overall_score": 75,
+      "overall_strengths": ["Clear communication"],
+      "overall_improvements": ["Add more specifics"],
+      "questions": [
+        {
+          "question": "Tell me about yourself.",
+          "answer": "I'm a CS student with an internship at TechCorp.",
+          "score": 78,
+          "strengths": ["Concise"],
+          "improvements": ["Could add metrics"]
+        },
+        {
+          "question": "What is your experience with React?",
+          "answer": "I've used it in projects and my internship.",
+          "score": 72,
+          "strengths": ["Relevant experience"],
+          "improvements": ["Be more specific about features built"]
+        }
+      ]
+    },
+    "error": null,
+    "createdAt": "2025-01-01T12:01:35.000Z",
+    "updatedAt": "2025-01-01T12:01:35.000Z"
+  },
+  "metadata": {
+    "userId": "fixture-user",
+    "userEmail": "test@example.com"
+  }
+}

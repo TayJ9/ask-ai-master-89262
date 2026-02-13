@@ -1,0 +1,10 @@
+{
+  "level": "senior",
+  "prompt_question": "Can you tell me about yourself and your background?",
+  "candidate_answer_text": "I'm a senior CS major at State University, graduating in May. I've had three internships: full-stack at a startup, backend at a fintech company, and distributed systems at a cloud provider. I've led a student dev team and published a research paper on cache invalidation. I'm focused on backend and distributed systems.",
+  "tts_audio_file": "senior_01.mp3",
+  "stt_transcript_text_file": "senior_01.txt",
+  "transcript_word_count": 53,
+  "clarity_score": 13.25,
+  "stt_source": "elevenlabs_scribe_v2"
+}

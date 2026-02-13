@@ -1,0 +1,10 @@
+{
+  "level": "junior",
+  "prompt_question": "Tell me about a time when you had to debug a difficult problem.",
+  "candidate_answer_text": "During my internship we had a bug where the API was returning 500 errors for certain users. I used the logs to isolate the pattern—it only happened with users who had special characters in their profile. I traced it to an unescaped query parameter and fixed it with a proper encoding function. I also added a unit test so it wouldn't happen again.",
+  "tts_audio_file": "junior_02.mp3",
+  "stt_transcript_text_file": "junior_02.txt",
+  "transcript_word_count": 65,
+  "clarity_score": 13,
+  "stt_source": "elevenlabs_scribe_v2"
+}

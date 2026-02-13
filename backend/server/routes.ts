@@ -15,6 +15,12 @@ import { randomUUID, createHmac } from "crypto";
 import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { evaluationQueue } from "./evaluation";
+import { normalizeEvaluationJson, scoreInterview, EvaluationJsonSchema } from "./llm/openaiEvaluator";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice");
 
 // Lazy-load JWT_SECRET to avoid build-time errors
 // CRITICAL: This function NEVER throws errors - Railway may validate during build
@@ -450,6 +456,102 @@ export function registerRoutes(app: Express) {
         database: 'error',
         error: process.env.NODE_ENV === 'development' ? error?.message : undefined
       });
+    }
+  });
+
+  // Dev-only: Expected dynamicVariables shape for a given year (for test assertions)
+  app.get("/api/dev/dynamic-variables-schema", (req, res) => {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ error: "Dev endpoint disabled in production" });
+    }
+    const yearStr = (req.query.year as string) || "";
+    const yearLower = yearStr.toLowerCase();
+    let technicalDifficulty = "moderate";
+    let technicalDepth = "intermediate";
+    let behavioralRatio = 50;
+    if (yearLower.includes("high school")) {
+      technicalDifficulty = "foundational";
+      technicalDepth = "basic";
+      behavioralRatio = 70;
+    } else if (yearLower.includes("freshman")) {
+      technicalDifficulty = "basic";
+      technicalDepth = "introductory";
+      behavioralRatio = 65;
+    } else if (yearLower.includes("sophomore")) {
+      technicalDifficulty = "basic-intermediate";
+      technicalDepth = "foundational";
+      behavioralRatio = 60;
+    } else if (yearLower.includes("junior")) {
+      technicalDifficulty = "intermediate";
+      technicalDepth = "moderate";
+      behavioralRatio = 50;
+    } else if (yearLower.includes("senior")) {
+      technicalDifficulty = "intermediate-advanced";
+      technicalDepth = "advanced";
+      behavioralRatio = 45;
+    } else if (yearLower.includes("post grad") || yearLower.includes("postgrad") || yearLower.includes("graduate")) {
+      technicalDifficulty = "advanced";
+      technicalDepth = "expert";
+      behavioralRatio = 40;
+    }
+    const requiredKeys = ["year", "technical_difficulty", "technical_depth", "behavioral_ratio"];
+    return res.json({
+      year: yearStr,
+      technical_difficulty: technicalDifficulty,
+      technical_depth: technicalDepth,
+      behavioral_ratio: String(behavioralRatio),
+      required_keys: requiredKeys,
+    });
+  });
+
+  // Dev-only: Fixture replay — runs evaluation pipeline with voice fixtures (no live voice)
+  app.post("/api/dev/eval-fixture", async (req, res) => {
+    if (process.env.NODE_ENV === "production") {
+      return res.status(403).json({ error: "Dev endpoint disabled in production" });
+    }
+
+    const body = req.body || {};
+    const { fixtureId, studentyear, technicaldifficulty, technicaldepth, behavioralratio } = body;
+    if (!fixtureId || typeof fixtureId !== "string") {
+      return res.status(400).json({ error: "Missing or invalid fixtureId in body" });
+    }
+
+    const safeId = fixtureId.replace(/[^a-z0-9_]/gi, "");
+    if (!safeId) {
+      return res.status(400).json({ error: "Invalid fixtureId" });
+    }
+
+    const { readFileSync, existsSync } = await import("fs");
+    const txtPath = join(VOICE_FIXTURES_DIR, `${safeId}.txt`);
+    const metaPath = join(VOICE_FIXTURES_DIR, `${safeId}.meta.json`);
+
+    if (!existsSync(txtPath) || !existsSync(metaPath)) {
+      return res.status(404).json({ error: `Fixture not found: ${safeId}` });
+    }
+
+    try {
+      const transcript = readFileSync(txtPath, "utf-8").trim();
+      const meta = JSON.parse(readFileSync(metaPath, "utf-8")) as Record<string, unknown>;
+      const question = (meta.prompt_question as string) || "Fixture question";
+
+      const evalParams: Parameters<typeof scoreInterview>[0] = {
+        role: "Software Engineer Intern",
+        major: "Computer Science",
+        resumeText: "CS student. Python, JavaScript. GPA 3.5.",
+        questions: [{ question, answer: transcript }],
+      };
+      if (studentyear != null && typeof studentyear === "string") evalParams.studentYear = studentyear;
+      if (technicaldifficulty != null && typeof technicaldifficulty === "string") evalParams.technicalDifficulty = technicaldifficulty;
+      if (technicaldepth != null && typeof technicaldepth === "string") evalParams.technicalDepth = technicaldepth;
+      if (behavioralratio != null) evalParams.behavioralRatio = typeof behavioralratio === "number" ? behavioralratio : String(behavioralratio);
+
+      const evaluation = await scoreInterview(evalParams);
+
+      const validated = EvaluationJsonSchema.parse(evaluation);
+      return res.json(validated);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return res.status(500).json({ error: "Evaluation failed", details: msg });
     }
   });
 
@@ -1797,10 +1899,11 @@ const tokenRateLimiter = rateLimit({
         hasStatus: !!body.status,
         hasStartedAt: !!body.started_at,
         hasEndedAt: !!body.ended_at,
+        hasYear: !!body.year,
       });
       console.log('[WEBHOOK] 📄 Full body:', JSON.stringify(body, null, 2));
 
-      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status } = body;
+      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status, year } = body;
 
       // Validate required fields
       if (!conversation_id) {
@@ -1850,21 +1953,27 @@ const tokenRateLimiter = rateLimit({
           });
           
           if (sessionByConversationId && !sessionByConversationId.interviewId) {
+            const updatePayload: Record<string, unknown> = {
+              interviewId: existingInterview.id,
+              status: 'completed',
+              updatedAt: new Date(),
+            };
+            if (year && typeof year === 'string') {
+              const existingContext = (sessionByConversationId.candidateContext as Record<string, unknown>) || {};
+              updatePayload.candidateContext = { ...existingContext, year };
+            }
             await db.update(elevenLabsInterviewSessions)
-              .set({
-                interviewId: existingInterview.id,
-                status: 'completed',
-                updatedAt: new Date(),
-              })
+              .set(updatePayload as any)
               .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
             console.log(`[WEBHOOK] Linked existing interview ${existingInterview.id} to session ${sessionByConversationId.id}`);
           } else if (sessionByConversationId && sessionByConversationId.status !== 'completed') {
-            // Update status if not already completed
+            const updatePayload: Record<string, unknown> = { status: 'completed', updatedAt: new Date() };
+            if (year && typeof year === 'string') {
+              const existingContext = (sessionByConversationId.candidateContext as Record<string, unknown>) || {};
+              updatePayload.candidateContext = { ...existingContext, year };
+            }
             await db.update(elevenLabsInterviewSessions)
-              .set({
-                status: 'completed',
-                updatedAt: new Date(),
-              })
+              .set(updatePayload as any)
               .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
             console.log(`[WEBHOOK] Updated session ${sessionByConversationId.id} status to completed`);
           }
@@ -1916,8 +2025,11 @@ const tokenRateLimiter = rateLimit({
           endedAt: endedAt,
           status: status || "completed",
         });
-
-        const [insertedInterview] = await db.insert(interviews).values(interviewData as any).returning();
+        const isSqliteWebhook = process.env.DATABASE_URL?.startsWith('file:');
+        const interviewValues = isSqliteWebhook
+          ? { ...interviewData, id: randomUUID(), createdAt: new Date() }
+          : interviewData;
+        const [insertedInterview] = await db.insert(interviews).values(interviewValues as any).returning();
         interview = insertedInterview;
         console.log(`[WEBHOOK] Interview saved successfully: ${interview.id}`);
       } catch (dbError: any) {
@@ -1947,12 +2059,17 @@ const tokenRateLimiter = rateLimit({
         if (sessionByConversationId) {
           // Only update if status is not already completed (idempotency)
           if (sessionByConversationId.status !== 'completed' || !sessionByConversationId.interviewId) {
+            const updatePayload: Record<string, unknown> = {
+              interviewId: interview.id,
+              status: 'completed',
+              updatedAt: new Date(),
+            };
+            if (year && typeof year === 'string') {
+              const existingContext = (sessionByConversationId.candidateContext as Record<string, unknown>) || {};
+              updatePayload.candidateContext = { ...existingContext, year };
+            }
             await db.update(elevenLabsInterviewSessions)
-              .set({
-                interviewId: interview.id,
-                status: 'completed',
-                updatedAt: new Date(),
-              })
+              .set(updatePayload as any)
               .where(eq(elevenLabsInterviewSessions.id, sessionByConversationId.id));
             console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${sessionByConversationId.id} (by conversation_id)`);
           }
@@ -1975,13 +2092,18 @@ const tokenRateLimiter = rateLimit({
               new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
             )[0];
             
+            const updatePayload: Record<string, unknown> = {
+              conversationId: conversation_id,
+              interviewId: interview.id,
+              status: 'completed',
+              updatedAt: new Date(),
+            };
+            if (year && typeof year === 'string') {
+              const existingContext = (mostRecentSession.candidateContext as Record<string, unknown>) || {};
+              updatePayload.candidateContext = { ...existingContext, year };
+            }
             await db.update(elevenLabsInterviewSessions)
-              .set({
-                conversationId: conversation_id,
-                interviewId: interview.id,
-                status: 'completed',
-                updatedAt: new Date(),
-              })
+              .set(updatePayload as any)
               .where(eq(elevenLabsInterviewSessions.id, mostRecentSession.id));
             console.log(`[WEBHOOK] Linked interview ${interview.id} to session ${mostRecentSession.id} (by time window)`);
           } else {
@@ -1996,8 +2118,12 @@ const tokenRateLimiter = rateLimit({
               status: 'completed',
               startedAt: startedAt || new Date(),
               endedAt: endedAt || new Date(),
+              ...(year && typeof year === 'string' ? { candidateContext: { year } } : {}),
             });
-            await db.insert(elevenLabsInterviewSessions).values(sessionData as any).catch((err: any) => {
+            const webhookSessionValues = process.env.DATABASE_URL?.startsWith('file:')
+              ? { ...sessionData, id: randomUUID(), createdAt: new Date(), updatedAt: new Date() }
+              : sessionData;
+            await db.insert(elevenLabsInterviewSessions).values(webhookSessionValues as any).catch((err: any) => {
               // Ignore duplicate errors (conversation_id unique constraint)
               if (!err.message?.includes('duplicate') && !err.message?.includes('unique')) {
                 console.error('[WEBHOOK] Error creating session record:', err);
@@ -2185,9 +2311,15 @@ const tokenRateLimiter = rateLimit({
           status: evaluation.status,
           overallScore: evaluation.overallScore,
           // Explicitly check for null/undefined - empty objects should also be treated as null
-          evaluation: (evaluation.evaluationJson && typeof evaluation.evaluationJson === 'object' && Object.keys(evaluation.evaluationJson).length > 0) 
-            ? evaluation.evaluationJson 
-            : null,
+          evaluation: (() => {
+            const raw = evaluation.evaluationJson;
+            if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) return null;
+            try {
+              return normalizeEvaluationJson(raw, []);
+            } catch {
+              return null;
+            }
+          })(),
           error: evaluation.error,
           createdAt: evaluation.createdAt,
           updatedAt: evaluation.updatedAt,
@@ -2222,6 +2354,7 @@ const tokenRateLimiter = rateLimit({
   // Webhook is the source of truth for transcript - this endpoint only records client state
   // Idempotent and safe to call before webhook arrives
   app.post("/api/save-interview", authenticateToken, async (req: any, res) => {
+    let interviewId: string | null = null; // Declare before try so it's in scope for catch
     try {
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - incoming request body:', {
         body: req.body,
@@ -2292,7 +2425,7 @@ const tokenRateLimiter = rateLimit({
       
       // CRITICAL FIX: Always create interview record synchronously if it doesn't exist
       // This ensures interviewId is always returned, preventing frontend hang
-      let interviewId: string | null = null;
+      interviewId = null; // Reset for this request
       
       // Step 1: Check if interview already exists by conversation_id (if provided)
       if (conversation_id) {
@@ -2441,8 +2574,12 @@ const tokenRateLimiter = rateLimit({
             endedAt: clientEndedAt,
             status: 'pending', // Set to 'pending' initially as requested
           });
-          
-          const [newInterview] = await db.insert(interviews).values(interviewData as any).returning();
+          // SQLite doesn't have gen_random_uuid() or now() - provide id and createdAt explicitly
+          const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+          const interviewValues = isSqlite
+            ? { ...interviewData, id: randomUUID(), createdAt: new Date() }
+            : interviewData;
+          const [newInterview] = await db.insert(interviews).values(interviewValues as any).returning();
           interviewId = newInterview.id;
           
           console.log('[SAVE-INTERVIEW] Created new interview record synchronously:', {
@@ -2616,7 +2753,12 @@ const tokenRateLimiter = rateLimit({
               endedAt: clientEndedAt,
               clientEndedAt: clientEndedAt,
             });
-            const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionData as any).returning();
+            // SQLite doesn't have gen_random_uuid() or now() - provide id and all timestamps explicitly
+            const now = new Date();
+            const sessionValues = process.env.DATABASE_URL?.startsWith('file:')
+              ? { ...sessionData, id: randomUUID(), startedAt: now, createdAt: now, updatedAt: now }
+              : sessionData;
+            const [session] = await db.insert(elevenLabsInterviewSessions).values(sessionValues as any).returning();
             console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database INSERT session:', {
               sessionId: session.id,
               clientSessionId: client_session_id,

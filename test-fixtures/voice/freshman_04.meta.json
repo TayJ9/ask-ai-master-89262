@@ -1,0 +1,10 @@
+{
+  "level": "freshman",
+  "prompt_question": "Why are you interested in this internship?",
+  "candidate_answer_text": "I want to learn more about real-world software development. I've only done class projects so far. I think an internship would help me understand how teams work and what it's like to build something people actually use.",
+  "tts_audio_file": "freshman_04.mp3",
+  "stt_transcript_text_file": "freshman_04.txt",
+  "transcript_word_count": 37,
+  "clarity_score": 12.33,
+  "stt_source": "elevenlabs_scribe_v2"
+}

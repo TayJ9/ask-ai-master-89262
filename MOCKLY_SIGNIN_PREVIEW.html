@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mockly - Sign In</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @keyframes mesh-move-1 {
+            0%, 100% { transform: translate(0, 0) scale(1) rotate(0deg); }
+            33% { transform: translate(40px, -60px) scale(1.15) rotate(5deg); }
+            66% { transform: translate(-30px, 40px) scale(0.85) rotate(-5deg); }
+        }
+        @keyframes mesh-move-2 {
+            0%, 100% { transform: translate(0, 0) scale(1) rotate(0deg); }
+            33% { transform: translate(-50px, 30px) scale(0.9) rotate(-8deg); }
+            66% { transform: translate(60px, -40px) scale(1.1) rotate(8deg); }
+        }
+        @keyframes mesh-pulse {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 0.9; }
+        }
+        .mesh-blob-1 {
+            animation: mesh-move-1 20s ease-in-out infinite, mesh-pulse 8s ease-in-out infinite;
+        }
+        .mesh-blob-2 {
+            animation: mesh-move-2 18s ease-in-out infinite, mesh-pulse 9s ease-in-out infinite;
+        }
+        .gradient-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .shadow-glow {
+            box-shadow: 0 0 20px rgba(102, 126, 234, 0.5);
+        }
+        @keyframes scale-in {
+            from { opacity: 0; transform: scale(0.95); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .animate-scale-in {
+            animation: scale-in 0.3s ease-out;
+        }
+        @keyframes gradient-shift {
+            0%, 100% {
+                background-position: 0% center;
+            }
+            50% {
+                background-position: 100% center;
+            }
+        }
+        @keyframes liquid-wave {
+            0%, 100% { 
+                background-position: 0% 50%, 100% 50%, 50% 0%; 
+            }
+            33% { 
+                background-position: 100% 50%, 0% 50%, 50% 100%; 
+            }
+            66% { 
+                background-position: 50% 0%, 50% 100%, 0% 50%; 
+            }
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4" style="background-color: #D4A574;">
+    <!-- Animated Background -->
+    <div class="absolute inset-0 overflow-hidden z-0">
+        <div class="mesh-blob-1 absolute w-[700px] h-[700px] rounded-full blur-xl opacity-30" 
+             style="background: radial-gradient(circle, hsl(30, 100%, 68%) 0%, transparent 70%); top: -15%; left: -15%;"></div>
+        <div class="mesh-blob-2 absolute w-[650px] h-[650px] rounded-full blur-xl opacity-30" 
+             style="background: radial-gradient(circle, hsl(20, 100%, 68%) 0%, transparent 70%); top: -10%; right: -10%;"></div>
+    </div>
+
+    <!-- Sign In Card -->
+    <div class="relative z-10 w-full max-w-md">
+        <div class="bg-white rounded-lg shadow-lg p-8 animate-scale-in">
+            <!-- Header -->
+            <div class="text-center space-y-4 mb-8">
+                <div class="mx-auto w-16 h-16 rounded-full gradient-primary flex items-center justify-center shadow-glow">
+                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <div class="relative inline-block">
+                        <h1 class="text-5xl font-extrabold tracking-tight" style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 25%, #4f7df0 50%, #8b5cf6 75%, #4f7df0 100%); background-size: 200% 200%, 150% 150%, 180% 180%; animation: liquid-wave 4s ease-in-out infinite; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">
+                            mockly
+                        </h1>
+                    </div>
+                    <p class="text-base text-gray-600 mt-4">
+                        Practice interviews with AI-powered feedback
+                    </p>
+                </div>
+            </div>
+
+            <!-- Sign In Form -->
+            <form class="space-y-4">
+                <div class="space-y-2">
+                    <label for="email" class="block text-sm font-medium text-gray-700">Email</label>
+                    <input 
+                        type="email" 
+                        id="email" 
+                        placeholder="you@example.com"
+                        class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                    />
+                </div>
+                <div class="space-y-2">
+                    <label for="password" class="block text-sm font-medium text-gray-700">Password</label>
+                    <div class="relative">
+                        <input 
+                            type="password" 
+                            id="password" 
+                            placeholder="••••••••"
+                            class="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent pr-10"
+                        />
+                        <button type="button" class="absolute right-2 top-2 text-gray-400 hover:text-gray-600">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <button 
+                    type="submit"
+                    class="w-full gradient-primary text-white py-2 rounded-md shadow-glow hover:opacity-90 transition-opacity font-semibold"
+                >
+                    Sign In
+                </button>
+                <button 
+                    type="button"
+                    class="w-full text-gray-600 hover:text-gray-900 py-2 text-sm"
+                >
+                    Need an account? Sign up
+                </button>
+
+                <!-- Divider -->
+                <div class="relative my-6">
+                    <div class="absolute inset-0 flex items-center">
+                        <div class="w-full border-t border-gray-300"></div>
+                    </div>
+                    <div class="relative flex justify-center text-sm">
+                        <span class="px-2 bg-white text-gray-500">Or</span>
+                    </div>
+                </div>
+
+                <!-- Quick Demo Button -->
+                <button 
+                    type="button"
+                    class="w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 shadow-md hover:shadow-lg transition-all duration-300 py-2 rounded-md font-medium flex items-center justify-center"
+                >
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                    Try Quick Demo
+                    <span class="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
+                        No Sign-Up
+                    </span>
+                </button>
+                <p class="text-xs text-center text-gray-500">
+                    See sample interview results instantly
+                </p>
+            </form>
+        </div>
+    </div>
+</body>
+</html>

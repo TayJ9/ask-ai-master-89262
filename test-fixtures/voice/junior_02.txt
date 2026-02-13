@@ -1,0 +1,1 @@
+During my internship, we had a bug where the API was returning five hundred errors for certain users. I used the logs to isolate the pattern. It only happened with users who had special characters in their profile. I traced it to an unescaped query parameter and fixed it with a proper encoding function. I also added a unit test so it wouldn't happen again.

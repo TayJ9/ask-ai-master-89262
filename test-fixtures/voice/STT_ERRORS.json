@@ -1,0 +1,50 @@
+{
+  "freshman_01": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "freshman_02": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "freshman_03": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "freshman_04": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "junior_01": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "junior_02": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "junior_03": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "junior_04": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "senior_01": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "senior_02": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "senior_03": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  },
+  "senior_04": {
+    "status": "ok",
+    "stt_source": "elevenlabs_scribe_v2"
+  }
+}

@@ -1,0 +1,1 @@
+I built a course scheduling app for our school. Students could see their courses, add drop deadlines, and compare schedules with friends. I used React and Node JS. The hardest part was handling conflicts when multiple people tried to add the same class. I learned a lot about state management and optimistic updates.

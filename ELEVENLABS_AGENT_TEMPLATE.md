@@ -1,11 +1,26 @@
-# ElevenLabs Agent Template Update (resume personalization)
+# ElevenLabs Agent Template (Dynamic Variables)
 
-Add these placeholders to the ElevenLabs agent system prompt or first message template in the ElevenLabs dashboard so dynamic variables influence responses:
+Ensure the ElevenLabs agent system prompt and first message use these exact placeholder names:
 
+```
+{{first_name}}         — Candidate first name (default: "Candidate")
+{{major}}              — Major field (default: "General")
+{{year}}               — Academic year (default: "Unknown")
+{{resume_summary}}     — Resume summary, up to 1500 chars (default: "")
+{{resume_highlights}}  — Resume highlights, up to 500 chars (default: "")
+{{technical_difficulty}} — Question difficulty level (default: "intermediate")
+{{technical_depth}}    — Technical depth (default: "standard")
+{{behavioral_ratio}}   — Behavioral vs technical ratio, string (default: "60")
+```
+
+Example first message:
+```
+Hi {{first_name}}! I see you're studying {{major}} as a {{year}}. Let's begin the interview.
+```
+
+Example system prompt context:
 ```
 Candidate resume summary: {{resume_summary}}
 Candidate highlights: {{resume_highlights}}
+Difficulty: {{technical_difficulty}}, depth: {{technical_depth}}, behavioral ratio: {{behavioral_ratio}}
 ```
-
-Ensure the agent is configured to accept dynamic variables / overrides at conversation start. With DEBUG enabled, verify in browser console and WS frames that `resume_summary`, `resume_highlights`, and `resume_sentinel` are present.***
-

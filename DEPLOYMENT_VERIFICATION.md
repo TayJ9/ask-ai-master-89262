@@ -1,79 +1,45 @@
-# ✅ Deployment Configuration Verification
+# Deployment Configuration Verification
 
-## Configuration Check
+## ✅ Configuration Summary
 
-### 1. ✅ Startup Script (`start_production.sh`)
-- ✅ Script exists and is executable
-- ✅ Starts Python backend on port 5001
-- ✅ Waits for Python backend to be ready (health check)
-- ✅ Starts Node.js server on port 5000
-- ✅ Proper cleanup on exit
+### Vercel Deployment
+- **Build Command**: `cd frontend && npm install && npm run build`
+  - Runs from repo root, changes to `frontend/` directory
+  - Executes `npm run build` which runs `vite build`
+  - Build outputs to: `frontend/dist/public/` (relative to repo root)
+- **Output Directory**: `frontend/dist/public`
+  - Vercel looks for this path from repo root ✓
+  - Matches build output ✓
 
-### 2. ✅ `.replit` Configuration
-- ✅ Deployment uses `./start_production.sh`
-- ✅ Build command: `npm run build`
-- ✅ Ports configured: 5000 (external 80), 5001 (external 3003)
+### Local Preview
+- **Preview Command**: `vite preview --outDir dist/public`
+  - Runs from `frontend/` directory
+  - Serves from `dist/public/` (relative to frontend directory)
+  - Matches build output ✓
 
-### 3. ✅ Python Backend Files
-- ✅ `python_backend/app.py` - Flask server
-- ✅ `python_backend/dialogflow_voice.py` - Voice interaction
-- ✅ `python_backend/dialogflow_interview.py` - Scoring
-- ✅ `python_backend/requirements.txt` - Dependencies
+### Vite Configuration
+- **Build outDir**: `dist/public` (in `vite.config.ts`)
+  - This is the directory where build outputs files
+  - Used by both `vite build` and `vite preview`
 
-### 4. ✅ Node.js Server Configuration
-- ✅ Uses `http://127.0.0.1:5001` for Python backend
-- ✅ Proper error handling for connection issues
-- ✅ Authentication middleware working
+## ✅ Verification Checklist
 
-## Pre-Deployment Checklist
+- [x] Build outputs to `dist/public/` (relative to frontend/)
+- [x] Vercel expects `frontend/dist/public/` (relative to repo root)
+- [x] Preview serves from `dist/public/` (relative to frontend/)
+- [x] All configurations use the same output directory
+- [x] HTML file references assets with `/assets/...` paths
+- [x] Base path is `/` (no subdirectory)
 
-### Required Environment Variables (Replit Secrets)
-Make sure these are set in Replit Secrets for deployment:
+## 🎯 Result
 
-- ✅ `GOOGLE_CREDENTIALS` - Google Cloud service account JSON
-- ✅ `GCP_PROJECT_ID` - Your GCP project ID
-- ✅ `DF_AGENT_ID` - Dialogflow agent ID
-- ✅ `DF_LOCATION_ID` - Location (e.g., "us-east1")
-- ✅ `GEMINI_API_KEY` - Gemini API key
-- ✅ `JWT_SECRET` - JWT secret for authentication
-- ✅ `DATABASE_URL` - PostgreSQL connection string
+Both Vercel deployment and local preview will work correctly because:
+1. Build always outputs to the same directory (`dist/public`)
+2. Vercel configuration points to the correct path (`frontend/dist/public`)
+3. Preview command explicitly serves from the same directory (`--outDir dist/public`)
 
-### Python Dependencies
-The startup script will use the system Python. Make sure Python packages are installed or the script installs them.
+## 📝 Notes
 
-**Note**: In Replit deployments, Python packages might need to be installed. Consider adding to startup script:
-
-```bash
-# Install Python dependencies if needed
-cd python_backend
-pip install -r requirements.txt --quiet
-cd ..
-```
-
-## Deployment Steps
-
-1. **Verify Environment Variables** - All secrets set in Replit
-2. **Deploy** - Click "Deploy" or use Replit deployment
-3. **Check Logs** - Verify both servers start:
-   - "Python backend is ready!"
-   - "Starting Node.js server..."
-   - "Server running on port 5000"
-4. **Test** - Try voice interview on deployed URL
-
-## Troubleshooting
-
-### If Python backend doesn't start:
-- Check logs for Python errors
-- Verify `GOOGLE_CREDENTIALS` is set
-- Check if Python packages are installed
-
-### If connection still fails:
-- Verify Python backend health: `curl http://127.0.0.1:5001/health`
-- Check if both processes are running
-- Verify port 5001 is accessible
-
-### If deployment fails:
-- Check startup script permissions: `chmod +x start_production.sh`
-- Verify Python is available in deployment environment
-- Check deployment logs for errors
-
+- The `--outDir` flag in the preview command ensures local preview serves from the correct directory
+- Vercel's `outputDirectory` is relative to the repo root, so `frontend/dist/public` is correct
+- The build command runs from the `frontend/` directory, so `dist/public` is relative to that

@@ -1,0 +1,10 @@
+{
+  "level": "junior",
+  "prompt_question": "Tell me about a project you're proud of.",
+  "candidate_answer_text": "I built a course scheduling app for our school. Students could see their courses, add drop deadlines, and compare schedules with friends. I used React and Node.js. The hardest part was handling conflicts when multiple people tried to add the same class. I learned a lot about state management and optimistic updates.",
+  "tts_audio_file": "junior_04.mp3",
+  "stt_transcript_text_file": "junior_04.txt",
+  "transcript_word_count": 53,
+  "clarity_score": 10.6,
+  "stt_source": "elevenlabs_scribe_v2"
+}

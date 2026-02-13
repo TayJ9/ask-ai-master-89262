@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>mockly - Logo Design Previews</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Option 1: Liquid Gradient Wave */
+        @keyframes liquid-wave {
+            0%, 100% { background-position: 0% 50%, 100% 50%, 50% 0%; }
+            33% { background-position: 100% 50%, 0% 50%, 50% 100%; }
+            66% { background-position: 50% 0%, 50% 100%, 0% 50%; }
+        }
+        .liquid-gradient {
+            background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 25%, #4f7df0 50%, #8b5cf6 75%, #4f7df0 100%);
+            background-size: 200% 200%, 150% 150%, 180% 180%;
+            animation: liquid-wave 4s ease-in-out infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Option 2: Holographic Shimmer */
+        @keyframes holographic-shimmer {
+            0% { 
+                background-position: -200% center;
+                filter: hue-rotate(0deg);
+            }
+            50% { 
+                background-position: 200% center;
+                filter: hue-rotate(180deg);
+            }
+            100% { 
+                background-position: -200% center;
+                filter: hue-rotate(360deg);
+            }
+        }
+        .holographic {
+            background: linear-gradient(
+                90deg,
+                #4f7df0 0%,
+                #8b5cf6 20%,
+                #ec4899 40%,
+                #8b5cf6 60%,
+                #4f7df0 80%,
+                #8b5cf6 100%
+            );
+            background-size: 200% auto;
+            animation: holographic-shimmer 3s linear infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.5));
+        }
+
+        /* Option 3: Breathing Gradient Pulse */
+        @keyframes breathing-pulse {
+            0%, 100% { 
+                background-size: 100% 100%;
+                opacity: 1;
+            }
+            50% { 
+                background-size: 150% 150%;
+                opacity: 0.9;
+            }
+        }
+        .breathing-gradient {
+            background: radial-gradient(circle at center, #4f7df0 0%, #8b5cf6 50%, #4f7df0 100%);
+            background-size: 100% 100%;
+            animation: breathing-pulse 3s ease-in-out infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Option 4: Neon Sign Flicker */
+        @keyframes neon-flicker {
+            0%, 100% { 
+                opacity: 1;
+                filter: drop-shadow(0 0 10px rgba(139, 92, 246, 0.8)) drop-shadow(0 0 20px rgba(139, 92, 246, 0.6));
+            }
+            2% { opacity: 0.98; }
+            4% { opacity: 1; }
+            6% { opacity: 0.99; }
+            8% { opacity: 1; }
+            50% { 
+                opacity: 1;
+                filter: drop-shadow(0 0 15px rgba(139, 92, 246, 1)) drop-shadow(0 0 30px rgba(139, 92, 246, 0.8));
+            }
+        }
+        .neon-flicker {
+            background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: neon-flicker 2s ease-in-out infinite;
+        }
+
+        /* Option 5: Prism Light Split */
+        @keyframes prism-split {
+            0%, 100% { 
+                background-position: 0% center, 0% center, 0% center;
+                filter: blur(0px);
+            }
+            50% { 
+                background-position: 100% center, -50% center, 50% center;
+                filter: blur(1px);
+            }
+        }
+        .prism-split {
+            background: 
+                linear-gradient(90deg, #4f7df0 0%, transparent 50%),
+                linear-gradient(90deg, #8b5cf6 0%, transparent 50%),
+                linear-gradient(90deg, #ec4899 0%, transparent 50%);
+            background-size: 200% 100%, 200% 100%, 200% 100%;
+            animation: prism-split 4s ease-in-out infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Option 6: Glitch Effect */
+        @keyframes glitch {
+            0%, 100% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+        }
+        @keyframes glitch-gradient {
+            0%, 100% { 
+                background-position: 0% center;
+                filter: hue-rotate(0deg);
+            }
+            10% { filter: hue-rotate(90deg); }
+            20% { filter: hue-rotate(180deg); }
+            30% { filter: hue-rotate(270deg); }
+            40% { filter: hue-rotate(360deg); }
+            50% { background-position: 100% center; }
+        }
+        .glitch-effect {
+            background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 50%, #4f7df0 100%);
+            background-size: 200% auto;
+            animation: glitch-gradient 3s ease-in-out infinite, glitch 0.3s ease-in-out infinite;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* Underline animations */
+        @keyframes underline-pulse {
+            0%, 100% { width: 0%; opacity: 0.6; }
+            50% { width: 100%; opacity: 1; }
+        }
+        @keyframes underline-wave {
+            0%, 100% { transform: scaleX(0.8); }
+            50% { transform: scaleX(1.2); }
+        }
+    </style>
+</head>
+<body class="min-h-screen p-8" style="background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);">
+    <div class="max-w-4xl mx-auto space-y-12">
+        <h1 class="text-3xl font-bold text-center mb-8">mockly Logo Design Previews</h1>
+        
+        <!-- Option 1: Liquid Gradient Wave -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 1: Liquid Gradient Wave 🌊</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight liquid-gradient">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Fluid, wave-like motion with multiple gradient layers</p>
+        </div>
+
+        <!-- Option 2: Holographic Shimmer -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 2: Holographic Shimmer ✨ (RECOMMENDED)</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight holographic">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Iridescent rainbow shimmer with premium feel</p>
+        </div>
+
+        <!-- Option 3: Breathing Gradient Pulse -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 3: Breathing Gradient Pulse 💓</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight breathing-gradient">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Smooth, rhythmic expansion and contraction</p>
+        </div>
+
+        <!-- Option 4: Neon Sign Flicker -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 4: Neon Sign Flicker 💡</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight neon-flicker">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Retro-futuristic neon with subtle flicker</p>
+        </div>
+
+        <!-- Option 5: Prism Light Split -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 5: Prism Light Split 🌈</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight prism-split">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Rainbow spectrum split effect</p>
+        </div>
+
+        <!-- Option 6: Glitch Effect -->
+        <div class="bg-white rounded-lg shadow-lg p-8">
+            <h2 class="text-xl font-semibold mb-4">Option 6: Glitch Effect 📺</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight glitch-effect">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+            <p class="text-sm text-gray-600 mt-4 text-center">Cyber aesthetic with RGB channel separation</p>
+        </div>
+
+        <!-- Current Design for Comparison -->
+        <div class="bg-white rounded-lg shadow-lg p-8 border-2 border-purple-300">
+            <h2 class="text-xl font-semibold mb-4">Current: Moving Gradient (for comparison)</h2>
+            <div class="text-center">
+                <div class="relative inline-block">
+                    <h1 class="text-5xl font-extrabold tracking-tight" 
+                        style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 50%, #4f7df0 100%); background-size: 200% auto; -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; animation: gradient-shift 3s ease infinite;">
+                        mockly
+                    </h1>
+                    <div class="absolute -bottom-2 left-0 right-0 h-1 rounded-full opacity-60" 
+                         style="background: linear-gradient(135deg, #4f7df0 0%, #8b5cf6 100%);"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes gradient-shift {
+            0%, 100% { background-position: 0% center; }
+            50% { background-position: 100% center; }
+        }
+    </style>
+</body>
+</html>

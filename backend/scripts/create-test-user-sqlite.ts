@@ -22,9 +22,20 @@ async function createTestUser() {
     const existingUser = db.prepare('SELECT * FROM profiles WHERE email = ?').get(email);
     
     if (existingUser) {
-      console.log('✅ Test user already exists!');
+      console.log('ℹ️  Test user already exists. Updating password to ensure it matches...');
+      
+      // Update password hash to ensure it's correct
+      const passwordHash = await bcrypt.hash(password, 10);
+      db.prepare(`
+        UPDATE profiles 
+        SET password_hash = ? 
+        WHERE email = ?
+      `).run(passwordHash, email);
+      
+      console.log('✅ Test user password updated!');
       console.log(`   Email: ${email}`);
       console.log(`   Password: ${password}`);
+      console.log(`   User ID: ${existingUser.id}`);
       db.close();
       return;
     }

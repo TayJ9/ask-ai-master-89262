@@ -1,0 +1,10 @@
+{
+  "level": "senior",
+  "prompt_question": "Tell me about a time you disagreed with a technical decision.",
+  "candidate_answer_text": "Our team wanted to add a new database for a feature. I argued we could use our existing Postgres with a denormalized table and a materialized view since the query pattern was simple. I presented benchmarks showing the latency was acceptable. We went with that approach and avoided the operational overhead of another database. The feature shipped on time and we haven't had to revisit it.",
+  "tts_audio_file": "senior_04.mp3",
+  "stt_transcript_text_file": "senior_04.txt",
+  "transcript_word_count": 66,
+  "clarity_score": 13.2,
+  "stt_source": "elevenlabs_scribe_v2"
+}

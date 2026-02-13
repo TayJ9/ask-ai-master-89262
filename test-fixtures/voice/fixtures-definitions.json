@@ -1,0 +1,57 @@
+{
+  "freshman": [
+    {
+      "prompt_question": "Can you tell me about yourself and your background?",
+      "candidate_answer_text": "Hi, I'm a freshman computer science major at State University. I've taken intro to programming and I'm really enjoying it. I built a simple calculator in Python for my first project. I'm excited to learn more about software development."
+    },
+    {
+      "prompt_question": "Tell me about a time when you worked with a team.",
+      "candidate_answer_text": "In my programming class we had a group project. We had to build a simple website together. I did the HTML part and my teammate did the CSS. We met once a week and shared our progress. It was fun and we got an A."
+    },
+    {
+      "prompt_question": "How do you handle stress or deadlines?",
+      "candidate_answer_text": "I try to start assignments early so I'm not cramming. I use a planner to keep track of due dates. When I feel stressed I take short breaks and maybe go for a walk. It usually helps me focus better."
+    },
+    {
+      "prompt_question": "Why are you interested in this internship?",
+      "candidate_answer_text": "I want to learn more about real-world software development. I've only done class projects so far. I think an internship would help me understand how teams work and what it's like to build something people actually use."
+    }
+  ],
+  "junior": [
+    {
+      "prompt_question": "Can you tell me about yourself and your background?",
+      "candidate_answer_text": "I'm a junior computer science major at State University. I've done two internships so far: one at a local startup where I worked on their React frontend, and one at a larger company doing API testing. I've also been a TA for Data Structures. I'm particularly interested in full-stack development."
+    },
+    {
+      "prompt_question": "Tell me about a time when you had to debug a difficult problem.",
+      "candidate_answer_text": "During my internship we had a bug where the API was returning 500 errors for certain users. I used the logs to isolate the pattern—it only happened with users who had special characters in their profile. I traced it to an unescaped query parameter and fixed it with a proper encoding function. I also added a unit test so it wouldn't happen again."
+    },
+    {
+      "prompt_question": "How would you explain REST APIs to someone new to coding?",
+      "candidate_answer_text": "REST is a way to design APIs that use HTTP. You have different URLs for different resources, and you use HTTP methods like GET to fetch data and POST to create something. Each endpoint does one thing. It's like a library where you ask for a specific book by its call number."
+
+    },
+    {
+      "prompt_question": "Tell me about a project you're proud of.",
+      "candidate_answer_text": "I built a course scheduling app for our school. Students could see their courses, add drop deadlines, and compare schedules with friends. I used React and Node.js. The hardest part was handling conflicts when multiple people tried to add the same class. I learned a lot about state management and optimistic updates."
+    }
+  ],
+  "senior": [
+    {
+      "prompt_question": "Can you tell me about yourself and your background?",
+      "candidate_answer_text": "I'm a senior CS major at State University, graduating in May. I've had three internships: full-stack at a startup, backend at a fintech company, and distributed systems at a cloud provider. I've led a student dev team and published a research paper on cache invalidation. I'm focused on backend and distributed systems."
+    },
+    {
+      "prompt_question": "Tell me about a time when you had to make a technical trade-off.",
+      "candidate_answer_text": "We were building a real-time feature and had to choose between polling and WebSockets. Polling was simpler and would work for our scale, but WebSockets would scale better long-term. I wrote a short design doc comparing latency, server load, and implementation complexity. We went with WebSockets and used a managed service to avoid operational overhead. It paid off when we 10x'd our user base."
+    },
+    {
+      "prompt_question": "How would you design a rate limiter for an API?",
+      "candidate_answer_text": "I'd use a sliding window or token bucket algorithm. For distributed systems, Redis or a similar store works well with atomic increments. You'd need to decide on the key—user ID, IP, or API key. I'd also add a circuit breaker for cascading failures. In production I'd use something like Kong or Envoy rather than building from scratch."
+    },
+    {
+      "prompt_question": "Tell me about a time you disagreed with a technical decision.",
+      "candidate_answer_text": "Our team wanted to add a new database for a feature. I argued we could use our existing Postgres with a denormalized table and a materialized view since the query pattern was simple. I presented benchmarks showing the latency was acceptable. We went with that approach and avoided the operational overhead of another database. The feature shipped on time and we haven't had to revisit it."
+    }
+  ]
+}
