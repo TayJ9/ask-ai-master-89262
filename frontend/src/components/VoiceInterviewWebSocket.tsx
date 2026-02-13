@@ -631,33 +631,39 @@ export default function VoiceInterviewWebSocket({
     if (!isMountedRef.current) return;
     console.log('SDK Message:', message);
     
-    // --- Server-event-driven processing state (per ElevenLabs SDK IncomingSocketEvent types) ---
-    // See: @elevenlabs/types/generated/types/asyncapi-types.ts and @elevenlabs/client/dist/utils/events.d.ts
+    // --- Server-event-driven processing state ---
+    // SDK sends NORMALIZED format to onMessage: { message, role, source } (not raw WebSocket types)
+    // source: "user" = user spoke, source: "ai" = agent responded
+    // Also support raw IncomingSocketEvent types (user_transcript, agent_response, etc.) when present
 
     // User speech finalized -> enter processing (waiting for agent)
-    // SDK: UserTranscriptionClientEvent { type: "user_transcript", user_transcription_event: { user_transcript, event_id } }
     const isUserTranscript =
+      message.source === 'user' ||
       message.type === 'user_transcript' ||
       message.user_transcription_event;
     if (isUserTranscript) {
+      const trigger = message.source === 'user' ? 'source:user' : message.type || 'user_transcription_event';
+      console.log('[PROCESSING_STATE] ENTER processing (user spoke)', { trigger, source: message.source, type: message.type });
       setServerProcessing(true);
       if (serverProcessingTimeoutRef.current) clearTimeout(serverProcessingTimeoutRef.current);
       serverProcessingTimeoutRef.current = setTimeout(() => {
+        console.log('[PROCESSING_STATE] EXIT processing (15s timeout - no agent response)');
         setServerProcessing(false);
         serverProcessingTimeoutRef.current = null;
       }, 15000);
     }
 
     // Agent response started -> exit processing
-    // SDK: AgentResponseClientEvent | AgentChatResponsePartClientEvent | AgentResponseCorrectionClientEvent
-    // Also: Interruption (user spoke), InternalTentativeAgentResponse (agent about to respond)
     const isAgentResponseOrRelated =
+      message.source === 'ai' ||
       message.type === 'agent_response' ||
       message.type === 'agent_chat_response_part' ||
       message.type === 'agent_response_correction' ||
       message.type === 'interruption' ||
       message.type === 'internal_tentative_agent_response';
     if (isAgentResponseOrRelated) {
+      const trigger = message.source === 'ai' ? 'source:ai' : message.type || 'unknown';
+      console.log('[PROCESSING_STATE] EXIT processing (agent responded)', { trigger, source: message.source, type: message.type });
       if (serverProcessingTimeoutRef.current) {
         clearTimeout(serverProcessingTimeoutRef.current);
         serverProcessingTimeoutRef.current = null;
@@ -673,6 +679,7 @@ export default function VoiceInterviewWebSocket({
     
     // Latency tracking: Record when first audio chunk arrives
     if (isAudioMessage && !firstAudioChunkTimeRef.current) {
+      console.log('[PROCESSING_STATE] EXIT processing (first audio chunk)');
       const audioStartTime = Date.now();
       firstAudioChunkTimeRef.current = audioStartTime;
       if (serverProcessingTimeoutRef.current) {
@@ -1031,9 +1038,14 @@ export default function VoiceInterviewWebSocket({
   }, [conversation.isSpeaking, conversation.status, hasStarted]); // Removed inputVolume dependency - using ref
 
   // Update status message based on mode
+  const prevModeRef = useRef<ConversationMode | null>(null);
   useEffect(() => {
     if (!hasStarted) return;
-    
+    if (prevModeRef.current !== conversationMode && conversationMode === 'processing') {
+      console.log('[PROCESSING_STATE] UI transitioned to PROCESSING mode', { serverProcessing, isSpeaking: conversation.isSpeaking });
+    }
+    prevModeRef.current = conversationMode;
+
     switch (conversationMode) {
       case 'ai_speaking':
         setStatusMessage("AI is speaking...");
@@ -1052,7 +1064,7 @@ export default function VoiceInterviewWebSocket({
         }
         break;
     }
-  }, [conversationMode, hasStarted, conversation.status]);
+  }, [conversationMode, hasStarted, conversation.status, serverProcessing, conversation.isSpeaking]);
 
   // PERF: Volume state only updates when crossing threshold (0.1) to limit re-renders; refs always updated for AudioVisualizer.
   useEffect(() => {
