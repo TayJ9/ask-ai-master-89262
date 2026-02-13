@@ -631,49 +631,45 @@ export default function VoiceInterviewWebSocket({
     if (!isMountedRef.current) return;
     console.log('SDK Message:', message);
     
-    // --- Server-event-driven processing state (more reliable than volume heuristic) ---
+    // --- Server-event-driven processing state (per ElevenLabs SDK IncomingSocketEvent types) ---
+    // See: @elevenlabs/types/generated/types/asyncapi-types.ts and @elevenlabs/client/dist/utils/events.d.ts
+
     // User speech finalized -> enter processing (waiting for agent)
+    // SDK: UserTranscriptionClientEvent { type: "user_transcript", user_transcription_event: { user_transcript, event_id } }
     const isUserTranscript =
       message.type === 'user_transcript' ||
-      message.user_transcription_event ||
-      (message.source === 'user' && message.message && (message.isFinal || message.final));
+      message.user_transcription_event;
     if (isUserTranscript) {
       setServerProcessing(true);
-      // Safety timeout: clear if we never receive agent response (e.g. SDK doesn't send events)
       if (serverProcessingTimeoutRef.current) clearTimeout(serverProcessingTimeoutRef.current);
       serverProcessingTimeoutRef.current = setTimeout(() => {
         setServerProcessing(false);
         serverProcessingTimeoutRef.current = null;
       }, 15000);
     }
+
     // Agent response started -> exit processing
-    const isAgentResponse =
+    // SDK: AgentResponseClientEvent | AgentChatResponsePartClientEvent | AgentResponseCorrectionClientEvent
+    // Also: Interruption (user spoke), InternalTentativeAgentResponse (agent about to respond)
+    const isAgentResponseOrRelated =
       message.type === 'agent_response' ||
-      message.type === 'agentresponse' ||
-      message.type === 'final';
-    if (isAgentResponse) {
+      message.type === 'agent_chat_response_part' ||
+      message.type === 'agent_response_correction' ||
+      message.type === 'interruption' ||
+      message.type === 'internal_tentative_agent_response';
+    if (isAgentResponseOrRelated) {
       if (serverProcessingTimeoutRef.current) {
         clearTimeout(serverProcessingTimeoutRef.current);
         serverProcessingTimeoutRef.current = null;
       }
       setServerProcessing(false);
     }
-    // Conversation/speech ended -> clear processing
-    if (message.type === 'conversation_end' || message.type === 'agent_speech_end') {
-      if (serverProcessingTimeoutRef.current) {
-        clearTimeout(serverProcessingTimeoutRef.current);
-        serverProcessingTimeoutRef.current = null;
-      }
-      setServerProcessing(false);
-    }
-    
-    // Audio buffering: Check if this is an audio message/chunk
-    // ElevenLabs SDK may send audio in different formats - check both
-    const isAudioMessage = 
-      message.type === 'audio' || 
-      message.type === 'audio_chunk' ||
-      message.audio ||
-      (message.data && message.data instanceof ArrayBuffer);
+
+    // Audio: Agent started speaking (first chunk)
+    // SDK: AudioClientEvent { type: "audio", audio_event: { audio_base_64, event_id } }
+    const isAudioMessage =
+      message.type === 'audio' ||
+      message.audio_event;
     
     // Latency tracking: Record when first audio chunk arrives
     if (isAudioMessage && !firstAudioChunkTimeRef.current) {
@@ -736,19 +732,15 @@ export default function VoiceInterviewWebSocket({
       }
     }
     
-    // Reset buffer flag after conversation ends (for next session)
-    if (message.type === 'conversation_end' || message.type === 'agent_speech_end') {
-      isAudioBufferingRef.current = true; // Reset for next session
-      audioChunkBufferRef.current = [];
-      audioBufferStartTimeRef.current = null;
-      // Reset latency tracking for next session
+    // SDK: ErrorClientEvent - reset latency refs on error (session may end)
+    if (message.type === 'error') {
       firstAudioChunkTimeRef.current = null;
       lastUserSpeechEndTimeRef.current = null;
     }
-    
-    // Check for tool_call events (e.g., MarkInterviewComplete)
-    if (message.type === 'tool_call' || message.tool_call || message.tool_name) {
-      const toolCall = message.tool_call || message;
+
+    // SDK: ClientToolCallMessage { type: "client_tool_call", client_tool_call: { tool_name, tool_call_id, parameters, event_id } }
+    if (message.type === 'client_tool_call' || message.client_tool_call) {
+      const toolCall = message.client_tool_call || message;
       const toolName = toolCall.tool_name || message.tool_name;
       
       console.log('Tool call received:', toolCall);
@@ -823,9 +815,35 @@ export default function VoiceInterviewWebSocket({
       return; // Don't process tool calls as regular messages
     }
     
-    // SDK message has { message: string, source: 'user' | 'ai' }
-    const text = message.message || '';
-    const isAI = message.source === 'ai';
+    // Extract text from SDK IncomingSocketEvent (per asyncapi-types.ts)
+    let text = '';
+    let isAI = false;
+    let isFinal = true;
+    if (message.type === 'user_transcript' && message.user_transcription_event) {
+      text = message.user_transcription_event.user_transcript || '';
+      isAI = false;
+      isFinal = true;
+    } else if (message.type === 'tentative_user_transcript' && message.tentative_user_transcription_event) {
+      text = message.tentative_user_transcription_event.user_transcript || '';
+      isAI = false;
+      isFinal = false;
+    } else if (message.type === 'agent_response' && message.agent_response_event) {
+      text = message.agent_response_event.agent_response || '';
+      isAI = true;
+      isFinal = true;
+    } else if (message.type === 'agent_chat_response_part' && message.text_response_part) {
+      text = message.text_response_part.text || '';
+      isAI = true;
+      isFinal = message.text_response_part.type === 'stop';
+    } else if (message.type === 'agent_response_correction' && message.agent_response_correction_event) {
+      text = message.agent_response_correction_event.corrected_agent_response || '';
+      isAI = true;
+      isFinal = true;
+    } else {
+      text = message.message || '';
+      isAI = message.source === 'ai';
+      isFinal = message?.isFinal ?? message?.final ?? true;
+    }
 
     if (shouldDebugEleven() && isAI && text && !firstAiFinalizedRef.current) {
       firstAiMessageRef.current += text;
@@ -851,11 +869,10 @@ export default function VoiceInterviewWebSocket({
       };
 
       const explicitFinal =
-        message?.isFinal ||
-        message?.final ||
-        message?.type === 'agentresponse' ||
+        isFinal ||
         message?.type === 'agent_response' ||
-        message?.type === 'final';
+        message?.type === 'agent_response_correction' ||
+        (message?.text_response_part?.type === 'stop');
 
       if (explicitFinal) {
         finalize();
@@ -866,22 +883,19 @@ export default function VoiceInterviewWebSocket({
     
     if (text) {
       setTranscripts(prev => {
-        // Check if we should update the last message or add a new one
         const lastMessage = prev[prev.length - 1];
         if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
-          // Update the last message
-            return [
-              ...prev.slice(0, -1),
-            { ...lastMessage, text, isFinal: true }
+          return [
+            ...prev.slice(0, -1),
+            { ...lastMessage, text, isFinal }
           ];
         }
-        // Add new message
-            return [
+        return [
           ...prev,
           {
             type: isAI ? 'ai' : 'student',
             text,
-                isFinal: true,
+            isFinal,
             timestamp: Date.now(),
           }
         ];
