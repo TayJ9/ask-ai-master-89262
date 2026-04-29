@@ -78,8 +78,10 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
 
       if (isLogin) {
         // Validate response structure
-        if (!data.token || !data.user) {
-          throw new Error('Invalid response from server. Missing token or user data.');
+        if (data == null || !data.token || !data.user) {
+          throw new Error(
+            'Could not reach the API or the response was empty. Start the backend (npm run dev:backend) and ensure its PORT matches frontend/vite.config.ts proxy.'
+          );
         }
         
         // Trim token to ensure no leading/trailing whitespace
@@ -151,16 +153,25 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
   };
 
   return (
-    <AnimatedBackground className="flex items-center justify-center p-4">
-      <Card className="w-full max-w-md shadow-lg animate-scale-in">
-        <CardHeader className="text-center space-y-4">
-          <div className="mx-auto w-16 h-16 rounded-full gradient-primary flex items-center justify-center shadow-glow">
-            <Mic className="w-8 h-8 text-white" />
+    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+      <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
+        <CardHeader className="space-y-4 text-center">
+          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md ring-1 ring-primary/20">
+            <Mic className="h-7 w-7" aria-hidden />
           </div>
-          <div>
-            <CardTitle className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent" data-testid="text-app-title">Mockly</CardTitle>
-            <CardDescription className="text-base mt-2">
-              Practice interviews with AI-powered feedback
+          <div className="space-y-1.5">
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              AI Interview Coach
+            </p>
+            <CardTitle
+              className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl"
+              data-testid="text-app-title"
+            >
+              Sign in to practice
+            </CardTitle>
+            <CardDescription className="text-balance text-base leading-relaxed">
+              Voice sessions tailored for students and early-career roles—save progress and review
+              results anytime.
             </CardDescription>
           </div>
         </CardHeader>
@@ -262,49 +273,60 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
               {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
             </Button>
 
-            {/* Demo Mode Divider */}
+            {/* Sample results (no account) */}
             <div className="relative my-6">
               <div className="absolute inset-0 flex items-center">
-                <div className="w-full border-t border-gray-300"></div>
+                <div className="w-full border-t border-border" />
               </div>
               <div className="relative flex justify-center text-sm">
-                <span className="px-2 bg-white text-gray-500">Or</span>
+                <span className="bg-card px-2 text-muted-foreground">Preview sample report</span>
               </div>
             </div>
 
-            {/* Quick Demo Buttons */}
             <div className="space-y-2">
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=true')}
-                className="group w-full border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-xl hover:scale-100 transition-[box-shadow,background-color,border-color] duration-300"
+                onClick={() => setLocation("/results?mock=true&interviewId=demo&demo=true")}
+                className="!grid w-full grid-cols-[auto_1fr_auto] items-center !gap-0 gap-x-2 border-primary/25 bg-primary/[0.03] px-2 py-2.5 text-foreground transition-all duration-500 ease-out hover:bg-primary/10 hover:text-foreground sm:gap-x-3 sm:px-3"
               >
-                <span className="inline-flex items-center group-hover:font-bold">
-                  <Zap className="w-4 h-4 mr-2 shrink-0" />
-                  Technical
+                <span
+                  className="invisible w-max select-none rounded-full border border-transparent px-2 py-0.5 text-xs font-medium"
+                  aria-hidden
+                >
+                  Instant
                 </span>
-                <span className="ml-2 text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold">
-                  No Sign-Up
+                <span className="!flex min-w-0 w-full items-center justify-center gap-2 text-center text-balance text-sm">
+                  <Zap className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                  <span className="min-w-0 text-center">Technical (engineering)</span>
+                </span>
+                <span className="w-max justify-self-end rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  Instant
                 </span>
               </Button>
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setLocation('/results?mock=true&interviewId=demo&demo=business')}
-                className="group w-full border-2 border-teal-500 text-teal-700 hover:bg-teal-50 hover:border-teal-600 hover:text-teal-700 shadow-md hover:shadow-xl hover:scale-100 transition-[box-shadow,background-color,border-color] duration-300"
+                onClick={() => setLocation("/results?mock=true&interviewId=demo&demo=business")}
+                className="!grid w-full grid-cols-[auto_1fr_auto] items-center !gap-0 gap-x-2 border-secondary/25 bg-secondary/[0.06] px-2 py-2.5 text-foreground transition-all duration-500 ease-out hover:bg-secondary/12 hover:text-foreground sm:gap-x-3 sm:px-3"
               >
-                <span className="inline-flex items-center group-hover:font-bold">
-                  <Zap className="w-4 h-4 mr-2 shrink-0" />
-                  Non-Technical
+                <span
+                  className="invisible w-max select-none rounded-full border border-transparent px-2 py-0.5 text-xs font-medium"
+                  aria-hidden
+                >
+                  Instant
                 </span>
-                <span className="ml-2 text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-semibold">
-                  No Sign-Up
+                <span className="!flex min-w-0 w-full items-center justify-center gap-2 text-center text-balance text-sm">
+                  <Zap className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
+                  <span className="min-w-0 text-center">Non-technical (business, comms)</span>
+                </span>
+                <span className="w-max justify-self-end rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                  Instant
                 </span>
               </Button>
             </div>
-            <p className="text-xs text-center text-gray-500">
-              See sample results—Technical (engineering) or Non-Technical (marketing, business)
+            <p className="text-center text-xs text-muted-foreground">
+              Opens a full sample results view—useful for demos and stakeholders.
             </p>
           </form>
         </CardContent>

@@ -62,6 +62,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Sign-in/sign-up must always surface errors; other /auth/* calls may be optional in dev. */
+function isAuthSignInOrSignUp(path: string): boolean {
+  return path === '/api/auth/signin' || path === '/api/auth/signup';
+}
+
+function isNonCriticalApiPath(path?: string): boolean {
+  if (!path) return false;
+  if (isAuthSignInOrSignUp(path)) return false;
+  return path.includes('/auth/') || path.includes('/conversation-token');
+}
+
 /**
  * Handles API response errors and throws user-friendly errors
  */
@@ -70,7 +81,7 @@ export async function handleApiResponse(response: Response, path?: string): Prom
     // In development, if server returns 500 and we're on localhost, handle gracefully for non-critical endpoints
     const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
     const isDevMode = import.meta.env.DEV;
-    const isNonCriticalEndpoint = path && (path.includes('/auth/') || path.includes('/conversation-token'));
+    const isNonCriticalEndpoint = isNonCriticalApiPath(path);
     
     if (response.status === 500 && isDevMode && isLocalhost && isNonCriticalEndpoint) {
       console.warn(`[API] Server returned 500 for ${path} (server may not be running). This is OK in development.`);
@@ -158,9 +169,26 @@ export async function apiFetch(
     console.warn('[API] No token found for authenticated endpoint:', path);
   }
   
-  // Add timeout
+  // Add timeout while preserving caller-driven cancellation.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds
+  let abortReason: 'timeout' | 'external' | null = null;
+  const timeoutId = setTimeout(() => {
+    abortReason = 'timeout';
+    controller.abort();
+  }, 30000); // 30 seconds
+  const externalSignal = options.signal;
+  const onExternalAbort = () => {
+    abortReason = 'external';
+    controller.abort();
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
   
   try {
     const response = await fetch(url, {
@@ -170,16 +198,21 @@ export async function apiFetch(
     });
     
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
     return handleApiResponse(response, path);
   } catch (error: any) {
     clearTimeout(timeoutId);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
     
     // In development, if server is not available and we're on localhost, log but don't throw for non-critical endpoints
     const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
     const isDevMode = import.meta.env.DEV;
-    const isNonCriticalEndpoint = path.includes('/auth/') || path.includes('/conversation-token');
+    const isNonCriticalEndpoint = isNonCriticalApiPath(path);
     
     if (error.name === 'AbortError') {
+      if (abortReason === 'external') {
+        throw new ApiError('Request cancelled.', 499);
+      }
       if (isDevMode && isLocalhost && isNonCriticalEndpoint) {
         console.warn(`[API] Request to ${path} timed out (server may not be running). This is OK in development.`);
         return null; // Return null instead of throwing for non-critical endpoints in dev
@@ -197,8 +230,12 @@ export async function apiFetch(
         console.warn(`[API] Cannot connect to ${path} (server may not be running). This is OK in development.`);
         return null; // Return null for non-critical endpoints in dev
       }
+      const devHint =
+        isDevMode && isLocalhost
+          ? ' Start the backend in a second terminal: npm run dev:backend — and ensure backend PORT matches the proxy in frontend/vite.config.ts.'
+          : '';
       throw new ApiError(
-        'Unable to connect to the server. Please check your internet connection.',
+        `Unable to connect to the server.${devHint}`.trim(),
         0,
         error
       );
@@ -225,8 +262,9 @@ export async function apiPost(path: string, body?: any): Promise<any> {
 /**
  * Makes a GET request
  */
-export async function apiGet(path: string): Promise<any> {
+export async function apiGet(path: string, options: RequestInit = {}): Promise<any> {
   return apiFetch(path, {
+    ...options,
     method: 'GET',
   });
 }

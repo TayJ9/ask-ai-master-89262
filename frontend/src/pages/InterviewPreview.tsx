@@ -6,8 +6,11 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Mic, Volume2, Loader2, User, Headphones, ArrowLeft, Volume1, VolumeX } from "lucide-react";
-import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import { Mic, Loader2, User, Headphones, ArrowLeft, Volume1, VolumeX } from "lucide-react";
+import InterviewRoomBackground, {
+  interviewRoomCardClassName,
+  interviewRoomInsetPanelClassName,
+} from "@/components/ui/InterviewRoomBackground";
 import ChatGPTVoiceOrb from "@/components/ui/ChatGPTVoiceOrb";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
@@ -29,8 +32,7 @@ export default function InterviewPreview() {
 
   const isAiSpeaking = conversationMode === 'ai_speaking';
   
-  // Ambient sound hook
-  const { isLoaded: soundsLoaded, setVolume } = useAmbientSound(conversationMode, {
+  const { setVolume: setAmbientElementVolume } = useAmbientSound(conversationMode, {
     enabled: soundEnabled,
     volume: soundVolume
   });
@@ -43,9 +45,9 @@ export default function InterviewPreview() {
   };
 
   return (
-    <AnimatedBackground className="p-6 min-h-screen flex items-center justify-center">
+    <InterviewRoomBackground className="p-6 min-h-screen flex items-center justify-center">
       <div className="max-w-6xl mx-auto w-full">
-        <Card className="shadow-2xl border-2 border-primary/20 bg-white/90 backdrop-blur-md">
+        <Card className={interviewRoomCardClassName}>
           <CardContent className="p-8">
             {/* Header */}
             <div className="flex items-center justify-between mb-8">
@@ -83,6 +85,22 @@ export default function InterviewPreview() {
                     <VolumeX className="w-4 h-4" />
                   )}
                 </Button>
+                <div className="flex flex-col gap-1 min-w-[140px] max-w-[180px]">
+                  <span className="text-xs text-muted-foreground">Ambient volume</span>
+                  <Slider
+                    value={[soundVolume * 100]}
+                    onValueChange={(value) => {
+                      const v = value[0] / 100;
+                      setSoundVolume(v);
+                      setAmbientElementVolume(v);
+                    }}
+                    min={0}
+                    max={100}
+                    step={1}
+                    disabled={!soundEnabled}
+                    className="cursor-pointer"
+                  />
+                </div>
                 
                 <Button
                   onClick={() => setLocation('/')}
@@ -95,8 +113,8 @@ export default function InterviewPreview() {
             </div>
 
             {/* Mode Selector (for preview only) */}
-            <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-              <p className="text-sm font-medium text-blue-900 mb-3">Preview Mode Selector:</p>
+            <div className={`mb-6 p-4 ${interviewRoomInsetPanelClassName}`}>
+              <p className="text-sm font-medium text-neutral-800 mb-3">Preview mode</p>
               <div className="flex flex-wrap gap-2">
                 <Button
                   size="sm"
@@ -160,9 +178,15 @@ export default function InterviewPreview() {
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.65, delay: 0.5 }}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                  transition={{ duration: 0.65, delay: 0.5, ease: "easeOut" }}
+                  whileHover={{
+                    scale: 1.05,
+                    transition: { type: "tween", duration: 0.55, ease: [0.33, 1, 0.68, 1] },
+                  }}
+                  whileTap={{
+                    scale: 0.95,
+                    transition: { type: "tween", duration: 0.4, ease: [0.33, 1, 0.68, 1] },
+                  }}
                 >
                   <Button
                     onClick={() => handleModeChange('listening')}
@@ -206,6 +230,11 @@ export default function InterviewPreview() {
                       </div>
                       <span className="font-medium text-lg">AI is speaking...</span>
                     </div>
+                  ) : conversationMode === 'processing' ? (
+                    <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="font-medium text-lg">Processing your response...</span>
+                    </div>
                   ) : conversationMode === 'user_speaking' ? (
                     <div className="flex items-center justify-center gap-2 text-green-600">
                       <User className="w-5 h-5 animate-pulse" />
@@ -221,20 +250,20 @@ export default function InterviewPreview() {
 
                 {/* Volume Control Sliders for Testing */}
                 <motion.div 
-                  className="mb-6 p-4 bg-purple-50 border border-purple-200 rounded-lg max-w-md mx-auto"
+                  className={`mb-6 max-w-md mx-auto p-4 ${interviewRoomInsetPanelClassName}`}
                   initial={{ opacity: 0, y: -10 }}
                   animate={{ opacity: 1, y: 0 }}
                   transition={{ duration: 0.4, delay: 0.1 }}
                 >
-                  <p className="text-sm font-medium text-purple-900 mb-3">🎛️ Test Audio Reactivity:</p>
+                  <p className="text-sm font-medium text-neutral-800 mb-3">Test audio reactivity</p>
                   
                   {/* User Input Volume */}
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-medium text-purple-700">
-                        User Voice Volume
+                      <label className="text-xs font-medium text-neutral-600">
+                        User voice volume
                       </label>
-                      <span className="text-xs text-purple-600 font-mono">
+                      <span className="text-xs text-neutral-500 font-mono">
                         {Math.round(manualInputVolume * 100)}%
                       </span>
                     </div>
@@ -251,10 +280,10 @@ export default function InterviewPreview() {
                   {/* AI Output Volume */}
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <label className="text-xs font-medium text-purple-700">
-                        AI Voice Volume
+                      <label className="text-xs font-medium text-neutral-600">
+                        AI voice volume
                       </label>
-                      <span className="text-xs text-purple-600 font-mono">
+                      <span className="text-xs text-neutral-500 font-mono">
                         {Math.round(manualOutputVolume * 100)}%
                       </span>
                     </div>
@@ -268,8 +297,8 @@ export default function InterviewPreview() {
                     />
                   </div>
 
-                  <p className="text-xs text-purple-600 mt-3 text-center">
-                    Adjust sliders to see how the blob reacts to different audio levels
+                  <p className="text-xs text-neutral-500 mt-3 text-center">
+                    Adjust sliders to see how the orb reacts to different levels
                   </p>
                 </motion.div>
 
@@ -292,6 +321,6 @@ export default function InterviewPreview() {
           </CardContent>
         </Card>
       </div>
-    </AnimatedBackground>
+    </InterviewRoomBackground>
   );
 }

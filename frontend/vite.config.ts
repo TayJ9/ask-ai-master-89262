@@ -2,6 +2,29 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react-swc";
 import path from "path";
 
+/** When the API is down or on the wrong port, the default proxy error is often 500 + empty body — unusable for debugging. */
+function attachApiProxyErrorHandler(
+  proxy: { on: (ev: string, fn: (err: Error, req: unknown, res: unknown) => void) => void },
+  targetLabel: string
+) {
+  proxy.on("error", (err, _req, res) => {
+    const r = res as {
+      writeHead?: (code: number, headers: Record<string, string>) => void;
+      end?: (chunk: string) => void;
+      headersSent?: boolean;
+    };
+    if (r?.writeHead && typeof r.end === "function" && !r.headersSent) {
+      const body = JSON.stringify({
+        error: "Backend unreachable",
+        message: err?.message || String(err),
+        details: `Vite proxy could not reach ${targetLabel}. Start the API from backend/ (npm run dev) and set PORT in backend/.env to 3001 (see vite.config.ts).`,
+      });
+      r.writeHead(502, { "Content-Type": "application/json" });
+      r.end(body);
+    }
+  });
+}
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -21,21 +44,32 @@ export default defineConfig({
     proxy: {
       // Proxy API requests to the backend server
       '/api': {
-        target: 'http://localhost:3001',
+        // Use 127.0.0.1 (not "localhost") on Windows — some Node proxy stacks
+        // resolve localhost to IPv6 first and can hang or fail to connect.
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
+        configure(proxy) {
+          attachApiProxyErrorHandler(proxy, "http://127.0.0.1:3001");
+        },
       },
       // Proxy WebSocket requests for voice interviews
       '/voice': {
-        target: 'ws://localhost:3001',
+        target: 'ws://127.0.0.1:3001',
         ws: true,
         changeOrigin: true,
+        configure(proxy) {
+          attachApiProxyErrorHandler(proxy, "ws://127.0.0.1:3001");
+        },
       },
       // Proxy webhooks to backend
       '/webhooks': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
         secure: false,
+        configure(proxy) {
+          attachApiProxyErrorHandler(proxy, "http://127.0.0.1:3001");
+        },
       },
     },
   },

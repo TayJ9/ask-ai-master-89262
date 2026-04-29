@@ -35,32 +35,15 @@ import InterviewPreview from "./pages/InterviewPreview";
 const transition = defaultFadeTransition;
 const pageVariants = fadeInVariants;
 
-// Static styles - avoid object allocation on every render
-const CONTAINER_STYLE: React.CSSProperties = {
-  width: "100%",
-  minHeight: "100vh",
-  position: "relative",
-  background: "#ffffff",
-};
 const PAGE_WRAPPER_STYLE: React.CSSProperties = {
   width: "100%",
   minHeight: "100vh",
   position: "relative",
 };
-const PAGE_BG_STYLE: React.CSSProperties = {
-  position: "absolute",
-  top: 0,
-  left: 0,
-  right: 0,
-  bottom: 0,
-  background: "#FFF8F0",
-  zIndex: -1,
-  opacity: 0.95,
-};
 const OVERLAY_STYLE: React.CSSProperties = {
   position: "fixed",
   inset: 0,
-  background: "#ffffff",
+  background: "hsl(var(--background))",
   zIndex: 9998,
   pointerEvents: "none",
   transform: "translateZ(0)", // GPU compositing for smooth animation
@@ -83,7 +66,7 @@ const AppContent = () => {
   devLog.log("[AppContent] Rendering with location:", location);
 
   return (
-    <div style={CONTAINER_STYLE}>
+    <div className="relative min-h-screen w-full bg-background">
       <AnimatePresence mode="wait" initial={false}>
         <motion.div
           key={location}
@@ -94,7 +77,7 @@ const AppContent = () => {
           transition={transition}
           style={PAGE_WRAPPER_STYLE}
         >
-          <div style={PAGE_BG_STYLE} aria-hidden="true" />
+          <div className="app-page-tint" aria-hidden="true" />
           <Switch>
             <Route path="/" component={Index} />
             <Route path="/results" component={Results} />
@@ -152,16 +135,8 @@ const App = () => {
   if (!reactReady) {
     return (
       <AppErrorBoundary>
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: '100vh',
-          fontFamily: 'system-ui, -apple-system, sans-serif'
-        }}>
-          <div style={{ textAlign: 'center' }}>
-            <p>Initializing application...</p>
-          </div>
+        <div className="flex min-h-screen items-center justify-center bg-background font-sans text-muted-foreground">
+          <p className="text-center text-sm">Initializing application…</p>
         </div>
       </AppErrorBoundary>
     );

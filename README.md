@@ -1,73 +1,36 @@
-# Welcome to your Lovable project
+# AI Interview Coach
 
-## Project info
+Voice-first interview practice for students: conversational practice with an AI interviewer, resume-aware questions, and structured feedback after each session.
 
-**URL**: https://lovable.dev/projects/a1475154-3cdc-446e-8b00-b5db38a759b8
+## Stack
 
-## How can I edit this code?
+- **Frontend**: React, Vite, TypeScript, Tailwind, shadcn/ui (`frontend/`)
+- **Backend**: Express, WebSockets, Drizzle (`backend/`)
+- **Voice**: ElevenLabs Conversational AI; optional **Hugging Face** inference for resume NER/summarization (`HUGGINGFACE_TOKEN` in backend `.env`)
 
-There are several ways of editing your application.
+## Quick start (local)
 
-**Use Lovable**
-
-Simply visit the [Lovable Project](https://lovable.dev/projects/a1475154-3cdc-446e-8b00-b5db38a759b8) and start prompting.
-
-Changes made via Lovable will be committed automatically to this repo.
-
-**Use your preferred IDE**
-
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
-
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
-
-Follow these steps:
-
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+```bash
+npm run install:all
 ```
 
-**Edit a file directly in GitHub**
+Then follow **[LOCAL_DEV_SETUP.md](./LOCAL_DEV_SETUP.md)** for `.env`, ports, and running backend + frontend.
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+## Deploy
 
-**Use GitHub Codespaces**
+Production layout:** **[VERCEL_RAILWAY_SETUP.md](./VERCEL_RAILWAY_SETUP.md)** (Vercel frontend, Railway API + Postgres).
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
+## Docs
 
-## What technologies are used for this project?
+| Document | Purpose |
+| -------- | ------- |
+| [LOCAL_DEV_SETUP.md](./LOCAL_DEV_SETUP.md) | Local `.env`, SQLite/Postgres, dev commands |
+| [VERCEL_RAILWAY_SETUP.md](./VERCEL_RAILWAY_SETUP.md) | Deploy frontend and API |
+| [TECHNICAL_OVERVIEW.md](./TECHNICAL_OVERVIEW.md) | Product and architecture summary |
+| [backend/DATABASE_SETUP.md](./backend/DATABASE_SETUP.md) | Migrations / tables |
+| [backend/ENVIRONMENT_VARIABLES.md](./backend/ENVIRONMENT_VARIABLES.md) | Env reference |
+| [ELEVENLABS_AGENT_TEMPLATE.md](./ELEVENLABS_AGENT_TEMPLATE.md) | Agent / dynamic variables template |
 
-This project is built with:
+## Optional: Python voice proxy
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/a1475154-3cdc-446e-8b00-b5db38a759b8) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+If you use the separate Flask service under `python_backend/` for audio proxying, set `PYTHON_BACKEND_URL` in the backend `.env` (see `ENVIRONMENT_VARIABLES.md`).

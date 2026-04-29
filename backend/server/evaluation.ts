@@ -9,6 +9,7 @@ import { db } from "./db";
 import { interviews, interviewEvaluations, insertInterviewEvaluationSchema } from "../shared/schema";
 import { eq } from "drizzle-orm";
 import { scoreInterview } from "./llm/openaiEvaluator";
+import { stripResumeContactInfo } from "./resumeSanitize";
 import { randomUUID } from "crypto";
 
 // Evaluation job queue configuration
@@ -34,6 +35,83 @@ class EvaluationQueue {
   constructor() {
     // Start health check on initialization
     this.startHealthCheck();
+    this.recoverPersistedEvaluations();
+  }
+
+  private isJobQueued(interviewId: string): boolean {
+    return this.queue.some((job) => job.interviewId === interviewId);
+  }
+
+  private scheduleJob(job: EvaluationJob): boolean {
+    if (this.isJobQueued(job.interviewId)) {
+      console.log(`[EVALUATION] Job already queued for interview ${job.interviewId} - skipping duplicate in-memory enqueue`);
+      return false;
+    }
+
+    this.queue.push(job);
+    return true;
+  }
+
+  /**
+   * Recover persisted rows after process startup. Jobs are durable in the DB, but the
+   * in-memory queue is not, so pending/processing rows need to be rehydrated.
+   */
+  private async recoverPersistedEvaluations(): Promise<void> {
+    try {
+      const persistedEvaluations = await (db.query as any).interviewEvaluations?.findMany({
+        where: (evaluations: any, { or, eq }: any) => or(
+          eq(evaluations.status, 'pending'),
+          eq(evaluations.status, 'processing')
+        ),
+      }) || [];
+
+      if (persistedEvaluations.length === 0) return;
+
+      console.log(`[EVALUATION] Startup recovery found ${persistedEvaluations.length} persisted evaluation job(s)`);
+
+      for (const evaluationRecord of persistedEvaluations) {
+        const interview = await (db.query as any).interviews?.findFirst({
+          where: (interviews: any, { eq }: any) => eq(interviews.id, evaluationRecord.interviewId),
+        });
+
+        if (interview?.transcript) {
+          if (evaluationRecord.status === 'processing') {
+            await db.update(interviewEvaluations)
+              .set({
+                status: 'pending',
+                error: evaluationRecord.error || 'Evaluation recovered after server restart',
+                updatedAt: new Date(),
+              })
+              .where(eq(interviewEvaluations.interviewId, evaluationRecord.interviewId));
+          }
+
+          const queued = this.scheduleJob({
+            interviewId: evaluationRecord.interviewId,
+            conversationId: interview.conversationId || '',
+            retries: 0,
+          });
+
+          if (queued) {
+            console.log(`[EVALUATION] Recovered evaluation job for interview ${evaluationRecord.interviewId}`);
+          }
+        } else {
+          console.log(`[EVALUATION] Marking persisted evaluation as failed (no transcript): ${evaluationRecord.interviewId}`);
+          await db.update(interviewEvaluations)
+            .set({
+              status: 'failed',
+              error: 'Evaluation recovered after restart but interview is missing or has no transcript available',
+              updatedAt: new Date(),
+            })
+            .where(eq(interviewEvaluations.interviewId, evaluationRecord.interviewId));
+        }
+      }
+
+      if (!this.processing && this.queue.length > 0) {
+        this.processQueue();
+      }
+    } catch (error: any) {
+      console.error('[EVALUATION] Error during startup recovery:', error);
+    }
   }
 
   /**
@@ -123,6 +201,12 @@ class EvaluationQueue {
       where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
     });
 
+    // Decide row action: 'insert' (no existing row), 'reset' (reuse existing row), or skip-by-return.
+    // Never insert a second row for the same interviewId; interview_evaluations has no unique
+    // constraint on interview_id in all environments (see schema-repair.ts), so duplicate inserts
+    // would make later findFirst() calls non-deterministic.
+    let rowAction: 'insert' | 'reset' = 'insert';
+
     if (existing) {
       console.log(`[EVALUATION] Existing evaluation found`, {
         interviewId,
@@ -135,53 +219,85 @@ class EvaluationQueue {
         console.log(`[EVALUATION] ✅ Evaluation already complete for interview ${interviewId} - skipping`);
         return;
       }
+
+      if (existing.status === 'processing') {
+        // A worker is already running this job; do not push another one.
+        console.log(`[EVALUATION] 🏃 Evaluation already processing for interview ${interviewId} - skipping duplicate enqueue`);
+        return;
+      }
+
       if (existing.status === 'pending') {
-        // Check if it's stalled (pending for too long)
         const createdAt = new Date(existing.createdAt);
         const ageMs = Date.now() - createdAt.getTime();
-        
+
         if (ageMs > this.STALLED_THRESHOLD_MS) {
           console.log(`[EVALUATION] ⚠️ Found stalled pending evaluation for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - retrying`);
-          // Don't return - continue to re-enqueue
+          rowAction = 'reset';
         } else {
           console.log(`[EVALUATION] ⏳ Evaluation already pending for interview ${interviewId} (age: ${Math.round(ageMs / 1000)}s) - skipping duplicate`);
           return;
         }
+      } else if (existing.status === 'failed') {
+        console.log(`[EVALUATION] 🔁 Previous evaluation failed for interview ${interviewId} - retrying`);
+        rowAction = 'reset';
+      } else {
+        // Unknown status: reuse the row rather than create a duplicate.
+        console.log(`[EVALUATION] ℹ️ Existing evaluation has unknown status "${existing.status}" for interview ${interviewId} - resetting to pending`);
+        rowAction = 'reset';
       }
     } else {
       console.log(`[EVALUATION] No existing evaluation found - creating new one`);
     }
 
-    // Create pending evaluation record
-    try {
-      const evaluationData = insertInterviewEvaluationSchema.parse({
-        interviewId,
-        status: 'pending',
-      });
-      // SQLite doesn't have gen_random_uuid() or now() - provide id and timestamps explicitly
-      const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
-      const now = new Date();
-      const evaluationValues = isSqlite
-        ? { ...evaluationData, id: randomUUID(), createdAt: now, updatedAt: now }
-        : evaluationData;
-      await db.insert(interviewEvaluations).values(evaluationValues as any);
-      console.log(`[EVALUATION] ✅ Created pending evaluation record for interview ${interviewId}`);
-    } catch (error: any) {
-      // If it already exists, that's fine - continue
-      const errorMessage = error?.message || String(error);
-      if (!errorMessage.includes('duplicate') && !errorMessage.includes('unique')) {
-        console.error(`[EVALUATION] ❌ Error creating evaluation record:`, {
-          error: errorMessage,
+    if (rowAction === 'insert') {
+      try {
+        const evaluationData = insertInterviewEvaluationSchema.parse({
+          interviewId,
+          status: 'pending',
+        });
+        // SQLite doesn't have gen_random_uuid() or now() - provide id and timestamps explicitly
+        const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+        const now = new Date();
+        const evaluationValues = isSqlite
+          ? { ...evaluationData, id: randomUUID(), createdAt: now, updatedAt: now }
+          : evaluationData;
+        await db.insert(interviewEvaluations).values(evaluationValues as any);
+        console.log(`[EVALUATION] ✅ Created pending evaluation record for interview ${interviewId}`);
+      } catch (error: any) {
+        // If it already exists, that's fine - continue (race between findFirst and insert)
+        const errorMessage = error?.message || String(error);
+        if (!errorMessage.includes('duplicate') && !errorMessage.includes('unique')) {
+          console.error(`[EVALUATION] ❌ Error creating evaluation record:`, {
+            error: errorMessage,
+            interviewId,
+          });
+          throw error;
+        } else {
+          console.log(`[EVALUATION] Evaluation record already exists (race condition) - continuing`);
+        }
+      }
+    } else {
+      // Reuse the existing row: reset status so the UI reflects a retry and the worker
+      // treats this as a fresh job.
+      try {
+        await db.update(interviewEvaluations)
+          .set({ status: 'pending', error: null, updatedAt: new Date() })
+          .where(eq(interviewEvaluations.interviewId, interviewId));
+        console.log(`[EVALUATION] ✅ Reset existing evaluation to pending for interview ${interviewId}`);
+      } catch (resetError: any) {
+        console.error(`[EVALUATION] ❌ Error resetting evaluation record (non-fatal, will still enqueue):`, {
+          error: resetError?.message || resetError,
           interviewId,
         });
-        throw error;
-      } else {
-        console.log(`[EVALUATION] Evaluation record already exists (race condition) - continuing`);
       }
     }
 
     // Add to queue
-    this.queue.push({ interviewId, conversationId, retries: 0 });
+    const queued = this.scheduleJob({ interviewId, conversationId, retries: 0 });
+    if (!queued) {
+      return;
+    }
+
     console.log(`[EVALUATION] 📥 Enqueued evaluation job`, {
       interviewId,
       conversationId,
@@ -249,10 +365,10 @@ class EvaluationQueue {
         const delay = RETRY_DELAY_MS * Math.pow(2, retries); // Exponential backoff
         console.log(`[EVALUATION] Retrying evaluation for interview ${interviewId} after ${delay}ms`);
         
-        // Update error status
+        // Keep retrying jobs non-terminal so the Results page continues polling.
         await db.update(interviewEvaluations)
           .set({
-            status: 'failed',
+            status: 'pending',
             error: `Attempt ${retries + 1} failed: ${error.message}`,
             updatedAt: new Date(),
           })
@@ -260,7 +376,7 @@ class EvaluationQueue {
 
         // Re-enqueue with incremented retries
         setTimeout(() => {
-          this.queue.push({ ...job, retries: retries + 1 });
+          this.scheduleJob({ ...job, retries: retries + 1 });
           if (!this.processing) {
             this.processQueue();
           }
@@ -311,9 +427,9 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     throw new Error(`Interview ${interviewId} has no transcript`);
   }
 
-  // Parse transcript into question-answer pairs
+  // Parse transcript into question-answer pairs (with HF fallback when regex fails)
   console.log(`[EVALUATION] 📝 Parsing transcript into Q&A pairs...`);
-  const qaPairs = parseTranscript(interview.transcript);
+  const qaPairs = await parseTranscriptWithFallback(interview.transcript);
 
   console.log(`[EVALUATION] ✅ Parsed transcript`, {
     interviewId,
@@ -362,7 +478,7 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
 
     if (resume) {
       if (resume.resumeFulltext) {
-        resumeText = resume.resumeFulltext;
+        resumeText = stripResumeContactInfo(resume.resumeFulltext);
         console.log(`[EVALUATION] ✅ Found resume text`, {
           resumeLength: resumeText.length,
         });
@@ -586,20 +702,29 @@ export function parseTranscript(transcript: string): Array<{ question: string; a
     console.log('[PARSE_TRANSCRIPT] Strategy 2 result:', { pairsFound: pairs.length });
   }
   
-  // Strategy 3: Fallback - split by sentence endings
+  // Strategy 3: Fallback - split by sentence endings (keep trailing .?! on each segment)
   if (pairs.length === 0) {
     console.log('[PARSE_TRANSCRIPT] Strategy 3 (sentence splitting)');
-    const sentences = transcript.split(/[.!?]+/).filter(s => s.trim().length > 10);
-    
-    // Try pairing sentences - assume odd-indexed are questions, even-indexed are answers
-    // But only if we have question marks or question words
+    const bits = transcript.split(/([.!?]+)/);
+    const sentences: string[] = [];
+    for (let i = 0; i < bits.length; i += 2) {
+      const body = (bits[i] ?? "").trim();
+      const punct = (bits[i + 1] ?? "").trim();
+      if (body.length === 0) continue;
+      const s = (body + punct).trim();
+      if (s.length > 10) sentences.push(s);
+    }
+
     const hasQuestionMarks = transcript.includes('?');
-    
+    const looksLikeQuestionSentence = (q: string) =>
+      q.endsWith('?') ||
+      /\b(what|how|why|when|where|who|can|could|would|should|tell|describe|explain)\b/i.test(q);
+
     if (hasQuestionMarks && sentences.length >= 2) {
       for (let i = 0; i < sentences.length - 1; i += 2) {
         const question = sentences[i].trim();
         const answer = sentences[i + 1].trim();
-        if (question.length > 10 && answer.length > 10 && question.includes('?')) {
+        if (question.length > 10 && answer.length > 10 && looksLikeQuestionSentence(question)) {
           pairs.push({ question, answer });
         }
       }
@@ -613,7 +738,7 @@ export function parseTranscript(transcript: string): Array<{ question: string; a
         }
       }
     }
-    
+
     console.log('[PARSE_TRANSCRIPT] Strategy 3 result:', { pairsFound: pairs.length });
   }
   
@@ -631,6 +756,31 @@ export function parseTranscript(transcript: string): Array<{ question: string; a
   });
   
   return validPairs;
+}
+
+/**
+ * Parse transcript with Hugging Face fallback when regex strategies return 0 pairs.
+ * Use this when transcript format may be non-standard (e.g., different speaker labels).
+ */
+export async function parseTranscriptWithFallback(
+  transcript: string
+): Promise<Array<{ question: string; answer: string }>> {
+  const pairs = parseTranscript(transcript);
+  if (pairs.length > 0) return pairs;
+
+  // Priority 2: HF fallback when regex parsing fails
+  try {
+    const { parseTranscriptWithHF } = await import("./llm/transcriptParserHF");
+    const hfPairs = await parseTranscriptWithHF(transcript);
+    if (hfPairs.length > 0) {
+      console.log("[PARSE_TRANSCRIPT] HF fallback succeeded:", hfPairs.length, "pairs");
+      return hfPairs;
+    }
+  } catch (err: any) {
+    console.warn("[PARSE_TRANSCRIPT] HF fallback skipped:", err?.message || err);
+  }
+
+  return [];
 }
 
 

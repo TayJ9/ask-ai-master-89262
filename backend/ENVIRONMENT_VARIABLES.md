@@ -33,11 +33,9 @@ These environment variables **must** be set for your Railway deployment to work:
   - Create a new API key
   - Copy the key (you can only see it once!)
 - **Used in**: 
-  - `server/openai.ts` - AI text-to-speech, speech-to-text, analysis
-  - `server/routes.ts` - Resume upload parsing
-  - `server/scoring.ts` - Interview scoring
-  - `backend/voiceServer.js` - Voice interview WebSocket
-  - `backend/upload.js` - Resume parsing
+  - `server/routes.ts` — resume text and interview flows
+  - `server/llm/` — evaluation and related helpers where configured
+  - `voiceServer.js` — voice interview WebSocket
 
 ### 4. `NODE_ENV` ⚠️ **REQUIRED (Production)**
 - **Purpose**: Sets the application environment mode
@@ -52,13 +50,19 @@ These environment variables **must** be set for your Railway deployment to work:
 
 These have default values but can be customized:
 
-### 5. `PORT` (Optional - Railway sets automatically)
+### 5. `TRUST_PROXY_HOPS` (Optional — behind Railway/Vercel/reverse proxy)
+
+- **Purpose:** Number of proxy hops Express should trust for `req.ip` (rate limiting, logging).
+- **Default in code:** `1` if unset.
+- **When to raise:** Unusual multi-proxy setups only.
+
+### 6. `PORT` (Optional - Railway sets automatically)
 - **Purpose**: Port number for the server to listen on
 - **Default**: `5000`
 - **Note**: Railway automatically sets this - **don't override it**
-- **Used in**: `server/index.ts`, `server.js`
+- **Used in**: `server/index.ts`
 
-### 6. `PYTHON_BACKEND_URL` (Optional)
+### 7. `PYTHON_BACKEND_URL` (Optional)
 - **Purpose**: URL for Python backend service (if using separate Python service)
 - **Default**: `http://127.0.0.1:5001`
 - **When to use**: Only if you're running a separate Python Flask backend

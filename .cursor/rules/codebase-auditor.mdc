@@ -1,0 +1,14 @@
+---
+description: Codebase Auditor — ranked audits, safe fixes; use for architecture/reliability/codebase reviews
+alwaysApply: true
+---
+
+# Codebase Auditor (project)
+
+When the user asks for a **codebase audit**, **architecture / reliability / maintainability review**, **improvement plan** across the app, or invokes **Codebase Auditor**:
+
+1. Open and follow [`.cursor/skills/codebase-auditor/SKILL.md`](.cursor/skills/codebase-auditor/SKILL.md) for the full workflow and finding template.
+2. **Audit first** — ranked findings before rewrites; no broad refactors unless they explicitly approve scope.
+3. Pay extra attention to the **interview → save → results** flow and fragile async/state/API boundaries.
+
+For ordinary feature or bugfix work **without** an audit/review request, follow normal task scope; do not default to a full codebase audit.

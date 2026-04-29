@@ -11,6 +11,7 @@ Ensure the ElevenLabs agent system prompt and first message use these exact plac
 {{technical_difficulty}} — Question difficulty level (default: "intermediate")
 {{technical_depth}}    — Technical depth (default: "standard")
 {{behavioral_ratio}}   — Behavioral vs technical ratio, string (default: "60")
+{{question_bank}}     — Curated interview questions by year (default: junior-level questions)
 ```
 
 Example first message:
@@ -23,4 +24,7 @@ Example system prompt context:
 Candidate resume summary: {{resume_summary}}
 Candidate highlights: {{resume_highlights}}
 Difficulty: {{technical_difficulty}}, depth: {{technical_depth}}, behavioral ratio: {{behavioral_ratio}}
+
+Sample questions to draw from (adapt to candidate's resume and major):
+{{question_bank}}
 ```

@@ -32,6 +32,7 @@ The backend `.env` file should already exist at `backend/.env` with:
 - `JWT_SECRET` (local dev secret)
 - `OPENAI_API_KEY` (your OpenAI key)
 - `ELEVENLABS_API_KEY` (your ElevenLabs key)
+- `HUGGINGFACE_TOKEN` (optional) – for resume NER and summarization; get from https://huggingface.co/settings/tokens
 
 If `.env` is missing, create it:
 ```bash
@@ -76,23 +77,31 @@ npm run dev:frontend
 - **Backend API**: http://localhost:3000/api/*
 - **Health Check**: http://localhost:3000/health
 
-## How It Works
+### Step 5 (optional): Dev test login (no secrets in Git)
 
-1. **Vite Proxy**: The frontend automatically proxies `/api/*` requests to `http://localhost:3000`
-2. **No Environment Variables Needed**: For local dev, the frontend uses relative URLs
-3. **Hot Reload**: Both servers support hot reload - changes reflect immediately
+1. Add to **`backend/.env`** (never commit this file):
 
-## Testing the TDZ Fix
+   ```bash
+   DEV_TEST_PASSWORD=your_local_password_at_least_8_chars
+   # optional:
+   # DEV_TEST_EMAIL=dev@localhost.test
+   # DEV_TEST_FULL_NAME=Local Dev User
+   ```
 
-After starting both servers:
+2. From **`backend/`**, run:
 
-1. Open http://localhost:5173 in your browser
-2. Sign in or create an account
-3. Navigate to the interview page
-4. Click "Start Interview"
-5. Check the browser console - you should **NOT** see:
-   - `ReferenceError: Cannot access 'k' before initialization`
-6. The interview should start successfully
+   ```bash
+   npm run create-test-user
+   ```
+
+3. Sign in at http://localhost:5173 with `DEV_TEST_EMAIL` (default `dev@localhost.test`) and your `DEV_TEST_PASSWORD`.
+
+The script refuses to run when `NODE_ENV=production`. Placeholder variable names only live in **`.env.example`**; real passwords stay in **`.env`**.
+
+## How it works
+
+1. **Vite proxy**: The frontend proxies `/api/*` to the backend (see `frontend/vite.config.ts` for the target port).
+2. **Hot reload**: Both servers reload on save.
 
 ## Troubleshooting
 
@@ -150,8 +159,6 @@ OPENAI_API_KEY=sk-your-key-here
 4. **Check console** - for any errors or warnings
 5. **No deployment needed** - test everything locally first!
 
-## Next Steps
+## Next steps
 
-- Test the interview start flow
-- Verify no TDZ errors in console
-- Test all features locally before deploying
+- Run through sign-in, upload resume, and a short voice session before deploying.

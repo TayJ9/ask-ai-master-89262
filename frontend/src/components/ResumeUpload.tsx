@@ -45,7 +45,7 @@ function checkResumeContent(text: string): { ok: boolean; reason?: string } {
 }
 
 interface ResumeUploadProps {
-  onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => void;
+  onResumeUploaded: (resumeText: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string; resume_summary?: string; resume_highlights?: string; skills?: string[] }) => void;
   onSkip: () => void;
   onBack?: () => void;
 }
@@ -60,10 +60,22 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   const [resumeWarning, setResumeWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const isCandidateProfileComplete =
+    Boolean(candidateFirstName.trim()) && Boolean(candidateMajor.trim()) && Boolean(candidateYear.trim());
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+
+    if (!isCandidateProfileComplete) {
+      toast({
+        title: "Complete your profile first",
+        description: "Enter your first name, major/field, and academic level before uploading a resume.",
+        variant: "destructive",
+      });
+      event.target.value = "";
+      return;
+    }
 
     // Log file details before upload for debugging
     devLog.log('Uploading file:', {
@@ -184,13 +196,16 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
         resumeTextLength: data.resumeText?.length || 0
       });
       
-      // Store sessionId and candidate info
+      // Store sessionId and candidate info (include HF-enhanced summary/highlights when available)
       const candidateInfo = {
         firstName: candidateFirstName.trim(),
         major: candidateMajor.trim(),
         year: candidateYear.trim(),
         sessionId: data.sessionId,
-        resumeSource: "pdf_upload"
+        resumeSource: "pdf_upload",
+        resume_summary: data.resume_summary,
+        resume_highlights: data.resume_highlights,
+        skills: data.resumeProfile?.skills,
       };
       
       // Extract resume text from parsed data if available
@@ -360,17 +375,52 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   };
 
   return (
-    <AnimatedBackground className="p-6 flex items-center justify-center">
+    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1] }}
-        className="max-w-2xl w-full"
+        className="w-full max-w-2xl"
       >
-      <Card className="shadow-xl">
+      <ol
+        className="mb-6 flex items-center justify-center gap-1 text-[11px] font-medium text-muted-foreground sm:text-xs"
+        aria-label="Setup steps"
+      >
+        <li className="flex items-center gap-1.5 rounded-full bg-primary px-2.5 py-1 text-primary-foreground transition-colors duration-500 ease-out sm:px-3">
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary-foreground/20 text-[11px] font-semibold text-primary-foreground transition-colors duration-500 ease-out">
+            1
+          </span>
+          <span className="hidden sm:inline">Profile</span>
+        </li>
+        <li aria-hidden className="h-px w-6 bg-border sm:w-10" />
+        <li
+          className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 transition-colors duration-500 ease-out sm:px-3 ${
+            isCandidateProfileComplete
+              ? "bg-primary text-primary-foreground"
+              : "border border-border bg-card text-muted-foreground"
+          }`}
+        >
+          <span
+            className={`flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold transition-colors duration-500 ease-out ${
+              isCandidateProfileComplete
+                ? "bg-primary-foreground/20 text-primary-foreground"
+                : "bg-muted text-muted-foreground"
+            }`}
+          >
+            2
+          </span>
+          <span className="hidden sm:inline">Resume</span>
+        </li>
+        <li aria-hidden className="h-px w-6 bg-border sm:w-10" />
+        <li className="flex items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-1 opacity-70 sm:px-3">
+          <span className="font-semibold">3</span>
+          <span className="hidden sm:inline">Interview</span>
+        </li>
+      </ol>
+      <Card className="overflow-hidden border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
         <CardHeader>
           <motion.div 
-            className="flex items-start justify-between mb-2"
+            className="mb-3 flex items-start justify-between"
             initial={{ opacity: 0, x: -10 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ duration: 0.45, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
@@ -391,11 +441,13 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.3 }}
+            transition={{ duration: 0.55, delay: 0.2 }}
+            className="space-y-2"
           >
-            <CardTitle className="text-3xl">Upload Your Resume</CardTitle>
-            <CardDescription className="text-base">
-              Upload your resume and provide your information to help personalize your interview.
+            <CardTitle className="text-2xl tracking-tight sm:text-3xl">Tailor the interview to you</CardTitle>
+            <CardDescription className="text-base leading-relaxed">
+              Add your name and academic context, then upload a PDF or paste text. We use this to steer
+              questions and scoring—never to replace your own voice in the room.
             </CardDescription>
           </motion.div>
         </CardHeader>
@@ -464,15 +516,16 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
                 type="file"
                 accept=".pdf"
                 onChange={handleFileUpload}
+                disabled={!isCandidateProfileComplete || isUploading}
                 className="hidden"
               />
               <Button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={isUploading || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+                disabled={isUploading || !isCandidateProfileComplete}
                 variant="outline"
                 className="flex items-center gap-2"
               >
-                <Upload className="w-4 h-4" />
+                <Upload className={`w-4 h-4 transition-colors ${isCandidateProfileComplete ? "text-primary" : "text-muted-foreground"}`} />
                 {isUploading ? "Uploading..." : "Upload PDF"}
               </Button>
               {uploadedFileName && (
@@ -510,15 +563,19 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             <div className="space-y-2">
               <label className="text-sm font-medium">Paste Resume Text</label>
               <Textarea
-                placeholder="Paste your resume text here... (e.g., skills, experience, education)"
+                placeholder={
+                  isCandidateProfileComplete
+                    ? "Paste your resume text here... (e.g., skills, experience, education)"
+                    : "Enter your first name, major/field, and academic level before adding resume text."
+                }
                 value={resumeText}
                 onChange={(e) => setResumeText(e.target.value)}
                 className="min-h-[200px] resize-none"
-                disabled={isUploading}
+                disabled={isUploading || !isCandidateProfileComplete}
               />
               <Button
                 onClick={handleTextPaste}
-                disabled={isUploading || !resumeText.trim() || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+                disabled={isUploading || !resumeText.trim() || !isCandidateProfileComplete}
                 variant="outline"
                 size="sm"
                 className="w-full"
@@ -582,7 +639,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
             </Button>
             <Button
               onClick={handleContinue}
-              disabled={!resumeText.trim() || isUploading || !candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()}
+              disabled={!resumeText.trim() || isUploading || !isCandidateProfileComplete}
               className="flex-1 gradient-primary text-white"
             >
               Continue with Resume

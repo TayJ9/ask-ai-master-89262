@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { stripResumeContactInfo } from "../resumeSanitize";
 
 // STAR breakdown rating: strong | weak | missing
 const StarRatingSchema = z.enum(["strong", "weak", "missing"]);
@@ -313,9 +314,13 @@ export async function scoreInterview({
   }
   const context = contextParts.length > 0 ? `\n\nContext: ${contextParts.join(", ")}` : "";
 
-  // Build resume context
-  const resumeContext = resumeText 
-    ? `\n\nCANDIDATE RESUME:\n${resumeText.substring(0, 2000)}${resumeText.length > 2000 ? '...' : ''}\n\nWhen evaluating, consider whether answers align with skills/experience mentioned in the resume.`
+  const safeResumeText = resumeText?.trim()
+    ? stripResumeContactInfo(resumeText.trim())
+    : "";
+
+  // Build resume context (never send email/phone to OpenAI)
+  const resumeContext = safeResumeText
+    ? `\n\nCANDIDATE RESUME:\n${safeResumeText.substring(0, 2000)}${safeResumeText.length > 2000 ? "..." : ""}\n\nWhen evaluating, consider whether answers align with skills/experience mentioned in the resume.`
     : "";
 
   // Build questions text

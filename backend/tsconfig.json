@@ -14,13 +14,13 @@
     "noUnusedParameters": false,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["../shared/*"]
+      "@shared/*": ["./shared/*"]
     },
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true
   },
-  "include": ["server/**/*", "../shared/**/*"],
+  "include": ["server/**/*", "shared/**/*"],
   "exclude": ["node_modules"]
 }
 

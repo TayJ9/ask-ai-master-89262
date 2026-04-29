@@ -1,4 +1,4 @@
-import { pgTable, text, uuid, integer, timestamp, varchar, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, uuid, integer, timestamp, varchar, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -103,7 +103,9 @@ export const interviews = pgTable("interviews", {
   endedAt: timestamp("ended_at"),
   status: text("status").notNull().default("completed"),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (table) => ({
+  conversationIdUnique: uniqueIndex("idx_interviews_conversation_id_unique").on(table.conversationId),
+}));
 
 export const insertInterviewSchema = createInsertSchema(interviews).omit({ 
   id: true, 
@@ -116,13 +118,15 @@ export type Interview = typeof interviews.$inferSelect;
 export const interviewEvaluations = pgTable("interview_evaluations", {
   id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
   interviewId: uuid("interview_id").notNull().references(() => interviews.id, { onDelete: "cascade" }),
-  status: text("status").notNull().default("pending"), // pending, complete, failed
+  status: text("status").notNull().default("pending"), // pending, processing, complete, failed
   overallScore: integer("overall_score"),
   evaluationJson: jsonb("evaluation_json"),
   error: text("error"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => ({
+  interviewIdUnique: uniqueIndex("idx_evaluations_interview_id_unique").on(table.interviewId),
+}));
 
 export const insertInterviewEvaluationSchema = createInsertSchema(interviewEvaluations).omit({ 
   id: true, 

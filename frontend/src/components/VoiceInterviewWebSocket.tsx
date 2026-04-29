@@ -2,7 +2,7 @@
  * PERF SUMMARY:
  * - Stable keys for transcript list (timestamp + index); PERF note for virtualization if list grows.
  * - Volume interval already threshold-based; ChatGPTVoiceOrb is memoized.
- * - Consider AnimatedBackground variant="minimal" for interview room to reduce GPU cost.
+ * - Interview uses InterviewRoomBackground (static) instead of AnimatedBackground to reduce GPU cost.
  */
 /**
  * Voice Interview Component using ElevenLabs Conversational AI SDK
@@ -12,12 +12,15 @@
 import { useState, useEffect, useRef, useCallback, useMemo, memo } from "react";
 import { useConversation } from "@elevenlabs/react";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
 import { Mic, Loader2, X, User, Headphones, Volume1, VolumeX } from "lucide-react";
-import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import InterviewRoomBackground, {
+  interviewRoomCardClassName,
+} from "@/components/ui/InterviewRoomBackground";
 import ChatGPTVoiceOrb from "@/components/ui/ChatGPTVoiceOrb";
-import { getApiUrl } from "@/lib/api";
+import { getApiUrl, apiPost, ApiError } from "@/lib/api";
 import { getYearToDifficulty } from "@/lib/yearToDifficulty";
 import { debugLog, initElevenWsDebug, shouldDebugEleven } from "@/lib/wsDebug";
 import { motion } from "framer-motion";
@@ -75,6 +78,8 @@ interface VoiceInterviewWebSocketProps {
     summary?: string;
     resumeText?: string;
     resumeSource?: string;
+    resume_summary?: string;
+    resume_highlights?: string;
   };
   onComplete: (results?: any) => void;
   /** Callback when interview ends via tool call (e.g., MarkInterviewComplete) */
@@ -90,7 +95,39 @@ interface TranscriptMessage {
   timestamp: number;
 }
 
+/** Plain text for /api/save-interview when ElevenLabs API/webhook has not stored a transcript yet (common in local dev). */
+function buildTranscriptForSave(messages: TranscriptMessage[]): string | undefined {
+  const lines: string[] = [];
+  for (const m of messages) {
+    const t = (m.text || '').trim();
+    if (!t) continue;
+    const label = m.type === 'ai' ? 'AI' : 'User';
+    lines.push(`${label}: ${t}`);
+  }
+  const s = lines.join('\n\n');
+  return s.length > 0 ? s : undefined;
+}
+
 type ConversationMode = 'ai_speaking' | 'listening' | 'user_speaking' | 'processing';
+
+/** Hysteresis: avoids user_speaking ↔ listening flutter near the noise floor */
+const MIC_SPEECH_ENTER_LEVEL = 0.04;
+const MIC_SPEECH_EXIT_LEVEL = 0.02;
+
+function computeConversationMode(params: {
+  status: string;
+  isSpeaking: boolean;
+  micSpeechLatched: boolean;
+  serverProcessing: boolean;
+  wasUserSpeaking: boolean;
+}): ConversationMode {
+  if (params.status !== 'connected') return 'listening';
+  if (params.isSpeaking) return 'ai_speaking';
+  if (params.micSpeechLatched) return 'user_speaking';
+  if (params.serverProcessing) return 'processing';
+  if (params.wasUserSpeaking && !params.isSpeaking) return 'processing';
+  return 'listening';
+}
 
 // PERF: Memoized row to avoid re-rendering unchanged transcript items when list grows.
 const TranscriptRow = memo(function TranscriptRow({ transcript }: { transcript: TranscriptMessage }) {
@@ -138,6 +175,10 @@ export default function VoiceInterviewWebSocket({
   }, []);
   const [statusMessage, setStatusMessage] = useState("Ready to begin");
   const [transcripts, setTranscripts] = useState<TranscriptMessage[]>([]);
+  const transcriptsRef = useRef<TranscriptMessage[]>([]);
+  useEffect(() => {
+    transcriptsRef.current = transcripts;
+  }, [transcripts]);
   const [isStarting, setIsStarting] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
   const [isIdle, setIsIdle] = useState(true); // Start in idle state - requires user click
@@ -186,7 +227,13 @@ export default function VoiceInterviewWebSocket({
   const lastIsSpeakingRef = useRef<boolean>(false); // Track previous AI speaking state
   const [serverProcessing, setServerProcessing] = useState(false); // Server-event-driven processing state (more reliable than volume heuristic)
   const serverProcessingTimeoutRef = useRef<NodeJS.Timeout | null>(null); // Safety timeout to clear serverProcessing
-  
+  const serverProcessingRef = useRef(false);
+  serverProcessingRef.current = serverProcessing;
+
+  const conversationModeRef = useRef<ConversationMode>('listening');
+  const [conversationMode, setConversationMode] = useState<ConversationMode>('listening');
+  const micSpeechLatchedRef = useRef(false);
+
   const { toast } = useToast();
 
   useEffect(() => {
@@ -229,7 +276,7 @@ export default function VoiceInterviewWebSocket({
     const savePromise = (async () => {
       // Always call save-interview with sessionId (always available)
     // conversationId is optional (may not be available)
-    const authToken = localStorage.getItem('auth_token');
+    // NOTE: auth token is attached by apiPost/apiFetch from localStorage; no need to read it here.
     // Get agentId with graceful fallback - don't throw error, just warn
     // Backend can handle missing agentId gracefully using getAgentId() fallback
     const agentId = agentIdRef.current || import.meta.env.VITE_ELEVENLABS_AGENT_ID;
@@ -243,17 +290,20 @@ export default function VoiceInterviewWebSocket({
     }
     
     // Make agent_id optional - backend can infer it if missing
+    const clientTranscript = buildTranscriptForSave(transcriptsRef.current);
     const payload: {
       client_session_id: string;
       conversation_id?: string;
       ended_by: string;
       agent_id?: string;
+      transcript?: string;
     } = {
       client_session_id: sessionId, // Always available
       conversation_id: convId || undefined, // Optional - may be null
       ended_by: endedBy,
       // Include agent_id only if available - backend will use getAgentId() fallback if missing
       ...(agentId ? { agent_id: agentId } : {}),
+      ...(clientTranscript ? { transcript: clientTranscript } : {}),
     };
 
     // Retry configuration
@@ -275,64 +325,53 @@ export default function VoiceInterviewWebSocket({
             conversation_id: payload.conversation_id || 'null/undefined',
             ended_by: payload.ended_by,
             agent_id: payload.agent_id,
+            clientTranscriptChars: payload.transcript?.length ?? 0,
             attempt: attempt + 1,
             timestamp: new Date().toISOString()
           });
           console.log('[FLIGHT_RECORDER] [INTERVIEW] Waiting for saveInterview() to complete...');
-          
-          const response = await fetch(
-            getApiUrl(`/api/save-interview`),
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-              },
-              body: JSON.stringify(payload),
-            }
-          );
-          
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ error: response.statusText }));
-            const error = new Error(errorData.error || `Failed to save interview: ${response.statusText}`);
-            
+
+          // Use shared apiPost so this request benefits from the app-wide 30s abort timeout
+          // and consistent error translation (ApiError) instead of a bare fetch.
+          let responseData: any;
+          try {
+            responseData = await apiPost('/api/save-interview', payload);
+          } catch (apiError: any) {
+            const statusCode = apiError instanceof ApiError ? apiError.statusCode : undefined;
+
             // Don't retry on 4xx errors (client errors) except 429 (rate limit)
-            if (response.status >= 400 && response.status < 500 && response.status !== 429) {
+            if (typeof statusCode === 'number' && statusCode >= 400 && statusCode < 500 && statusCode !== 429) {
               console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED (client error, no retry):', {
-                status: response.status,
-                statusText: response.statusText,
-                error: errorData.error || response.statusText,
+                status: statusCode,
+                error: apiError?.message,
                 timestamp: new Date().toISOString()
               });
-              throw error;
+              throw apiError;
             }
-            
-            // Retry on 5xx errors or 429 (rate limit)
+
+            // Retry on 5xx, 429, network errors, and timeouts
             console.error('[FLIGHT_RECORDER] [INTERVIEW] Save interview FAILED (will retry):', {
-              status: response.status,
-              statusText: response.statusText,
-              error: errorData.error || response.statusText,
+              status: statusCode ?? 'network/timeout',
+              error: apiError?.message,
               attempt: attempt + 1,
               timestamp: new Date().toISOString()
             });
-            lastError = error;
-            continue; // Retry
+            lastError = apiError;
+            continue;
           }
-          
-          const responseData = await response.json().catch(() => ({}));
+
           console.log('[FLIGHT_RECORDER] [INTERVIEW] Save complete - response:', {
-            status: response.status,
             responseData,
-            interviewId: responseData.interviewId || 'not provided',
+            interviewId: responseData?.interviewId || 'not provided',
             attempt: attempt + 1,
             timestamp: new Date().toISOString()
           });
-          
-          // Mark as saved only after successful save (status 200 and success: true)
-          if (response.ok && responseData.success) {
+
+          // Mark as saved only after backend confirms success
+          if (responseData?.success) {
             hasSavedInterviewRef.current = true;
           }
-          
+
           // Return the response data including interviewId for direct navigation
           return responseData;
         } catch (error: any) {
@@ -941,43 +980,26 @@ export default function VoiceInterviewWebSocket({
     onError: handleError,
   });
 
-  // Derive conversation mode from SDK state
-  // Prefer server events (user_transcript, agent_response, first audio) over volume heuristic for processing state
-  const getConversationMode = (): ConversationMode => {
-    if (conversation.status !== 'connected') {
-      return 'processing';
+  // Keep orb / ambient / status aligned with SDK + live input (mode also updated on 50ms volume tick)
+  useEffect(() => {
+    const mode = computeConversationMode({
+      status: conversation.status,
+      isSpeaking: conversation.isSpeaking,
+      micSpeechLatched: micSpeechLatchedRef.current,
+      serverProcessing: serverProcessingRef.current,
+      wasUserSpeaking: wasUserSpeakingRef.current,
+    });
+    if (mode !== conversationModeRef.current) {
+      conversationModeRef.current = mode;
+      setConversationMode(mode);
     }
-    
-    if (conversation.isSpeaking) {
-      return 'ai_speaking';
-    }
-    
-    // Use input volume ref to detect user speaking - lowered threshold for better sensitivity
-    // 0.03 allows detection of quieter speech while avoiding false positives
-    if (inputVolumeRef.current > 0.03) {
-      return 'user_speaking';
-    }
-    
-    // Server-event-driven: user_transcript received, waiting for agent_response/audio
-    if (serverProcessing) {
-      return 'processing';
-    }
-    
-    // Fallback: volume-based heuristic (user was speaking, stopped, AI hasn't started)
-    if (wasUserSpeakingRef.current && !conversation.isSpeaking) {
-      return 'processing';
-    }
-    
-    return 'listening';
-  };
-
-  const conversationMode = getConversationMode();
+  }, [conversation.status, conversation.isSpeaking, serverProcessing, hasStarted]);
 
   // Determine if we should play ambient sound (only during actual processing, not during disconnection)
   const shouldPlayAmbientSound = conversationMode === 'processing' && conversation.status === 'connected';
 
   // Ambient sound hook - only plays during processing state when connected
-  const { isLoaded: soundsLoaded } = useAmbientSound(shouldPlayAmbientSound ? 'processing' : 'idle', {
+  useAmbientSound(shouldPlayAmbientSound ? 'processing' : 'idle', {
     enabled: soundEnabled,
     volume: soundVolume
   });
@@ -1011,40 +1033,23 @@ export default function VoiceInterviewWebSocket({
       wasUserSpeakingRef.current = false;
     }
     
-    // When user is speaking, mark it and clear any processing timeout
-    // Use ref for volume check to avoid dependency on state
-    if (inputVolumeRef.current > 0.03) {
-      wasUserSpeakingRef.current = true;
-      if (processingTimeoutRef.current) {
-        clearTimeout(processingTimeoutRef.current);
-        processingTimeoutRef.current = null;
-      }
-    }
-    
-    // If we're in processing state (user stopped speaking, AI hasn't started), set timeout
-    if (wasUserSpeakingRef.current && !conversation.isSpeaking && inputVolumeRef.current <= 0.03) {
-      if (!processingTimeoutRef.current) {
-        processingTimeoutRef.current = setTimeout(() => {
-          console.log('[State Transition] Processing timeout - resetting to listening');
-          wasUserSpeakingRef.current = false;
-          processingTimeoutRef.current = null;
-        }, 10000); // 10 second timeout as safety mechanism
-      }
-    } else if (!wasUserSpeakingRef.current && processingTimeoutRef.current) {
-      // Clear timeout if we're no longer in processing state
-      clearTimeout(processingTimeoutRef.current);
-      processingTimeoutRef.current = null;
-    }
-  }, [conversation.isSpeaking, conversation.status, hasStarted]); // Removed inputVolume dependency - using ref
+  }, [conversation.isSpeaking, conversation.status, hasStarted]);
 
   // Update status message based on mode
   const prevModeRef = useRef<ConversationMode | null>(null);
   useEffect(() => {
     if (!hasStarted) return;
-    if (prevModeRef.current !== conversationMode && conversationMode === 'processing') {
+
+    if (
+      conversation.status === 'connected' &&
+      prevModeRef.current !== conversationMode &&
+      conversationMode === 'processing'
+    ) {
       console.log('[PROCESSING_STATE] UI transitioned to PROCESSING mode', { serverProcessing, isSpeaking: conversation.isSpeaking });
     }
     prevModeRef.current = conversationMode;
+
+    if (conversation.status !== 'connected') return;
 
     switch (conversationMode) {
       case 'ai_speaking':
@@ -1057,11 +1062,7 @@ export default function VoiceInterviewWebSocket({
         setStatusMessage("Listening... Speak when ready");
         break;
       case 'processing':
-        if (conversation.status === 'connecting') {
-          setStatusMessage("Connecting...");
-        } else {
-          setStatusMessage("Processing your response...");
-        }
+        setStatusMessage("Processing your response...");
         break;
     }
   }, [conversationMode, hasStarted, conversation.status, serverProcessing, conversation.isSpeaking]);
@@ -1091,19 +1092,27 @@ export default function VoiceInterviewWebSocket({
           lastStateOutputVolume = output;
         }
         
-        // Latency tracking: Detect when user stops speaking
-        const SPEECH_END_THRESHOLD = 0.03; // Same threshold as conversation mode detection
-        const SPEECH_END_DELAY_MS = 300; // Wait 300ms of silence before considering speech ended
-        
-        if (input > SPEECH_END_THRESHOLD) {
-          // User is speaking - clear any pending timeout
+        // Mic hysteresis + latency: user stopped speaking (falling edge after latched speech)
+        const SPEECH_END_DELAY_MS = 300;
+        const wasSpeakingLatched = micSpeechLatchedRef.current;
+        if (input >= MIC_SPEECH_ENTER_LEVEL) {
+          micSpeechLatchedRef.current = true;
+        } else if (input <= MIC_SPEECH_EXIT_LEVEL) {
+          micSpeechLatchedRef.current = false;
+        }
+
+        if (micSpeechLatchedRef.current) {
+          wasUserSpeakingRef.current = true;
+          if (processingTimeoutRef.current) {
+            clearTimeout(processingTimeoutRef.current);
+            processingTimeoutRef.current = null;
+          }
           if (userSpeechEndTimeoutRef.current) {
             clearTimeout(userSpeechEndTimeoutRef.current);
             userSpeechEndTimeoutRef.current = null;
           }
           lastInputVolumeRef.current = input;
-        } else if (lastInputVolumeRef.current > SPEECH_END_THRESHOLD) {
-          // User was speaking but now stopped - set up delayed detection
+        } else if (wasSpeakingLatched) {
           if (!userSpeechEndTimeoutRef.current) {
             userSpeechEndTimeoutRef.current = setTimeout(() => {
               const speechEndTime = Date.now();
@@ -1113,8 +1122,33 @@ export default function VoiceInterviewWebSocket({
             }, SPEECH_END_DELAY_MS);
           }
         }
-        
+
         lastInputVolumeRef.current = input;
+
+        if (wasUserSpeakingRef.current && !conversation.isSpeaking && !micSpeechLatchedRef.current) {
+          if (!processingTimeoutRef.current) {
+            processingTimeoutRef.current = setTimeout(() => {
+              console.log('[State Transition] Processing timeout - resetting to listening');
+              wasUserSpeakingRef.current = false;
+              processingTimeoutRef.current = null;
+            }, 10000);
+          }
+        } else if (!wasUserSpeakingRef.current && processingTimeoutRef.current) {
+          clearTimeout(processingTimeoutRef.current);
+          processingTimeoutRef.current = null;
+        }
+
+        const nextMode = computeConversationMode({
+          status: conversation.status,
+          isSpeaking: conversation.isSpeaking,
+          micSpeechLatched: micSpeechLatchedRef.current,
+          serverProcessing: serverProcessingRef.current,
+          wasUserSpeaking: wasUserSpeakingRef.current,
+        });
+        if (nextMode !== conversationModeRef.current) {
+          conversationModeRef.current = nextMode;
+          setConversationMode(nextMode);
+        }
       }, 50); // 20fps for smooth visualization
     }
     
@@ -1550,8 +1584,17 @@ export default function VoiceInterviewWebSocket({
       const effectiveTechnicalDepth = yearStr === 'Unknown' ? 'standard' : technicalDepth;
       const effectiveBehavioralRatio = yearStr === 'Unknown' ? 60 : behavioralRatio;
 
-      const resumeSummary = resumeTextForSession ? resumeTextForSession.slice(0, 1500) : '';
-      const resumeHighlights = resumeTextForSession ? resumeTextForSession.slice(0, 500) : '';
+      // Use HF-enhanced summary/highlights when available (from PDF upload), else fall back to slice
+      const resumeSummary =
+        candidateContext?.resume_summary ||
+        (resumeTextForSession ? resumeTextForSession.slice(0, 1500) : '');
+      const resumeHighlights =
+        candidateContext?.resume_highlights ||
+        (resumeTextForSession ? resumeTextForSession.slice(0, 500) : '');
+
+      // Question bank for agent (add {{question_bank}} to ElevenLabs agent system prompt)
+      const { getQuestionBankForYear } = await import("@/lib/questionBank");
+      const questionBank = getQuestionBankForYear(yearStr);
 
       // ElevenLabs session dynamic variables — exact keys required by dashboard; safe defaults ensure none are missing
       const dynamicVariables: Record<string, string | number> = {
@@ -1567,6 +1610,7 @@ export default function VoiceInterviewWebSocket({
         technical_difficulty: effectiveTechnicalDifficulty,
         technical_depth: effectiveTechnicalDepth,
         behavioral_ratio: String(effectiveBehavioralRatio),
+        question_bank: questionBank,
       };
 
       // Use signedUrl - the SDK will automatically upgrade to WebRTC if available/supported
@@ -1864,6 +1908,8 @@ export default function VoiceInterviewWebSocket({
 
   const isConnected = conversation.status === 'connected';
   const isAiSpeaking = conversation.isSpeaking;
+  /** When disconnected/connecting, keep orb in a neutral listening palette (not "processing") */
+  const orbVisualMode: ConversationMode = isConnected ? conversationMode : 'listening';
 
   // When not active, render nothing but stay mounted
   // This prevents unmounting during async operations like getUserMedia
@@ -1872,59 +1918,71 @@ export default function VoiceInterviewWebSocket({
   }
 
   return (
-    <AnimatedBackground className="p-6 pt-8 sm:pt-12 flex items-start justify-center min-h-screen">
-      <div className="max-w-4xl w-full space-y-6">
-        {/* Main Interview Card */}
-        <Card className="shadow-xl">
-          <CardContent className="p-6">
-            <div className="flex items-center justify-between mb-6">
-              <div>
-                <h2 className="text-2xl font-bold">Voice Interview</h2>
-                <p className="text-muted-foreground">
-                  {candidateContext.major} • {candidateContext.year}
+    <InterviewRoomBackground className="flex min-h-screen flex-col items-center px-4 pb-10 pt-2 sm:px-6 sm:pt-4">
+      <div className="w-full max-w-3xl space-y-6">
+        <Card className={interviewRoomCardClassName}>
+          <CardContent className="p-5 sm:p-6">
+            <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0 space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Live session
+                </p>
+                <h2 className="text-xl font-bold tracking-tight sm:text-2xl">Voice interview</h2>
+                <p className="text-sm text-muted-foreground sm:text-base">
+                  {candidateContext.major} <span className="text-border">·</span> {candidateContext.year}
                 </p>
               </div>
-              <div className="flex items-center gap-4">
-                {/* Connection Status Indicator */}
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium ${
-                  isConnected 
-                    ? 'bg-green-100 text-green-700' 
-                    : conversation.status === 'connecting'
-                    ? 'bg-yellow-100 text-yellow-700'
-                    : 'bg-gray-100 text-gray-700'
-                }`}>
-                  <div className={`w-2 h-2 rounded-full ${
-                    isConnected 
-                      ? 'bg-green-500 animate-pulse' 
-                      : conversation.status === 'connecting'
-                      ? 'bg-yellow-500 animate-pulse'
-                      : 'bg-gray-400'
-                  }`} />
-                  {isConnected ? 'Connected' : conversation.status === 'connecting' ? 'Connecting' : 'Disconnected'}
-                </div>
-                
-                {/* Sound Toggle Button */}
+              <div className="flex flex-wrap items-center justify-end gap-2 sm:max-w-[min(100%,20rem)]">
+                <Badge
+                  variant="outline"
+                  className={
+                    isConnected
+                      ? "border-emerald-500/40 bg-emerald-50 text-emerald-800"
+                      : conversation.status === "connecting"
+                        ? "border-amber-500/40 bg-amber-50 text-amber-900"
+                        : "border-border bg-muted/60 text-muted-foreground"
+                  }
+                >
+                  <span
+                    className={
+                      "mr-1.5 inline-block h-2 w-2 rounded-full " +
+                      (isConnected
+                        ? "animate-pulse bg-emerald-500"
+                        : conversation.status === "connecting"
+                          ? "animate-pulse bg-amber-500"
+                          : "bg-muted-foreground/50")
+                    }
+                    aria-hidden
+                  />
+                  {isConnected
+                    ? "Connected"
+                    : conversation.status === "connecting"
+                      ? "Connecting"
+                      : "Disconnected"}
+                </Badge>
                 <Button
                   onClick={() => setSoundEnabled(!soundEnabled)}
                   variant={soundEnabled ? "default" : "outline"}
                   size="sm"
-                  title={soundEnabled ? "Ambient sound enabled - click to disable" : "Ambient sound disabled - click to enable"}
+                  className="shrink-0"
+                  title={
+                    soundEnabled
+                      ? "Ambient sound enabled - click to disable"
+                      : "Ambient sound disabled - click to enable"
+                  }
                 >
-                  {soundEnabled ? (
-                    <Volume1 className="w-4 h-4" />
-                  ) : (
-                    <VolumeX className="w-4 h-4" />
-                  )}
+                  {soundEnabled ? <Volume1 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
                 </Button>
-                
-              <Button
-                onClick={handleEndInterview}
-                variant="outline"
+                <Button
+                  onClick={handleEndInterview}
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
                   disabled={!isConnected && !isStarting}
-              >
-                <X className="w-4 h-4 mr-2" />
-                End Interview
-              </Button>
+                >
+                  <X className="mr-1.5 h-4 w-4" />
+                  End
+                </Button>
               </div>
             </div>
 
@@ -1952,9 +2010,15 @@ export default function VoiceInterviewWebSocket({
                 <motion.div
                   initial={{ opacity: 0, scale: 0.8 }}
                   animate={{ opacity: 1, scale: 1 }}
-                  transition={{ duration: 0.6, delay: 0.5 }}
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
+                  transition={{ duration: 0.6, delay: 0.5, ease: [0.33, 1, 0.68, 1] }}
+                  whileHover={{
+                    scale: 1.05,
+                    transition: { type: "tween", duration: 0.55, ease: [0.33, 1, 0.68, 1] },
+                  }}
+                  whileTap={{
+                    scale: 0.95,
+                    transition: { type: "tween", duration: 0.4, ease: [0.33, 1, 0.68, 1] },
+                  }}
                 >
                 <Button
                   onClick={handleStartClick}
@@ -2004,6 +2068,11 @@ export default function VoiceInterviewWebSocket({
                   </div>
                       <span className="font-medium text-lg">AI is speaking...</span>
                 </div>
+                  ) : conversationMode === 'processing' ? (
+                <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                      <span className="font-medium text-lg">Processing your response...</span>
+                </div>
                   ) : conversationMode === 'user_speaking' ? (
                 <div className="flex items-center justify-center gap-2 text-green-600">
                   <User className="w-5 h-5 animate-pulse" />
@@ -2044,16 +2113,16 @@ export default function VoiceInterviewWebSocket({
                 </div>
               )}
               <div className={`transition-all duration-500 w-full max-w-3xl mx-auto px-4 flex justify-center ${
-                conversationMode === 'user_speaking' 
+                orbVisualMode === 'user_speaking' 
                   ? 'scale-105 drop-shadow-lg' 
-                  : conversationMode === 'ai_speaking'
+                  : orbVisualMode === 'ai_speaking'
                   ? 'scale-105 drop-shadow-lg'
                   : ''
               }`}>
                 <ChatGPTVoiceOrb
                   inputVolume={inputVolume}
                   outputVolume={outputVolume}
-                  mode={conversationMode}
+                  mode={orbVisualMode}
                   size={280}
                 />
               </div>
@@ -2064,7 +2133,7 @@ export default function VoiceInterviewWebSocket({
         </Card>
 
         {/* PERF: Stable keys for reconciliation; consider virtualization (e.g. react-window) if transcript items exceed ~50. */}
-        <Card className="shadow-xl">
+        <Card className={interviewRoomCardClassName}>
           <CardContent className="p-6">
             <h3 className="text-lg font-semibold mb-4">Live Transcript</h3>
             <div className="max-h-96 overflow-y-auto space-y-3">
@@ -2084,6 +2153,6 @@ export default function VoiceInterviewWebSocket({
           </CardContent>
         </Card>
       </div>
-    </AnimatedBackground>
+    </InterviewRoomBackground>
   );
 }

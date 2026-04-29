@@ -26,6 +26,7 @@
    NODE_ENV=production
    FRONTEND_URL=[your Vercel URL, e.g., https://your-app.vercel.app]
    ```
+   **Required for boot:** `JWT_SECRET` and `DATABASE_URL` must be non-empty when `NODE_ENV=production`, or the API process **exits immediately** (no insecure fallback).
 
 4. **Deploy**
    - Railway will auto-deploy on push to main

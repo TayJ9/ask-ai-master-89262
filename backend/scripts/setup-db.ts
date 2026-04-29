@@ -208,6 +208,50 @@ async function setupDatabase() {
       `);
     console.log('✅ Created elevenlabs_interview_sessions table');
 
+    // Dedupe before adding unique indexes. For duplicate interviews, keep rows but
+    // clear duplicate conversation IDs to avoid cascading deletes.
+    await executeQuery(`
+        WITH ranked AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY conversation_id
+              ORDER BY
+                (transcript IS NOT NULL) DESC,
+                (status = 'completed') DESC,
+                created_at DESC NULLS LAST
+            ) AS rn
+          FROM interviews
+          WHERE conversation_id IS NOT NULL
+        )
+        UPDATE interviews
+        SET conversation_id = NULL
+        WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+      `);
+
+    await executeQuery(`
+        WITH ranked AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY interview_id
+              ORDER BY
+                CASE status
+                  WHEN 'complete' THEN 0
+                  WHEN 'processing' THEN 1
+                  WHEN 'pending' THEN 2
+                  ELSE 3
+                END,
+                updated_at DESC NULLS LAST,
+                created_at DESC NULLS LAST
+            ) AS rn
+          FROM interview_evaluations
+        )
+        DELETE FROM interview_evaluations
+        WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+      `);
+    console.log('✅ Deduped interviews/evaluations before unique indexes');
+
     // Create indexes for better performance
     await executeQuery(`
         CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
@@ -216,7 +260,9 @@ async function setupDatabase() {
         CREATE INDEX IF NOT EXISTS idx_turns_session_id ON interview_turns(session_id);
         CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);
         CREATE INDEX IF NOT EXISTS idx_interviews_conversation_id ON interviews(conversation_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_conversation_id_unique ON interviews(conversation_id) WHERE conversation_id IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_evaluations_interview_id ON interview_evaluations(interview_id);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_interview_id_unique ON interview_evaluations(interview_id);
         CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);
         CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_user_id ON elevenlabs_interview_sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_client_session_id ON elevenlabs_interview_sessions(client_session_id);

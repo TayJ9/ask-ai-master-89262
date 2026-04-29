@@ -10,13 +10,12 @@ import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Loader2, CheckCircle2, AlertCircle, AlertTriangle, XCircle, RefreshCw, ArrowLeft, Home, Clock, Sparkles, TrendingUp, Award } from "lucide-react";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { mockInterviewResults, mockInterviewResultsBusiness } from "@/mocks/resultsMockData";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
-import { devLog } from "@/lib/utils";
+import { cn, devLog } from "@/lib/utils";
 // Dev-only fixtures for UI render verification (enhanced vs legacy evaluation shape)
 import fixtureEnhanced from "@/__fixtures__/evaluation_enhanced.json";
 import fixtureLegacy from "@/__fixtures__/evaluation_legacy.json";
@@ -83,14 +82,59 @@ const PROCESSING_STEPS = [
   { id: 4, text: "Generating Feedback...", completed: false },
 ];
 
-const POLL_INTERVAL = 3000; // 3 seconds
-const POLL_TIMEOUT = 60000; // 60 seconds
+const POLL_TIMEOUT = 240000; // 4 minutes, covering backend retries and LLM latency
+const EVALUATION_POLL_DELAYS_MS = [2000, 5000, 10000];
 
-/** Readiness Score labels for presentation—avoids binary hiring framing. */
+const getEvaluationPollDelay = (attempt: number): number => {
+  return EVALUATION_POLL_DELAYS_MS[Math.min(attempt, EVALUATION_POLL_DELAYS_MS.length - 1)];
+};
+
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      window.clearTimeout(timeoutId);
+      resolve();
+    };
+
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+};
+
+/** Readiness labels — text-only, tuned for the dark score hero. */
 function getReadinessLabel(score: number): { label: string; colorClass: string } {
-  if (score >= 90) return { label: '🚀 Interview Ready', colorClass: 'text-green-300' };
-  if (score >= 70) return { label: '📈 Competitive Candidate', colorClass: 'text-cyan-300' };
-  return { label: '🛠️ Needs Practice', colorClass: 'text-amber-300' };
+  if (score >= 90) return { label: "Interview ready", colorClass: "text-emerald-200/95" };
+  if (score >= 70) return { label: "Competitive", colorClass: "text-sky-200/95" };
+  return { label: "Keep practicing", colorClass: "text-amber-200/95" };
+}
+
+/** Section shell — matches Auth / home / resume cards (border + card token). */
+const RESULTS_CARD =
+  "rounded-2xl border border-border/80 bg-card/95 text-card-foreground shadow-sm";
+const RESULTS_INSET = "rounded-xl border border-border/60 bg-muted/25";
+const RESULTS_INSET_EMPHASIS = "rounded-xl border border-border/50 bg-card";
+
+function scoreBarClass(score: number): string {
+  if (score >= 80) return "from-primary to-primary/85";
+  if (score >= 60) return "from-sky-500 to-sky-600";
+  if (score >= 40) return "from-amber-500 to-amber-600";
+  return "from-destructive/90 to-destructive";
+}
+
+function scoreAccentBorder(score: number): string {
+  if (score >= 80) return "border-l-4 border-l-primary";
+  if (score >= 60) return "border-l-4 border-l-sky-500";
+  if (score >= 40) return "border-l-4 border-l-amber-500";
+  return "border-l-4 border-l-destructive";
 }
 
 // Format transcript with proper line breaks and speaker labels
@@ -167,16 +211,14 @@ export default function Results() {
   const [results, setResults] = useState<InterviewResults | null>(getInitialResults);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
-  const [pollStartTime, setPollStartTime] = useState<number | null>(null);
+  /** After poll timeout / max attempts, stop showing full-screen processing (backend may still be working). */
+  const [evaluationPollExhausted, setEvaluationPollExhausted] = useState(false);
   /** Reveal main results content only after paint to avoid showing a half-rendered page. */
   const [contentReady, setContentReady] = useState(false);
   /** Simulated progress for initial loading bar (0–95%, time-based). */
   const [loadingProgress, setLoadingProgress] = useState(0);
   const loadStartTimeRef = useRef<number | null>(null);
 
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const isMountedRef = useRef(true);
   const prevDemoVariantRef = useRef<string | null>(null);
   const hasShownResultsRef = useRef(false);
 
@@ -208,19 +250,22 @@ export default function Results() {
   }, [isInitialLoading]);
 
   // Fetch results by interviewId
-  const fetchResults = useCallback(async (interviewId: string): Promise<InterviewResults | null> => {
+  const fetchResults = useCallback(async (interviewId: string, signal?: AbortSignal): Promise<InterviewResults | null> => {
     // In mock mode, return mock data immediately - no API calls
     if (isMockMode) {
       devLog.log('[RESULTS] Using mock data for development preview - skipping API calls');
       // Return mock data after a small delay to simulate loading
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await sleep(100, signal);
       return mockInterviewResults as InterviewResults;
     }
     
     try {
-      const data = await apiGet(`/api/interviews/${interviewId}/results`);
+      const data = await apiGet(`/api/interviews/${interviewId}/results`, { signal });
       return data;
     } catch (err: any) {
+      if (signal?.aborted || err?.statusCode === 499) {
+        return null;
+      }
       devLog.error('Error fetching results:', err);
       // In development, if server is down, fall back to mock data
       if (import.meta.env.DEV && window.location.hostname === 'localhost') {
@@ -232,16 +277,19 @@ export default function Results() {
   }, [isMockMode]);
 
   // Poll for interviewId by sessionId (fallback)
-  const pollForInterviewId = useCallback(async (sessionId: string): Promise<string | null> => {
+  const pollForInterviewId = useCallback(async (sessionId: string, signal?: AbortSignal): Promise<string | null> => {
     // In mock mode, return a mock interview ID
     if (isMockMode) {
       return "mock-interview-id-123";
     }
     
     try {
-      const data = await apiGet(`/api/interviews/by-session/${sessionId}`);
+      const data = await apiGet(`/api/interviews/by-session/${sessionId}`, { signal });
       return data.interviewId || null;
     } catch (err: any) {
+      if (signal?.aborted || err?.statusCode === 499) {
+        return null;
+      }
       devLog.error('Error polling for interviewId:', err);
       return null;
     }
@@ -257,16 +305,20 @@ export default function Results() {
     const hasFeedback = data.evaluation.evaluation !== null;
     
     if (status === 'complete' && hasFeedback) return 'completed';
+    // Row marked complete but no JSON — treat as failed so UI and polling do not spin forever
+    if (status === 'complete' && !hasFeedback) return 'failed';
     if (status === 'failed') return 'failed';
     if (status === 'pending' || status === 'processing') return 'processing';
-    
+
     return 'pending';
   }, []);
 
   // Polling hook for pending/processing states
   useEffect(() => {
-    if (!isMountedRef.current) return;
-    
+    const controller = new AbortController();
+    let cancelled = false;
+    const signal = controller.signal;
+
     // In mock mode, load mock data immediately and skip polling
     if (isMockMode) {
       devLog.log('[RESULTS] Mock mode enabled - loading', demoVariant === 'business' ? 'business' : 'tech', 'demo');
@@ -292,9 +344,10 @@ export default function Results() {
       return;
     }
 
+    setEvaluationPollExhausted(false);
+
     let effectiveInterviewId = interviewId;
-    let pollCount = 0;
-    const maxPolls = Math.floor(POLL_TIMEOUT / POLL_INTERVAL); // ~20 polls in 60 seconds
+    let sessionPollCount = 0;
 
     const startPolling = async () => {
       // First, get interviewId if we only have sessionId
@@ -303,15 +356,17 @@ export default function Results() {
         setIsPolling(true);
         
         // Poll for interviewId first
-        while (!effectiveInterviewId && pollCount < 30) {
-          pollCount++;
-          effectiveInterviewId = await pollForInterviewId(sessionId);
+        while (!effectiveInterviewId && sessionPollCount < 30 && !signal.aborted) {
+          sessionPollCount++;
+          effectiveInterviewId = await pollForInterviewId(sessionId, signal);
           
           if (!effectiveInterviewId) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await sleep(1000, signal);
           }
         }
         
+        if (signal.aborted || cancelled) return;
+
         if (!effectiveInterviewId) {
           setError('Interview not found. Please try again in a few moments.');
           setIsPolling(false);
@@ -321,7 +376,8 @@ export default function Results() {
 
       // Now fetch results
       try {
-        const initialData = await fetchResults(effectiveInterviewId!);
+        const initialData = await fetchResults(effectiveInterviewId!, signal);
+        if (signal.aborted || cancelled) return;
         if (initialData) {
           setResults(initialData);
           const evalStatus = getEvaluationStatus(initialData);
@@ -337,19 +393,19 @@ export default function Results() {
           // If pending or processing OR evaluation is null (not created yet), start polling
           if (evalStatus === 'pending' || evalStatus === 'processing' || !initialData.evaluation) {
             setIsPolling(true);
-            const localPollStartTime = Date.now(); // Use local variable to avoid stale closure
-            setPollStartTime(localPollStartTime);
+            const localPollStartTime = Date.now();
             
             let pollAttempts = 0;
             
             const poll = async () => {
-              while (pollAttempts < maxPolls && isMountedRef.current) {
-                await new Promise(resolve => setTimeout(resolve, POLL_INTERVAL));
+              while (!signal.aborted && Date.now() - localPollStartTime <= POLL_TIMEOUT) {
+                await sleep(getEvaluationPollDelay(pollAttempts), signal);
                 
-                if (!isMountedRef.current) break;
+                if (signal.aborted || cancelled) break;
                 
                 try {
-                  const updatedData = await fetchResults(effectiveInterviewId!);
+                  const updatedData = await fetchResults(effectiveInterviewId!, signal);
+                  if (signal.aborted || cancelled) break;
                   if (updatedData) {
                     setResults(updatedData);
                     const updatedStatus = getEvaluationStatus(updatedData);
@@ -357,14 +413,12 @@ export default function Results() {
                     // Stop polling if completed or failed
                     if (updatedStatus === 'completed' || updatedStatus === 'failed') {
                       setIsPolling(false);
-                      if (pollingIntervalRef.current) {
-                        clearInterval(pollingIntervalRef.current);
-                        pollingIntervalRef.current = null;
-                      }
+                      setEvaluationPollExhausted(false);
                       return;
                     }
                   }
                 } catch (err) {
+                  if (signal.aborted || cancelled) return;
                   devLog.error('Error during polling:', err);
                 }
                 
@@ -373,10 +427,7 @@ export default function Results() {
                 // Check timeout using local variable (not stale state)
                 if (Date.now() - localPollStartTime > POLL_TIMEOUT) {
                   setIsPolling(false);
-                  if (pollingIntervalRef.current) {
-                    clearInterval(pollingIntervalRef.current);
-                    pollingIntervalRef.current = null;
-                  }
+                  setEvaluationPollExhausted(true);
                   toast({
                     title: "Analysis taking longer than expected",
                     description: "Your interview has been saved. Results will appear when ready.",
@@ -386,11 +437,9 @@ export default function Results() {
               }
               
               // Max polls reached
+              if (signal.aborted || cancelled) return;
               setIsPolling(false);
-              if (pollingIntervalRef.current) {
-                clearInterval(pollingIntervalRef.current);
-                pollingIntervalRef.current = null;
-              }
+              setEvaluationPollExhausted(true);
             };
             
             poll();
@@ -399,8 +448,14 @@ export default function Results() {
           }
         }
       } catch (err: any) {
+        if (signal.aborted || cancelled || err?.name === 'AbortError' || err?.statusCode === 499) {
+          return;
+        }
         devLog.error('Error loading results:', err);
-        if (err.status === 404) {
+        // ApiError (from lib/api.ts) exposes HTTP status as `statusCode`; tolerate `status`
+        // as a defensive fallback for any non-ApiError shapes.
+        const httpStatus = err?.statusCode ?? err?.status;
+        if (httpStatus === 404) {
           setError('Interview not found');
         } else {
           setError(err.message || 'Failed to load results');
@@ -412,36 +467,15 @@ export default function Results() {
     startPolling();
 
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-        pollingIntervalRef.current = null;
-      }
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
-      }
+      cancelled = true;
+      controller.abort();
     };
   }, [finalInterviewId, finalSessionId, isMockMode, demoVariant, fixtureMode, fetchResults, pollForInterviewId, getEvaluationStatus, toast]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
-      }
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-      }
-    };
-  }, []);
 
   const handleRetry = () => {
     setError(null);
     setResults(null);
     setIsPolling(false);
-    setPollStartTime(null);
     // Trigger re-fetch by updating a dependency
     window.location.reload();
   };
@@ -505,7 +539,10 @@ export default function Results() {
   const processingStartRef = useRef<number | null>(null);
 
   useEffect(() => {
-    const isProcessing = results && (evalStatus === 'pending' || evalStatus === 'processing' || isPolling);
+    const isProcessing =
+      results &&
+      !evaluationPollExhausted &&
+      (evalStatus === 'pending' || evalStatus === 'processing' || isPolling);
     if (!isProcessing) {
       // Reset when not processing
       processingStartRef.current = null;
@@ -535,7 +572,7 @@ export default function Results() {
     }, 200);
 
     return () => clearInterval(interval);
-  }, [results, evalStatus, isPolling]);
+  }, [results, evalStatus, isPolling, evaluationPollExhausted]);
 
   // Render Processing UI
   const renderProcessingUI = () => {
@@ -579,11 +616,13 @@ export default function Results() {
           transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
-          <Card className="w-full max-w-lg shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
+          <Card className={cn(RESULTS_CARD, "w-full max-w-lg")}>
             <CardHeader className="pb-2">
-              <CardTitle className="text-2xl text-center">Processing Your Interview</CardTitle>
-              <p className="text-sm text-center text-gray-500 mt-1">
-                This usually takes 30–60 seconds
+              <CardTitle className="text-center text-xl font-semibold tracking-tight sm:text-2xl">
+                Processing your interview
+              </CardTitle>
+              <p className="mt-1 text-center text-sm text-muted-foreground">
+                This can take a few minutes when feedback needs a retry
               </p>
             </CardHeader>
             <CardContent className="pt-4">
@@ -591,12 +630,12 @@ export default function Results() {
                 {/* Smooth Progressive Bar */}
                 <div className="space-y-2">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-gray-600 font-medium">{stepDescription}</span>
-                    <span className="text-blue-600 font-bold tabular-nums">{displayProgress}%</span>
+                    <span className="font-medium text-foreground">{stepDescription}</span>
+                    <span className="font-bold tabular-nums text-primary">{displayProgress}%</span>
                   </div>
-                  <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="relative h-2.5 overflow-hidden rounded-full bg-muted">
                     <motion.div
-                      className="absolute inset-y-0 left-0 bg-gradient-to-r from-blue-500 via-indigo-500 to-violet-500 rounded-full"
+                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-primary/70"
                       initial={{ width: 0 }}
                       animate={{ width: `${displayProgress}%` }}
                       transition={{ duration: 0.6, ease: "easeOut" }}
@@ -634,21 +673,21 @@ export default function Results() {
                               animate={{ scale: 1 }}
                               transition={{ type: "spring", stiffness: 260, damping: 18 }}
                             >
-                              <CheckCircle2 className="w-5 h-5 text-green-500" />
+                              <CheckCircle2 className="h-5 w-5 text-primary" />
                             </motion.div>
                           ) : isActive ? (
-                            <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
                           ) : (
-                            <div className="w-5 h-5 rounded-full border-2 border-gray-300" />
+                            <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />
                           )}
                         </div>
                         <span
                           className={`text-sm font-medium transition-colors duration-300 ${
                             isCompleted
-                              ? 'text-green-600'
+                              ? "text-foreground"
                               : isActive
-                              ? 'text-blue-600'
-                              : 'text-gray-400'
+                                ? "text-primary"
+                                : "text-muted-foreground/80"
                           }`}
                         >
                           {step.text}
@@ -658,16 +697,15 @@ export default function Results() {
                   })}
                 </div>
 
-                {/* Return to Dashboard Button */}
-                <div className="pt-3 border-t">
-                  <Button 
+                <div className="border-t border-border pt-3">
+                  <Button
                     onClick={handleReturnToDashboard}
                     variant="outline"
-                    className="w-full transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
-                    aria-label="Return to dashboard"
+                    className="w-full font-medium"
+                    aria-label="Return to home"
                   >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Return to Dashboard
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Back to home
                   </Button>
                 </div>
               </div>
@@ -688,33 +726,33 @@ export default function Results() {
           transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
-          <Card className="w-full max-w-md shadow-xl hover:shadow-2xl transition-shadow duration-200 border-0 bg-white/95">
+          <Card className={cn(RESULTS_CARD, "w-full max-w-md")}>
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-4">
-              <div className="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertCircle className="h-8 w-8 text-red-600" />
+              <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
+                <AlertCircle className="h-8 w-8 text-destructive" />
               </div>
               <div className="text-center">
-                <h2 className="text-xl font-semibold mb-2 text-gray-900">Unable to Load Results</h2>
-                <p className="text-gray-600 text-sm mb-6">{error}</p>
-                <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                  <Button 
-                    onClick={handleRetry} 
+                <h2 className="mb-2 text-xl font-semibold text-foreground">Unable to load results</h2>
+                <p className="mb-6 text-sm text-muted-foreground">{error}</p>
+                <div className="flex flex-col justify-center gap-3 sm:flex-row">
+                  <Button
+                    onClick={handleRetry}
                     variant="default"
-                    className="min-w-[120px] bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-md hover:shadow-xl transition-shadow duration-200 text-white font-semibold"
+                    className="min-w-[120px] font-medium"
                     aria-label="Retry loading results"
                   >
-                    <RefreshCw className="h-4 w-4 mr-2" />
+                    <RefreshCw className="mr-2 h-4 w-4" />
                     Retry
                   </Button>
-                  <Button 
-                    onClick={handleReturnToDashboard} 
+                  <Button
+                    onClick={handleReturnToDashboard}
                     variant="outline"
-                    className="min-w-[120px] transition-colors duration-200 hover:shadow-lg hover:bg-gray-50 hover:border-gray-400 text-gray-700 hover:text-gray-900 font-semibold border-2"
-                    aria-label="Return to dashboard"
+                    className="min-w-[120px] font-medium"
+                    aria-label="Return to home"
                   >
-                    <ArrowLeft className="h-4 w-4 mr-2" />
-                    Dashboard
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    Back to home
                   </Button>
                 </div>
               </div>
@@ -726,8 +764,12 @@ export default function Results() {
     );
   }
 
-  // Show Processing UI if pending/processing
-  if ((evalStatus === 'pending' || evalStatus === 'processing' || isPolling) && results) {
+  // Show Processing UI if pending/processing (unless we already gave up polling — then show results + banner)
+  if (
+    !evaluationPollExhausted &&
+    (evalStatus === 'pending' || evalStatus === 'processing' || isPolling) &&
+    results
+  ) {
     return renderProcessingUI();
   }
 
@@ -743,7 +785,7 @@ export default function Results() {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               transition={{ duration: 0.25, ease: [0.25, 0.1, 0.25, 1] }}
-              className="fixed inset-0 bg-white z-[9999] pointer-events-none"
+              className="fixed inset-0 z-[9999] bg-background pointer-events-none"
               aria-hidden="true"
               style={{ transform: 'translateZ(0)' }}
             />
@@ -759,7 +801,7 @@ export default function Results() {
         >
         <div
           key={demoVariant}
-          className="max-w-4xl mx-auto space-y-6 relative z-10 pb-16"
+          className="relative z-10 mx-auto max-w-3xl space-y-6 pb-16"
         >
           {/* Demo Mode Banner */}
           {isDemoMode && (
@@ -767,43 +809,42 @@ export default function Results() {
               initial={{ opacity: 0, y: -20 }}
               animate={contentReady ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
               transition={{ duration: 0.55 }}
-              className={`bg-gradient-to-r ${demoVariant === 'business' ? 'from-teal-500 via-emerald-500 to-green-600' : 'from-purple-500 via-pink-500 to-rose-500'} text-white px-6 py-4 rounded-xl shadow-lg border-2 border-white/30`}
+              className={cn(
+                RESULTS_CARD,
+                "border-primary/20 bg-gradient-to-r from-primary/8 via-card to-secondary/8 px-4 py-4 sm:px-6"
+              )}
             >
-              <div className="flex items-center justify-between flex-wrap gap-4">
-                <div className="flex items-center gap-3">
-                  <Sparkles className="h-6 w-6 animate-pulse" />
-                  <div>
-                    <p className="font-bold text-lg">
-                      {demoVariant === 'business' ? 'Non-Technical Demo' : 'Technical Demo'}
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <Sparkles className="h-5 w-5" aria-hidden />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-base font-semibold text-foreground">
+                      {demoVariant === "business" ? "Non-technical sample" : "Technical sample"}
                     </p>
-                    <p className="text-sm text-white/90">
-                      {demoVariant === 'business'
-                        ? 'A sample interview for marketing, business administration, and similar roles—no technical jargon.'
-                        : 'A sample interview for software engineering and technical roles.'}
+                    <p className="mt-0.5 text-sm text-muted-foreground">
+                      {demoVariant === "business"
+                        ? "Illustrates marketing, business, and comms-style coaching."
+                        : "Illustrates software and analytical interview coaching."}
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <Button
-                    onClick={() => setLocation(`/results?mock=true&interviewId=demo&demo=${demoVariant === 'business' ? 'tech' : 'business'}`)}
-                    variant="secondary"
-                    className={`group font-semibold shadow-md transition-[transform,box-shadow,background-color,border-color] duration-300 ease-out hover:scale-[1.03] ${
-                      demoVariant === 'business'
-                        ? 'bg-purple-100 text-purple-700 hover:bg-purple-200 hover:text-purple-800 border-2 border-purple-300 hover:shadow-lg'
-                        : 'bg-teal-100 text-teal-700 hover:bg-teal-200 hover:text-teal-800 border-2 border-teal-300 hover:shadow-lg'
-                    }`}
+                    onClick={() =>
+                      setLocation(
+                        `/results?mock=true&interviewId=demo&demo=${demoVariant === "business" ? "tech" : "business"}`
+                      )
+                    }
+                    variant="outline"
+                    size="sm"
+                    className="font-medium"
                   >
-                    <span className="group-hover:font-bold">
-                      {demoVariant === 'business' ? 'See Technical Demo' : 'See Non-Technical Demo'}
-                    </span>
+                    {demoVariant === "business" ? "View technical sample" : "View non-technical sample"}
                   </Button>
-                  <Button
-                    onClick={() => setLocation('/')}
-                    className="group bg-white text-purple-600 hover:bg-purple-50 font-semibold shadow-md hover:shadow-lg transition-[transform,box-shadow,background-color] duration-300 ease-out hover:scale-[1.03]"
-                  >
-                    <span className="group-hover:font-bold">
-                      Try Real Interview
-                    </span>
+                  <Button onClick={() => setLocation("/")} size="sm" className="font-medium">
+                    Start real interview
                   </Button>
                 </div>
               </div>
@@ -812,7 +853,7 @@ export default function Results() {
 
           {/* Breadcrumb Navigation - Sticky - Optimized for scroll */}
           <nav
-            className="sticky top-0 z-50 bg-gradient-to-br from-blue-50/95 via-indigo-50/95 to-purple-50/95 py-3 -mx-4 px-4 mb-4 flex items-center gap-2 text-sm text-gray-600 rounded-lg shadow-sm" 
+            className="sticky top-0 z-50 -mx-4 mb-4 flex items-center gap-2 rounded-xl border border-border/70 bg-card/90 px-3 py-2.5 text-sm text-muted-foreground shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/75 sm:-mx-0 sm:px-4" 
             style={{ 
               willChange: 'transform',
               transform: 'translate3d(0, 0, 0)',
@@ -825,14 +866,14 @@ export default function Results() {
               variant="ghost"
               size="sm"
               onClick={goToDashboard}
-              className="h-auto p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors duration-200 rounded-lg font-medium"
+              className="h-auto p-2 font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground"
               aria-label="Return to dashboard"
             >
-              <Home className="h-4 w-4 mr-1" />
-              Dashboard
+              <Home className="mr-1 h-4 w-4" />
+              Home
             </Button>
-            <span className="text-gray-400">/</span>
-            <span className="text-gray-900 font-semibold">Interview Results</span>
+            <span className="text-border" aria-hidden>/</span>
+            <span className="font-semibold text-foreground">Interview results</span>
             </nav>
 
           {/* Overall Score Badge - Wide Hero Banner */}
@@ -849,11 +890,11 @@ export default function Results() {
                 {/* Main banner container -- no outer glow div; it caused a visible
                     misaligned arc outside the rounded corners. The gradient + shadow-2xl
                     + border provide all the depth needed. */}
-                <div className="relative bg-gradient-to-br from-blue-500 via-indigo-600 to-purple-600 rounded-3xl p-6 sm:p-8 shadow-2xl ring-1 ring-white/20 overflow-hidden">
-                  {/* Inner glow -- no rounded-3xl; parent overflow-hidden clips it */}
-                  <div className="absolute inset-0 bg-gradient-to-br from-white/10 via-transparent to-transparent" />
-                  <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-300/10 rounded-full blur-2xl" />
-                  <div className="absolute bottom-0 left-0 w-64 h-64 bg-pink-300/10 rounded-full blur-2xl" />
+                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-6 shadow-2xl ring-1 ring-white/10 sm:p-8">
+                  {/* Restrained highlights — premium SaaS, not loud rainbow */}
+                  <div className="absolute inset-0 bg-gradient-to-br from-white/[0.07] via-transparent to-indigo-500/10" />
+                  <div className="absolute -right-12 -top-12 h-56 w-56 rounded-full bg-sky-400/10 blur-2xl" />
+                  <div className="absolute -bottom-10 -left-8 h-48 w-48 rounded-full bg-violet-500/10 blur-2xl" />
                   
                   {/* Content Grid */}
                   <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
@@ -865,7 +906,7 @@ export default function Results() {
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
-                        <div className="w-10 h-10 rounded-lg bg-blue-400/30 flex items-center justify-center">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <CheckCircle2 className="h-6 w-6 text-white" />
                         </div>
                         <div>
@@ -875,7 +916,7 @@ export default function Results() {
                       </div>
                       {results.interview?.durationSeconds && (
                         <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
-                          <div className="w-10 h-10 rounded-lg bg-purple-400/30 flex items-center justify-center">
+                          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                             <Clock className="h-6 w-6 text-white" />
                           </div>
                           <div>
@@ -898,11 +939,11 @@ export default function Results() {
                       {/* Icon -- static to avoid infinite Framer Motion repaints */}
                       <div>
                         {overallScore >= 80 ? (
-                          <Award className="h-20 w-20 text-yellow-300 drop-shadow-lg" />
+                          <Award className="h-16 w-16 text-amber-200/90 sm:h-20 sm:w-20" />
                         ) : overallScore >= 60 ? (
-                          <TrendingUp className="h-20 w-20 text-green-300 drop-shadow-lg" />
+                          <TrendingUp className="h-16 w-16 text-emerald-200/90 sm:h-20 sm:w-20" />
                         ) : (
-                          <CheckCircle2 className="h-20 w-20 text-blue-300 drop-shadow-lg" />
+                          <CheckCircle2 className="h-16 w-16 text-sky-200/90 sm:h-20 sm:w-20" />
                         )}
                       </div>
                       
@@ -923,13 +964,18 @@ export default function Results() {
                           initial={{ width: 0 }}
                           animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
                           transition={{ duration: 1.5, delay: 0.7, ease: [0.4, 0, 0.2, 1] }}
-                          className="h-full bg-gradient-to-r from-yellow-300 via-yellow-200 to-white rounded-full shadow-lg"
+                          className="h-full rounded-full bg-gradient-to-r from-amber-200/90 via-white/90 to-sky-100/90"
                         />
                       </div>
                       
                       {/* Readiness status label */}
                       <div className="flex flex-col items-center gap-1">
-                        <span className={`text-xl font-bold uppercase tracking-widest drop-shadow-lg ${getReadinessLabel(overallScore).colorClass}`}>
+                        <span
+                          className={cn(
+                            "text-center text-lg font-semibold tracking-tight drop-shadow-sm",
+                            getReadinessLabel(overallScore).colorClass
+                          )}
+                        >
                           {getReadinessLabel(overallScore).label}
                         </span>
                       </div>
@@ -943,7 +989,7 @@ export default function Results() {
                       className="flex flex-col gap-3 text-white"
                     >
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
-                        <div className="w-10 h-10 rounded-lg bg-green-400/30 flex items-center justify-center">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <TrendingUp className="h-6 w-6 text-white" />
                         </div>
                         <div>
@@ -954,7 +1000,7 @@ export default function Results() {
                         </div>
                       </div>
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
-                        <div className="w-10 h-10 rounded-lg bg-yellow-400/30 flex items-center justify-center">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <Sparkles className="h-6 w-6 text-white" />
                         </div>
                         <div>
@@ -975,18 +1021,22 @@ export default function Results() {
               PERF: Removed the monolithic 9,773px Card + backdrop-blur-sm that
               was causing white-flash checkerboarding during fast scroll and
               hiding the animated background behind an opaque white wall. */}
-          <Card className="mb-6 shadow-xl border-0 bg-white/90">
-            <CardHeader className="pb-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <Card className={cn(RESULTS_CARD, "mb-6")}>
+            <CardHeader className="pb-3">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
-                  <CardTitle className="text-3xl sm:text-4xl mb-2 font-bold bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
-                    Interview Results
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                    Session
+                  </p>
+                  <CardTitle className="mb-1 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
+                    Interview results
                   </CardTitle>
                   {results.interview?.durationSeconds && (
-                    <div className="flex items-center gap-2 text-sm text-gray-600 font-medium">
-                      <Clock className="h-4 w-4" />
+                    <div className="mt-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                      <Clock className="h-4 w-4 shrink-0" aria-hidden />
                       <span>
-                        Duration: {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
+                        {Math.floor((results.interview.durationSeconds || 0) / 60)}m{" "}
+                        {(results.interview.durationSeconds || 0) % 60}s
                       </span>
                     </div>
                   )}
@@ -998,6 +1048,41 @@ export default function Results() {
           {/* Each section is now its own card so the animated background shows between them */}
           <div className="space-y-6">
 
+              {/* Still waiting after poll timeout — avoid infinite “Generating feedback” screen */}
+              {evaluationPollExhausted &&
+                !hasCompleteFeedback &&
+                (evalStatus === 'pending' || evalStatus === 'processing') && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={contentReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.95 }}
+                  transition={{ duration: 0.55 }}
+                >
+                  <Card
+                    className={cn(
+                      RESULTS_CARD,
+                      "mb-6 border-amber-500/25 bg-amber-50/40 dark:bg-amber-950/20"
+                    )}
+                  >
+                    <CardContent className="pt-6">
+                      <div className="flex flex-col items-center gap-3 text-center">
+                        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15">
+                          <Clock className="h-6 w-6 text-amber-800 dark:text-amber-200" />
+                        </div>
+                        <h3 className="text-lg font-semibold text-foreground">Feedback is still generating</h3>
+                        <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
+                          Analysis is taking longer than usual. Your transcript is below; try refreshing this page
+                          in a minute or open your dashboard later.
+                        </p>
+                        <Button variant="outline" size="sm" onClick={() => window.location.reload()} className="mt-1">
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Refresh results
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+              )}
+
               {/* Evaluation Failed Message */}
               {evalStatus === 'failed' && results.evaluation && (
                 <motion.div
@@ -1005,19 +1090,24 @@ export default function Results() {
                   animate={contentReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.95 }}
                   transition={{ duration: 0.55 }}
                 >
-                  <Card className="mb-6 border-2 border-orange-300 bg-gradient-to-br from-orange-50 to-amber-50 shadow-md hover:shadow-lg transition-shadow duration-300">
+                  <Card
+                    className={cn(
+                      RESULTS_CARD,
+                      "mb-6 border-destructive/20 bg-destructive/[0.06]"
+                    )}
+                  >
                     <CardContent className="pt-6">
                       <div className="flex flex-col items-center gap-4">
-                        <div className="w-16 h-16 rounded-full bg-orange-100 flex items-center justify-center ring-4 ring-orange-200">
-                          <AlertCircle className="h-8 w-8 text-orange-600" />
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10">
+                          <AlertCircle className="h-7 w-7 text-destructive" />
                         </div>
                         <div className="text-center">
-                          <h3 className="text-xl font-bold mb-2 text-orange-900">Evaluation Unavailable</h3>
-                          <p className="text-gray-700 text-sm mb-3 leading-relaxed">
-                            We encountered an issue generating your feedback. Your interview transcript is available below.
+                          <h3 className="mb-2 text-xl font-semibold text-foreground">Evaluation unavailable</h3>
+                          <p className="mb-3 text-sm leading-relaxed text-muted-foreground">
+                            We could not generate scored feedback. Your interview transcript is still available below.
                           </p>
                           {results.evaluation.error && (
-                            <p className="text-gray-600 text-xs font-mono bg-white p-3 rounded-lg border border-orange-200 shadow-sm">
+                            <p className="rounded-lg border border-border bg-muted/50 p-3 text-left text-xs font-mono text-muted-foreground">
                               {results.evaluation.error}
                             </p>
                           )}
@@ -1034,37 +1124,40 @@ export default function Results() {
                   {/* Overall Feedback Section */}
                   {(results.evaluation.evaluation.overall_strengths?.length || results.evaluation.evaluation.overall_improvements?.length) && (
                     <div>
-                      <Card className="mb-6 border-2 border-blue-300 bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50 shadow-lg hover:shadow-2xl hover:ring-2 hover:ring-indigo-200 transition-shadow duration-200 relative overflow-hidden" style={{ transform: 'translateZ(0)' }}>
-                        <div className="absolute top-0 right-0 w-32 h-32 bg-blue-200/20 rounded-full blur-2xl -mr-16 -mt-16" />
-                        <CardHeader className="relative z-10">
+                      <Card className={cn(RESULTS_CARD, "relative mb-6 overflow-hidden")}>
+                        <CardHeader>
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
-                              <Sparkles className="h-5 w-5 text-white" />
+                            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                              <Sparkles className="h-5 w-5" aria-hidden />
                             </div>
                             <div>
-                              <CardTitle className="text-2xl font-bold text-gray-900">Overall Interview Feedback</CardTitle>
-                              <p className="text-sm text-gray-600 mt-1 font-medium">Summary of your performance across all questions</p>
+                              <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                                Overall feedback
+                              </CardTitle>
+                              <p className="mt-1 text-sm text-muted-foreground">Across your full interview</p>
                             </div>
                           </div>
                         </CardHeader>
-                        <CardContent className="relative z-10">
-                          <div className="space-y-5">
+                        <CardContent>
+                          <div className="space-y-4">
                             {results.evaluation.evaluation.overall_strengths && results.evaluation.evaluation.overall_strengths.length > 0 && (
                               <div
-                                className="bg-white/60 p-4 rounded-lg border border-green-200 shadow-sm"
-                                style={{ transform: 'translateZ(0)', willChange: 'auto' }}
+                                className={cn(RESULTS_INSET, "border-l-2 border-l-primary/50 p-4")}
+                                style={{ transform: "translateZ(0)", willChange: "auto" }}
                               >
-                                <h4 className="text-base font-bold text-green-700 mb-3 flex items-center gap-2">
-                                  <CheckCircle2 className="h-5 w-5" />
-                                  Overall Strengths:
+                                <h4 className="mb-3 flex items-center gap-2 text-base font-semibold text-foreground">
+                                  <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden />
+                                  Strengths
                                 </h4>
                                 <ul className="list-none space-y-2">
                                   {results.evaluation.evaluation.overall_strengths.map((strength, i) => (
                                     <li
                                       key={i}
-                                      className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
+                                      className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
                                     >
-                                      <span className="text-green-600 text-sm font-bold flex-shrink-0 leading-relaxed">•</span>
+                                      <span className="pt-0.5 text-primary" aria-hidden>
+                                        ·
+                                      </span>
                                       <span>{strength}</span>
                                     </li>
                                   ))}
@@ -1073,20 +1166,22 @@ export default function Results() {
                             )}
                             {results.evaluation.evaluation.overall_improvements && results.evaluation.evaluation.overall_improvements.length > 0 && (
                               <div
-                                className="bg-white/60 p-4 rounded-lg border border-orange-200 shadow-sm"
-                                style={{ transform: 'translateZ(0)', willChange: 'auto' }}
+                                className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/50 p-4")}
+                                style={{ transform: "translateZ(0)", willChange: "auto" }}
                               >
-                                <h4 className="text-base font-bold text-orange-700 mb-3 flex items-center gap-2">
-                                  <TrendingUp className="h-5 w-5" />
-                                  Overall Areas for Improvement:
+                                <h4 className="mb-3 flex items-center gap-2 text-base font-semibold text-foreground">
+                                  <TrendingUp className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
+                                  Focus next
                                 </h4>
                                 <ul className="list-none space-y-2">
                                   {results.evaluation.evaluation.overall_improvements.map((improvement, i) => (
                                     <li
                                       key={i}
-                                      className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
+                                      className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
                                     >
-                                      <span className="text-orange-600 text-sm font-bold flex-shrink-0 leading-relaxed">•</span>
+                                      <span className="pt-0.5 text-amber-600" aria-hidden>
+                                        ·
+                                      </span>
                                       <span>{improvement}</span>
                                     </li>
                                   ))}
@@ -1101,83 +1196,85 @@ export default function Results() {
 
                   {/* Score Comparison Card - Optimized */}
                   <div>
-                    <Card className="mb-6 border-2 border-purple-300 bg-gradient-to-br from-purple-50 via-pink-50 to-rose-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
+                    <Card className={cn(RESULTS_CARD, "mb-6")}>
                       <CardHeader>
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-md">
-                            <TrendingUp className="h-5 w-5 text-white" />
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/10 text-secondary">
+                            <TrendingUp className="h-5 w-5" aria-hidden />
                           </div>
                           <div>
-                            <CardTitle className="text-2xl font-bold text-gray-900">Performance Comparison</CardTitle>
-                            <p className="text-sm text-gray-600 mt-1 font-medium">How you stack up against other candidates</p>
+                            <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                              Benchmark
+                            </CardTitle>
+                            <p className="mt-1 text-sm text-muted-foreground">Illustrative comparison for this session</p>
                           </div>
                         </div>
                       </CardHeader>
                       <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          {/* Your Score */}
-                          <div className="space-y-3">
+                        <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-semibold text-gray-700">Your Score</span>
-                              <span className="text-2xl font-bold text-purple-600">{overallScore}</span>
+                              <span className="text-sm font-medium text-foreground">Your score</span>
+                              <span className="text-2xl font-bold tabular-nums text-primary">{overallScore}</span>
                             </div>
-                            <div className="relative h-8 bg-gray-200 rounded-full overflow-hidden shadow-inner">
+                            <div className="relative h-3 overflow-hidden rounded-full bg-muted">
                               <motion.div
                                 initial={{ width: 0 }}
                                 animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
                                 transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
-                                className="h-full bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-end pr-2"
-                              >
-                                <span className="text-xs font-bold text-white drop-shadow">You</span>
-                              </motion.div>
+                                className="h-full rounded-full bg-primary"
+                              />
                             </div>
                           </div>
 
-                          {/* Average Score */}
-                          <div className="space-y-3">
+                          <div className="space-y-2">
                             <div className="flex items-center justify-between">
-                              <span className="text-sm font-semibold text-gray-700">Average Score</span>
-                              <span className="text-2xl font-bold text-gray-500">
+                              <span className="text-sm font-medium text-muted-foreground">Reference average</span>
+                              <span className="text-2xl font-bold tabular-nums text-muted-foreground">
                                 {overallScore >= 80 ? 73 : overallScore >= 70 ? 67 : overallScore >= 60 ? 62 : 58}
                               </span>
                             </div>
-                            <div className="relative h-8 bg-gray-200 rounded-full overflow-hidden shadow-inner">
+                            <div className="relative h-3 overflow-hidden rounded-full bg-muted">
                               <div
-                                className="h-full bg-gradient-to-r from-gray-400 to-gray-500 rounded-full flex items-center justify-end pr-2"
-                                style={{ 
+                                className="h-full rounded-full bg-muted-foreground/30"
+                                style={{
                                   width: `${overallScore >= 80 ? 73 : overallScore >= 70 ? 67 : overallScore >= 60 ? 62 : 58}%`,
-                                  transform: 'translateZ(0)',
-                                  willChange: 'auto'
+                                  transform: "translateZ(0)",
+                                  willChange: "auto",
                                 }}
-                              >
-                                <span className="text-xs font-bold text-white drop-shadow">Avg</span>
-                              </div>
+                              />
                             </div>
                           </div>
                         </div>
 
-                        {/* Insight Message */}
                         <div
-                          className="mt-6 p-4 bg-white/60 rounded-xl border border-purple-200"
-                          style={{ transform: 'translateZ(0)', willChange: 'auto' }}
+                          className={cn(RESULTS_INSET, "mt-6 p-4")}
+                          style={{ transform: "translateZ(0)", willChange: "auto" }}
                         >
                           <div className="flex items-start gap-3">
-                            <div className="w-8 h-8 rounded-lg bg-purple-100 flex items-center justify-center flex-shrink-0 mt-0.5">
-                              <Sparkles className="h-4 w-4 text-purple-600" />
+                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                              <Sparkles className="h-4 w-4" aria-hidden />
                             </div>
                             <div>
-                              <p className="text-sm font-semibold text-gray-900 mb-1">
-                                {overallScore >= 80 ? '🎉 Outstanding Performance!' : overallScore >= 70 ? '👏 Above Average!' : overallScore >= 60 ? '✓ Good Start!' : '💪 Room for Growth'}
-                              </p>
-                              <p className="text-sm text-gray-700 leading-relaxed">
-                                {overallScore >= 80 
-                                  ? `You scored ${overallScore - (overallScore >= 80 ? 73 : 67)} points higher than the average candidate. You're in the top 20% of all interviewees!`
+                              <p className="mb-1 text-sm font-semibold text-foreground">
+                                {overallScore >= 80
+                                  ? "Strong session"
                                   : overallScore >= 70
-                                  ? `You're ${overallScore - 67} points above average. Keep refining your answers to reach the top tier.`
-                                  : overallScore >= 60
-                                  ? `You're ${overallScore - 62} points above average. Focus on providing more specific examples in your responses.`
-                                  : `You're ${overallScore - 58} points above average. Review the feedback below to improve your interview skills.`
-                                }
+                                    ? "Solid progress"
+                                    : overallScore >= 60
+                                      ? "Good foundation"
+                                      : "Build from here"}
+                              </p>
+                              <p className="text-sm leading-relaxed text-muted-foreground">
+                                {overallScore >= 80
+                                  ? `You scored ${
+                                      overallScore - (overallScore >= 80 ? 73 : 67)
+                                    } points above the reference average for this view.`
+                                  : overallScore >= 70
+                                    ? `About ${overallScore - 67} points above the reference average—keep adding specifics.`
+                                    : overallScore >= 60
+                                      ? `About ${overallScore - 62} points above the reference average. Add concrete examples.`
+                                      : `About ${overallScore - 58} points above the reference average. Use the section below to iterate.`}
                               </p>
                             </div>
                           </div>
@@ -1191,48 +1288,48 @@ export default function Results() {
                     <>
                       {/* Skills Breakdown Chart - Optimized */}
                       <div>
-                        <Card className="mb-6 border-2 border-green-300 bg-gradient-to-br from-green-50 via-emerald-50 to-teal-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
+                        <Card className={cn(RESULTS_CARD, "mb-6")}>
                           <CardHeader>
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-green-500 to-emerald-600 flex items-center justify-center shadow-md">
-                                <Award className="h-5 w-5 text-white" />
+                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                                <Award className="h-5 w-5" aria-hidden />
                               </div>
                               <div>
-                                <CardTitle className="text-2xl font-bold text-gray-900">Skills Breakdown</CardTitle>
-                                <p className="text-sm text-gray-600 mt-1 font-medium">Performance across different question categories</p>
+                                <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                                  Per-question scores
+                                </CardTitle>
+                                <p className="mt-1 text-sm text-muted-foreground">At a glance by prompt</p>
                               </div>
                             </div>
                           </CardHeader>
                           <CardContent>
                             <div className="space-y-4">
                               {results.evaluation.evaluation.questions.map((qa, index) => (
-                                <div
-                                  key={index}
-                                  className="space-y-2"
-                                >
+                                <div key={index} className="space-y-2">
                                   <div className="flex items-center justify-between">
-                                    <span className="text-sm font-semibold text-gray-700">Question {index + 1}</span>
-                                    <span className={`text-sm font-bold px-3 py-1 rounded-full ${
-                                      qa.score >= 80 ? 'bg-green-100 text-green-700' :
-                                      qa.score >= 60 ? 'bg-blue-100 text-blue-700' :
-                                      qa.score >= 40 ? 'bg-yellow-100 text-yellow-700' :
-                                      'bg-red-100 text-red-700'
-                                    }`}>
+                                    <span className="text-sm font-medium text-foreground">Question {index + 1}</span>
+                                    <span
+                                      className={cn(
+                                        "rounded-full px-2.5 py-0.5 text-xs font-semibold tabular-nums",
+                                        qa.score >= 80
+                                          ? "bg-primary/10 text-primary"
+                                          : qa.score >= 60
+                                            ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                            : qa.score >= 40
+                                              ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                              : "bg-destructive/10 text-destructive"
+                                      )}
+                                    >
                                       {qa.score}/100
                                     </span>
                                   </div>
-                                  <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                                  <div className="relative h-2.5 overflow-hidden rounded-full bg-muted">
                                     <div
-                                      className={`h-full rounded-full ${
-                                        qa.score >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-600' :
-                                        qa.score >= 60 ? 'bg-gradient-to-r from-blue-500 to-indigo-600' :
-                                        qa.score >= 40 ? 'bg-gradient-to-r from-yellow-500 to-orange-500' :
-                                        'bg-gradient-to-r from-red-500 to-rose-600'
-                                      }`}
-                                      style={{ 
+                                      className={cn("h-full rounded-full bg-gradient-to-r", scoreBarClass(qa.score))}
+                                      style={{
                                         width: `${qa.score}%`,
-                                        transform: 'translateZ(0)',
-                                        willChange: 'auto'
+                                        transform: "translateZ(0)",
+                                        willChange: "auto",
                                       }}
                                     />
                                   </div>
@@ -1240,14 +1337,13 @@ export default function Results() {
                               ))}
                             </div>
 
-                            {/* Average Score Display */}
                             <div
-                              className="mt-6 p-4 bg-white/60 rounded-xl border border-green-200"
-                              style={{ transform: 'translateZ(0)', willChange: 'auto' }}
+                              className={cn(RESULTS_INSET, "mt-5 p-4")}
+                              style={{ transform: "translateZ(0)", willChange: "auto" }}
                             >
                               <div className="flex items-center justify-between">
-                                <span className="text-sm font-semibold text-gray-700">Average Question Score</span>
-                                <span className="text-2xl font-bold text-green-600">
+                                <span className="text-sm font-medium text-foreground">Average across questions</span>
+                                <span className="text-2xl font-bold tabular-nums text-primary">
                                   {averageQuestionScore}
                                 </span>
                               </div>
@@ -1257,211 +1353,249 @@ export default function Results() {
                       </div>
 
                       {/* Question-by-Question Feedback */}
-                      <div
-                        style={{ transform: 'translateZ(0)', willChange: 'auto' }}
-                      >
-                        <Card className="mb-6 shadow-lg border-0 bg-white/95">
+                      <div style={{ transform: "translateZ(0)", willChange: "auto" }}>
+                        <Card className={cn(RESULTS_CARD, "mb-6")}>
                           <CardHeader>
-                            <CardTitle className="text-2xl font-bold text-gray-900">Question-by-Question Feedback</CardTitle>
-                            <p className="text-sm text-gray-600 mt-1 font-medium">Detailed feedback for each interview question</p>
+                            <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                              Detailed feedback
+                            </CardTitle>
+                            <p className="mt-1 text-sm text-muted-foreground">Question, answer, and coaching notes</p>
                           </CardHeader>
                           <CardContent>
-                          <div className="space-y-5">
-                            {results.evaluation.evaluation.questions.map((qa, index) => {
-                              const scoreColor = qa.score >= 80 ? 'from-green-500 to-emerald-600' : qa.score >= 60 ? 'from-blue-500 to-indigo-600' : qa.score >= 40 ? 'from-yellow-500 to-orange-500' : 'from-red-500 to-rose-600';
-                              return (
-                                <div
+                            <div className="space-y-5">
+                              {results.evaluation.evaluation.questions.map((qa, index) => (
+                                <Card
                                   key={index}
+                                  className={cn(
+                                    "overflow-hidden rounded-xl border border-border/80 bg-card/95 text-card-foreground shadow-sm",
+                                    scoreAccentBorder(qa.score)
+                                  )}
+                                  style={{ transform: "translateZ(0)", willChange: "auto" }}
                                 >
-                                  <Card className="border-l-8 bg-gradient-to-r from-white to-gray-50/50 shadow-md hover:shadow-2xl transition-shadow duration-200 relative overflow-hidden group"
-                                    style={{
-                                      borderLeftColor: qa.score >= 80 ? '#10b981' : qa.score >= 60 ? '#3b82f6' : qa.score >= 40 ? '#f59e0b' : '#ef4444',
-                                      transform: 'translateZ(0)', // GPU acceleration
-                                      willChange: 'auto',
-                                    }}
-                                  >
-                                    <div className={`absolute left-0 top-0 bottom-0 w-1.5 bg-gradient-to-b ${scoreColor} opacity-100 transition-width duration-200 group-hover:w-2`} />
-                                    <CardContent className="pt-6 pl-6">
-                                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <h3 className="text-xl font-bold text-gray-900">Question {index + 1}</h3>
-                                          {qa.question_type && (
-                                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                                              qa.question_type === "behavioral" ? "bg-amber-100 text-amber-800" :
-                                              qa.question_type === "technical" ? "bg-blue-100 text-blue-800" :
-                                              qa.question_type === "situational" ? "bg-purple-100 text-purple-800" :
-                                              "bg-slate-100 text-slate-700"
-                                            }`}>
-                                              {qa.question_type.charAt(0).toUpperCase() + qa.question_type.slice(1)}
-                                            </span>
-                                          )}
-                                        </div>
-                                        <div className="flex items-center gap-3">
-                                          <div className="relative w-28 h-2.5 bg-gray-200 rounded-full overflow-hidden">
-                                            <div
-                                              className={`h-full bg-gradient-to-r ${scoreColor} rounded-full shadow-sm`}
-                                              style={{ 
-                                                width: `${qa.score}%`,
-                                                transform: 'translateZ(0)',
-                                                willChange: 'auto'
-                                              }}
-                                            />
-                                          </div>
-                                          <span className={`text-sm font-bold px-4 py-1.5 rounded-full whitespace-nowrap shadow-sm bg-gradient-to-r ${scoreColor} text-white`}>
-                                            {qa.score}/100
-                                          </span>
-                                        </div>
-                                      </div>
-                                
-                                      <div className="space-y-4">
-                                        <div className="bg-gradient-to-br from-gray-50 to-gray-100/50 p-4 rounded-lg border border-gray-200 shadow-sm">
-                                          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Question:</p>
-                                          <p className="text-gray-900 font-semibold leading-relaxed">{qa.question}</p>
-                                        </div>
-                                        
-                                        <div className="bg-gradient-to-br from-gray-50 to-gray-100/50 p-4 rounded-lg border border-gray-200 shadow-sm">
-                                          <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Your Answer:</p>
-                                          <p className="text-gray-800 leading-relaxed">{qa.answer}</p>
-                                        </div>
-
-                                        {qa.star_breakdown && (
-                                          <div className="bg-gradient-to-br from-amber-50 via-orange-50/60 to-amber-50/80 border border-amber-200/80 p-5 rounded-xl shadow-sm">
-                                            <h4 className="text-sm font-bold text-amber-800 uppercase tracking-wider mb-4 flex items-center gap-2">
-                                              <Sparkles className="h-4 w-4 text-amber-600" />
-                                              STAR Breakdown
-                                            </h4>
-                                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                                              {(["situation", "task", "action", "result"] as const).map((key) => {
-                                                const val = qa.star_breakdown![key];
-                                                const label = key.charAt(0).toUpperCase() + key.slice(1);
-                                                const isStrong = val === "strong";
-                                                const isWeak = val === "weak";
-                                                const isMissing = val === "missing";
-                                                const Icon = isStrong ? CheckCircle2 : isWeak ? AlertTriangle : XCircle;
-                                                const cardClass = isStrong
-                                                  ? "bg-gradient-to-br from-emerald-50 to-green-50 border-emerald-200/80 text-emerald-800 shadow-sm"
-                                                  : isWeak
-                                                  ? "bg-gradient-to-br from-amber-50 to-yellow-50 border-amber-200/80 text-amber-800 shadow-sm"
-                                                  : "bg-gradient-to-br from-slate-50 to-gray-100 border-slate-200/80 text-slate-600 shadow-sm";
-                                                const iconClass = isStrong ? "text-emerald-600" : isWeak ? "text-amber-600" : "text-slate-400";
-                                                const badgeClass = isStrong
-                                                  ? "bg-emerald-100 text-emerald-700"
-                                                  : isWeak
-                                                  ? "bg-amber-100 text-amber-700"
-                                                  : "bg-slate-100 text-slate-600";
-                                                return (
-                                                  <div
-                                                    key={key}
-                                                    className={`flex flex-col items-center justify-center py-4 px-3 rounded-xl border ${cardClass} transition-all duration-200 hover:shadow-md`}
-                                                  >
-                                                    <Icon className={`h-8 w-8 mb-2 ${iconClass}`} strokeWidth={2.5} />
-                                                    <span className="text-sm font-semibold text-inherit">{label}</span>
-                                                    <span className={`text-xs font-medium mt-1 px-2 py-0.5 rounded-full ${badgeClass}`}>
-                                                      {val.toUpperCase()}
-                                                    </span>
-                                                  </div>
-                                                );
-                                              })}
-                                            </div>
-                                          </div>
-                                        )}
-                                        
-                                        {qa.strengths?.length > 0 && (
-                                          <div
-                                            className="bg-gradient-to-br from-green-50 to-emerald-50 border-2 border-green-300 p-4 rounded-xl shadow-md"
-                                            style={{ transform: 'translateZ(0)', willChange: 'auto' }}
-                                          >
-                                            <h4 className="text-sm font-bold text-green-700 mb-3 flex items-center gap-2">
-                                              <CheckCircle2 className="h-5 w-5 flex-shrink-0" />
-                                              Strengths
-                                            </h4>
-                                            <ul className="list-none space-y-2.5">
-                                              {qa.strengths.map((strength, i) => (
-                                                <li 
-                                                  key={i} 
-                                                  className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
-                                                >
-                                                  <span className="text-green-600 text-sm font-bold flex-shrink-0 leading-relaxed">✓</span>
-                                                  <span>{strength}</span>
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          </div>
-                                        )}
-                                        
-                                        {qa.improvements?.length > 0 && (
-                                          <div
-                                            className="bg-gradient-to-br from-orange-50 to-amber-50 border-2 border-orange-300 p-4 rounded-xl shadow-md"
-                                            style={{ transform: 'translateZ(0)', willChange: 'auto' }}
-                                          >
-                                            <h4 className="text-sm font-bold text-orange-700 mb-3 flex items-center gap-2">
-                                              <AlertCircle className="h-5 w-5 flex-shrink-0" />
-                                              Areas for Improvement
-                                            </h4>
-                                            {qa.improvement_quote && (
-                                              <div className="mb-3 p-3 bg-white/60 rounded-lg border border-orange-200">
-                                                <p className="text-xs font-bold text-orange-700 mb-1">You said:</p>
-                                                <p className="text-sm text-gray-800 italic">&ldquo;{qa.improvement_quote}&rdquo;</p>
-                                              </div>
+                                  <CardContent className="pt-5 pl-4 sm:pl-5">
+                                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <h3 className="text-lg font-semibold text-foreground sm:text-xl">
+                                          Question {index + 1}
+                                        </h3>
+                                        {qa.question_type && (
+                                          <span
+                                            className={cn(
+                                              "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                                              qa.question_type === "behavioral"
+                                                ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                                : qa.question_type === "technical"
+                                                  ? "bg-primary/10 text-primary"
+                                                  : qa.question_type === "situational"
+                                                    ? "bg-secondary/15 text-secondary-foreground"
+                                                    : "bg-muted text-muted-foreground"
                                             )}
-                                            <ul className="list-none space-y-2.5">
-                                              {qa.improvements.map((improvement, i) => (
-                                                <li 
-                                                  key={i} 
-                                                  className="text-sm text-gray-800 flex items-start gap-2 leading-relaxed"
-                                                >
-                                                  <span className="text-orange-600 text-sm font-bold flex-shrink-0 leading-relaxed">→</span>
-                                                  <span>{improvement}</span>
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          </div>
+                                          >
+                                            {qa.question_type.charAt(0).toUpperCase() + qa.question_type.slice(1)}
+                                          </span>
                                         )}
                                       </div>
-                                    </CardContent>
-                                  </Card>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </div>
+                                      <div className="flex items-center gap-3">
+                                        <div className="relative h-2.5 w-24 overflow-hidden rounded-full bg-muted">
+                                          <div
+                                            className={cn("h-full rounded-full bg-gradient-to-r", scoreBarClass(qa.score))}
+                                            style={{
+                                              width: `${qa.score}%`,
+                                              transform: "translateZ(0)",
+                                              willChange: "auto",
+                                            }}
+                                          />
+                                        </div>
+                                        <span
+                                          className={cn(
+                                            "whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-bold tabular-nums",
+                                            qa.score >= 80
+                                              ? "bg-primary/10 text-primary"
+                                              : qa.score >= 60
+                                                ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                                                : qa.score >= 40
+                                                  ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                                  : "bg-destructive/10 text-destructive"
+                                          )}
+                                        >
+                                          {qa.score}/100
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                      <div className={cn(RESULTS_INSET, "p-4")}>
+                                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                          Question
+                                        </p>
+                                        <p className="font-medium leading-relaxed text-foreground">{qa.question}</p>
+                                      </div>
+
+                                      <div className={cn(RESULTS_INSET, "p-4")}>
+                                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                          Your answer
+                                        </p>
+                                        <p className="leading-relaxed text-foreground/90">{qa.answer}</p>
+                                      </div>
+
+                                      {qa.star_breakdown && (
+                                        <div className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}>
+                                          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                                            <Sparkles className="h-4 w-4 text-amber-600" aria-hidden />
+                                            STAR
+                                          </h4>
+                                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+                                            {(["situation", "task", "action", "result"] as const).map((key) => {
+                                              const val = qa.star_breakdown![key];
+                                              const label = key.charAt(0).toUpperCase() + key.slice(1);
+                                              const isStrong = val === "strong";
+                                              const isWeak = val === "weak";
+                                              const Icon = isStrong
+                                                ? CheckCircle2
+                                                : isWeak
+                                                  ? AlertTriangle
+                                                  : XCircle;
+                                              const cellClass = isStrong
+                                                ? "border-emerald-500/20 bg-emerald-500/5"
+                                                : isWeak
+                                                  ? "border-amber-500/20 bg-amber-500/5"
+                                                  : "border-border bg-muted/30";
+                                              const iconClass = isStrong
+                                                ? "text-emerald-600"
+                                                : isWeak
+                                                  ? "text-amber-600"
+                                                  : "text-muted-foreground";
+                                              const badgeClass = isStrong
+                                                ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                                                : isWeak
+                                                  ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                                                  : "bg-muted text-muted-foreground";
+                                              return (
+                                                <div
+                                                  key={key}
+                                                  className={cn(
+                                                    "flex flex-col items-center rounded-lg border py-3 px-2 text-center",
+                                                    cellClass
+                                                  )}
+                                                >
+                                                  <Icon className={cn("mb-1 h-6 w-6", iconClass)} strokeWidth={2.5} />
+                                                  <span className="text-xs font-medium text-foreground">{label}</span>
+                                                  <span
+                                                    className={cn("mt-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold", badgeClass)}
+                                                  >
+                                                    {val.toUpperCase()}
+                                                  </span>
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        </div>
+                                      )}
+
+                                      {qa.strengths && qa.strengths.length > 0 && (
+                                        <div
+                                          className={cn(RESULTS_INSET, "border-l-2 border-l-primary/40 p-4")}
+                                          style={{ transform: "translateZ(0)", willChange: "auto" }}
+                                        >
+                                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                                            <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                                            Strengths
+                                          </h4>
+                                          <ul className="list-none space-y-2">
+                                            {qa.strengths.map((strength, i) => (
+                                              <li
+                                                key={i}
+                                                className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
+                                              >
+                                                <span className="pt-0.5 text-primary" aria-hidden>
+                                                  ·
+                                                </span>
+                                                <span>{strength}</span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+
+                                      {qa.improvements && qa.improvements.length > 0 && (
+                                        <div
+                                          className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}
+                                          style={{ transform: "translateZ(0)", willChange: "auto" }}
+                                        >
+                                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                                            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                                            Improve next
+                                          </h4>
+                                          {qa.improvement_quote && (
+                                            <div className="mb-3 rounded-lg border border-border bg-muted/40 p-3">
+                                              <p className="mb-1 text-xs font-medium text-muted-foreground">You said</p>
+                                              <p className="text-sm italic text-foreground/90">
+                                                &ldquo;{qa.improvement_quote}&rdquo;
+                                              </p>
+                                            </div>
+                                          )}
+                                          <ul className="list-none space-y-2">
+                                            {qa.improvements.map((improvement, i) => (
+                                              <li
+                                                key={i}
+                                                className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
+                                              >
+                                                <span className="pt-0.5 text-amber-600" aria-hidden>
+                                                  ·
+                                                </span>
+                                                <span>{improvement}</span>
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              ))}
+                            </div>
+                          </CardContent>
+                        </Card>
+                      </div>
 
                     {/* Better Answer Example card - lowest-scoring question with sample_better_answer */}
                     {betterAnswerQuestion && (
                       <div>
-                        <Card className="mb-6 border-2 border-indigo-300 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 shadow-lg hover:shadow-xl transition-shadow duration-200">
+                        <Card className={cn(RESULTS_CARD, "mb-6")}>
                           <CardHeader>
                             <div className="flex items-center gap-3">
-                              <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-600 flex items-center justify-center shadow-md">
-                                <Sparkles className="h-5 w-5 text-white" />
+                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                                <Sparkles className="h-5 w-5" aria-hidden />
                               </div>
                               <div>
-                                <CardTitle className="text-2xl font-bold text-gray-900">Better Answer Example</CardTitle>
-                                <p className="text-sm text-gray-600 mt-1 font-medium">A stronger way to answer this question</p>
+                                <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+                                  Example answer
+                                </CardTitle>
+                                <p className="mt-1 text-sm text-muted-foreground">A stronger structure for this prompt</p>
                               </div>
                             </div>
                           </CardHeader>
                           <CardContent>
-                            <div className="space-y-4">
-                              <div className="bg-white/60 p-4 rounded-lg border border-indigo-200">
-                                <p className="text-xs font-bold text-indigo-700 uppercase tracking-wider mb-2">Question</p>
-                                <p className="text-gray-900 font-semibold leading-relaxed">{betterAnswerQuestion.question}</p>
+                            <div className="space-y-3">
+                              <div className={cn(RESULTS_INSET, "p-4")}>
+                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question</p>
+                                <p className="font-medium leading-relaxed text-foreground">{betterAnswerQuestion.question}</p>
                               </div>
                               {betterAnswerQuestion.answer && (
-                                <div className="bg-gray-50/80 p-4 rounded-lg border border-gray-200">
-                                  <p className="text-xs font-bold text-gray-600 uppercase tracking-wider mb-2">Your Answer (excerpt)</p>
-                                  <p className="text-sm text-gray-700 leading-relaxed line-clamp-3">
+                                <div className={cn(RESULTS_INSET, "p-4")}>
+                                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                                    Your answer (excerpt)
+                                  </p>
+                                  <p className="line-clamp-3 text-sm leading-relaxed text-foreground/90">
                                     {betterAnswerQuestion.answer.length > 200
                                       ? `${betterAnswerQuestion.answer.slice(0, 200)}...`
                                       : betterAnswerQuestion.answer}
                                   </p>
                                 </div>
                               )}
-                              <div className="bg-green-50/80 p-4 rounded-lg border-2 border-green-300">
-                                <p className="text-xs font-bold text-green-700 uppercase tracking-wider mb-2">Stronger Example</p>
-                                <p className="text-gray-800 leading-relaxed">{betterAnswerQuestion.sample_better_answer}</p>
+                              <div className={cn(RESULTS_INSET, "border-l-2 border-l-primary/50 p-4")}>
+                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-primary">Stronger example</p>
+                                <p className="leading-relaxed text-foreground/95">{betterAnswerQuestion.sample_better_answer}</p>
                               </div>
                             </div>
                           </CardContent>
@@ -1476,60 +1610,57 @@ export default function Results() {
               {/* PERF: Transcript list - for very long transcripts (e.g. 30+ blocks), consider virtualization (e.g. react-window) to keep scroll smooth. */}
               {results.interview?.transcript && (
                 <div>
-                  <Card className="shadow-lg border-0 bg-white/95">
+                  <Card className={cn(RESULTS_CARD, "mb-2")}>
                     <CardHeader>
-                      <CardTitle className="text-2xl font-bold text-gray-900">Interview Transcript</CardTitle>
-                      <p className="text-sm text-gray-600 mt-1 font-medium">Full conversation transcript with speaker labels</p>
+                      <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Transcript</CardTitle>
+                      <p className="mt-1 text-sm text-muted-foreground">Speaker-labeled conversation</p>
                     </CardHeader>
                     <CardContent>
-                      <div className="space-y-3">
-                        {formatTranscript(results.interview.transcript).split('\n\n').map((paragraph, i) => {
-                          // Check if this paragraph starts with a speaker label
+                      <div className="space-y-2">
+                        {transcriptParagraphs.map((paragraph, i) => {
                           const speakerMatch = paragraph.match(/^(Interviewer|Candidate|User|AI|Agent):\s*(.*)$/i);
                           if (speakerMatch) {
                             const [, speaker, text] = speakerMatch;
-                            // Determine if it's AI/Interviewer or User/Candidate
                             const isAI = /^(Interviewer|AI|Agent)$/i.test(speaker);
                             const isUser = /^(Candidate|User)$/i.test(speaker);
-                            
+
                             return (
                               <div
                                 key={i}
-                                className={`p-4 rounded-xl shadow-md hover:shadow-lg transition-shadow duration-200 ${
-                                  isAI 
-                                    ? 'bg-gradient-to-br from-blue-50 to-indigo-50 border-l-4 border-blue-500 mr-6 sm:mr-12' 
-                                    : isUser 
-                                    ? 'bg-gradient-to-br from-purple-50 to-pink-50 border-r-4 border-purple-500 ml-6 sm:ml-12' 
-                                    : 'bg-gradient-to-br from-gray-50 to-gray-100 border-l-4 border-gray-400'
-                                }`}
-                                style={{ 
-                                  transform: 'translateZ(0)',
-                                  willChange: 'auto',
-                                  contain: 'layout style paint'
+                                className={cn(
+                                  "rounded-xl border p-3 sm:p-4",
+                                  isAI
+                                    ? "ml-0 border-l-2 border-l-primary/70 bg-primary/[0.04] sm:mr-8"
+                                    : isUser
+                                      ? "ml-0 border-l-2 border-l-secondary/50 bg-secondary/[0.06] sm:ml-8"
+                                      : "border-border bg-muted/30"
+                                )}
+                                style={{
+                                  transform: "translateZ(0)",
+                                  willChange: "auto",
+                                  contain: "layout style paint",
                                 }}
                               >
                                 <div className="flex items-start gap-3">
-                                  <span 
-                                    className={`font-bold text-xs sm:text-sm uppercase tracking-wide px-2.5 py-1 rounded-lg flex-shrink-0 ${
-                                      isAI 
-                                        ? 'text-blue-700 bg-blue-100' 
-                                        : isUser 
-                                        ? 'text-purple-700 bg-purple-100' 
-                                        : 'text-gray-700 bg-gray-100'
-                                    }`}
+                                  <span
+                                    className={cn(
+                                      "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:text-xs",
+                                      isAI
+                                        ? "bg-primary/10 text-primary"
+                                        : isUser
+                                          ? "bg-secondary/15 text-secondary-foreground"
+                                          : "bg-muted text-muted-foreground"
+                                    )}
                                   >
-                                    {isAI ? '🤖 AI' : isUser ? '👤 You' : speaker}
+                                    {isAI ? "Interviewer" : isUser ? "You" : speaker}
                                   </span>
-                                  <p className="text-sm text-gray-800 flex-1 leading-relaxed font-medium">{text}</p>
+                                  <p className="flex-1 text-sm font-normal leading-relaxed text-foreground/95">{text}</p>
                                 </div>
                               </div>
                             );
                           }
                           return (
-                            <p
-                              key={i}
-                              className="mb-3 text-sm text-gray-700 leading-relaxed"
-                            >
+                            <p key={i} className="mb-2 text-sm leading-relaxed text-muted-foreground last:mb-0">
                               {paragraph}
                             </p>
                           );
@@ -1544,15 +1675,15 @@ export default function Results() {
               <div
                 className="mt-8 flex justify-center"
               >
-                <Button 
+                <Button
                   onClick={handleReturnToDashboard}
                   variant="outline"
                   size="lg"
-                  className="min-w-[220px] bg-white hover:bg-gray-50 border-2 border-gray-300 hover:border-gray-500 shadow-md hover:shadow-xl transition-shadow duration-200 font-semibold text-gray-700 hover:text-gray-900"
+                  className="min-w-[220px] font-medium"
                   aria-label="Return to dashboard"
                 >
-                  <ArrowLeft className="h-5 w-5 mr-2" />
-                  Return to Dashboard
+                  <ArrowLeft className="mr-2 h-5 w-5" />
+                  Back to home
                 </Button>
               </div>
           </div>{/* end space-y-6 sections wrapper */}
@@ -1571,20 +1702,20 @@ export default function Results() {
         transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
         className="relative z-10 w-full max-w-md"
       >
-        <Card className="w-full shadow-xl border-0 bg-white/95">
+        <Card className={cn(RESULTS_CARD, "w-full")}>
           <CardContent className="pt-6">
             <div className="flex flex-col items-center gap-6">
-              <div className="text-center w-full">
-                <h2 className="text-2xl font-bold mb-2 text-gray-900">Loading Results</h2>
-                <p className="text-gray-600 text-sm font-medium mb-4">Fetching your interview data...</p>
+              <div className="w-full text-center">
+                <h2 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">Loading results</h2>
+                <p className="mb-4 text-sm text-muted-foreground">Fetching your interview data…</p>
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span className="text-gray-700 font-semibold">Progress</span>
-                    <span className="text-blue-600 font-bold">{Math.round(loadingProgress)}%</span>
+                    <span className="font-medium text-foreground">Progress</span>
+                    <span className="font-bold tabular-nums text-primary">{Math.round(loadingProgress)}%</span>
                   </div>
-                  <div className="relative h-3 bg-gray-200 rounded-full overflow-hidden">
+                  <div className="relative h-2.5 overflow-hidden rounded-full bg-muted">
                     <motion.div
-                      className="absolute top-0 left-0 bottom-0 bg-gradient-to-r from-blue-500 to-indigo-600 rounded-full"
+                      className="absolute bottom-0 left-0 top-0 rounded-full bg-primary"
                       initial={{ width: 0 }}
                       animate={{ width: `${loadingProgress}%` }}
                       transition={{ duration: 0.3, ease: "easeOut" }}

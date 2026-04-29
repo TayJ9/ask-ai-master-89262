@@ -1,63 +1,48 @@
-import type { Express } from "express";
+import type { Express, Request, Response } from "express";
 import { storage } from "./storage";
 import { insertProfileSchema, insertInterviewSessionSchema, insertInterviewResponseSchema, insertInterviewSchema, interviews, elevenLabsInterviewSessions, insertElevenLabsInterviewSessionSchema } from "../shared/schema";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { z } from "zod";
-import { analyzeInterviewSession } from "./scoring";
 import multer from "multer";
 import pdfParse from "pdf-parse";
 import { Readable } from "stream";
 import FormData from "form-data";
 import { v4 as uuidv4 } from "uuid";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { randomUUID, createHmac } from "crypto";
 import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { evaluationQueue } from "./evaluation";
 import { normalizeEvaluationJson, scoreInterview, EvaluationJsonSchema } from "./llm/openaiEvaluator";
+import { extractResumeProfileWithNER, summarizeResume } from "./llm/huggingfaceResume";
+import { buildResumeProfile } from "./resumeProfileHeuristic";
+import { stripResumeContactInfo } from "./resumeSanitize";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice");
 
-// Lazy-load JWT_SECRET to avoid build-time errors
-// CRITICAL: This function NEVER throws errors - Railway may validate during build
-// Only accessed at runtime when actually needed for authentication
-// Obfuscated to prevent Railway's static analysis from detecting process.env.JWT_SECRET
+const isProd = process.env.NODE_ENV === "production";
+
+/** Stable rate-limit key per client IP (IPv6-aware via express-rate-limit helper). */
+function rateLimitIpKey(req: { ip?: string; socket?: { remoteAddress?: string } }): string {
+  const ip = req.ip || req.socket?.remoteAddress || "unknown";
+  return ipKeyGenerator(ip);
+}
+
+/** JWT signing secret. Production requires JWT_SECRET (validated at startup in assertProductionEnv). */
 function getJWTSecret(): string {
-  // Obfuscate environment variable access to prevent Railway static analysis
-  // Railway's Railpack scans for process.env.* patterns and validates secrets
-  // By constructing the key dynamically, we avoid static detection
   const env = process.env;
-  const keyParts = ['JWT', '_', 'SECRET'];
-  const secretKey = keyParts.join('');
+  const secretKey = ["JWT", "_", "SECRET"].join("");
   const secret = env[secretKey];
-  
-  // Always return a value - NEVER throw during module load or build
-  // Railway Metal builder may check code during build phase
-  // We must be completely build-safe - no errors, no exceptions
-  if (!secret) {
-    // Check if we're actually running (not building)
-    // Railway build: no PORT, no process actually running
-    // Railway runtime: PORT is set by Railway
-    const isActuallyRunning = !!env.PORT && process.pid > 0;
-    
-    if (env.NODE_ENV === 'production' && isActuallyRunning) {
-      // Runtime in production without secret - log critical error but don't throw
-      // This allows Railway build to succeed, but logs will show the issue
-      console.error('❌ CRITICAL: JWT_SECRET environment variable must be set in production!');
-      console.error('   Authentication will not work properly. Please add JWT_SECRET in Railway Variables.');
-      console.error('   Using insecure fallback - ADD JWT_SECRET IMMEDIATELY!');
-      return "dev-secret-key-change-before-production-INSECURE-RUNTIME";
-    }
-    
-    // Build time or development - silently use dev secret (build-safe)
-    return "dev-secret-key-change-before-production";
+  const trimmed = typeof secret === "string" ? secret.trim() : "";
+  if (trimmed) return trimmed;
+  if (isProd) {
+    throw new Error("JWT_SECRET is required in production");
   }
-  
-  return secret;
+  return "dev-secret-key-change-before-production";
 }
 
 function getAgentId(): string {
@@ -106,10 +91,13 @@ function formatTranscriptArray(messages: any[]): string {
   return formattedLines.join('\n\n');
 }
 
+/** Max polls when ConvAI returns 404 or transcript not ready yet (conversation still finalizing). */
+const FETCH_TRANSCRIPT_MAX_ATTEMPTS = 6;
+const FETCH_TRANSCRIPT_BACKOFF_MS = 2000;
+
 /**
  * Fetch transcript from ElevenLabs API for a given conversation_id
- * Implements retry strategy: if 404, wait 1000ms and retry once
- * Returns formatted transcript string or null if not available
+ * Retries on 404 and when JSON has status "processing" or empty transcript (common right after disconnect).
  */
 async function fetchTranscriptFromElevenLabs(conversationId: string): Promise<string | null> {
   const apiKey = ELEVENLABS_API_KEY;
@@ -126,82 +114,134 @@ async function fetchTranscriptFromElevenLabs(conversationId: string): Promise<st
     },
   };
 
-  // Retry logic: try once, if 404 wait 1000ms and retry once more
-  const attemptFetch = async (attempt: number): Promise<string | null> => {
+  const extractTranscriptText = (data: any): string | null => {
+    let transcriptText: string | null = null;
+    if (data.transcript && typeof data.transcript === 'string') {
+      transcriptText = data.transcript;
+    } else if (data.transcript && Array.isArray(data.transcript)) {
+      transcriptText = formatTranscriptArray(data.transcript);
+    } else if (data.messages && Array.isArray(data.messages)) {
+      transcriptText = formatTranscriptArray(data.messages);
+    } else if (data.conversation) {
+      if (typeof data.conversation.transcript === 'string') {
+        transcriptText = data.conversation.transcript;
+      } else if (Array.isArray(data.conversation.transcript)) {
+        transcriptText = formatTranscriptArray(data.conversation.transcript);
+      } else if (data.conversation.messages && Array.isArray(data.conversation.messages)) {
+        transcriptText = formatTranscriptArray(data.conversation.messages);
+      }
+    }
+    if (!transcriptText || transcriptText.trim().length === 0) return null;
+    return transcriptText;
+  };
+
+  for (let attempt = 1; attempt <= FETCH_TRANSCRIPT_MAX_ATTEMPTS; attempt++) {
     try {
-      console.log(`[FETCH-TRANSCRIPT] Fetching transcript for conversation_id: ${conversationId} (attempt ${attempt})`);
+      console.log(`[FETCH-TRANSCRIPT] Fetching transcript for conversation_id: ${conversationId} (attempt ${attempt}/${FETCH_TRANSCRIPT_MAX_ATTEMPTS})`);
       const response = await fetch(url, fetchOptions);
-      
+
       if (!response.ok) {
         if (response.status === 404) {
-          if (attempt === 1) {
-            // First attempt got 404 - wait 1000ms and retry once
-            console.log(`[FETCH-TRANSCRIPT] Transcript not found (404) for conversation_id: ${conversationId} - waiting 1000ms before retry`);
-            await sleep(1000);
-            return attemptFetch(2);
-          } else {
-            // Second attempt also got 404 - transcript not ready yet
-            console.warn(`[FETCH-TRANSCRIPT] Transcript still not found (404) after retry for conversation_id: ${conversationId} - may not be ready yet`);
-            return null;
+          console.warn(`[FETCH-TRANSCRIPT] 404 for conversation_id: ${conversationId} (attempt ${attempt})`);
+          if (attempt < FETCH_TRANSCRIPT_MAX_ATTEMPTS) {
+            await sleep(FETCH_TRANSCRIPT_BACKOFF_MS);
+            continue;
           }
+          return null;
         }
-        
-        // Other error status codes
         const errorText = await response.text().catch(() => 'Unknown error');
         console.error(`[FETCH-TRANSCRIPT] ElevenLabs API error (${response.status}) for conversation_id ${conversationId}:`, errorText);
         return null;
       }
 
-      const data = await response.json();
-      
-      // Extract transcript from response - handle multiple possible formats
-      let transcriptText: string | null = null;
-      
-      // Format 1: Direct transcript string
-      if (data.transcript && typeof data.transcript === 'string') {
-        transcriptText = data.transcript;
+      const data = (await response.json()) as Record<string, unknown>;
+      const convStatus =
+        typeof data.status === "string" ? data.status.toLowerCase() : "";
+      const transcriptText = extractTranscriptText(data);
+
+      if (transcriptText) {
+        console.log(`[FETCH-TRANSCRIPT] Successfully fetched transcript (${transcriptText.length} chars) for conversation_id: ${conversationId}`);
+        return transcriptText;
       }
-      // Format 2: Transcript as array of messages
-      else if (data.transcript && Array.isArray(data.transcript)) {
-        transcriptText = formatTranscriptArray(data.transcript);
-      }
-      // Format 3: Messages array at root level
-      else if (data.messages && Array.isArray(data.messages)) {
-        transcriptText = formatTranscriptArray(data.messages);
-      }
-      // Format 4: Nested conversation.transcript
-      else if (data.conversation) {
-        if (typeof data.conversation.transcript === 'string') {
-          transcriptText = data.conversation.transcript;
-        } else if (Array.isArray(data.conversation.transcript)) {
-          transcriptText = formatTranscriptArray(data.conversation.transcript);
-        } else if (data.conversation.messages && Array.isArray(data.conversation.messages)) {
-          transcriptText = formatTranscriptArray(data.conversation.messages);
+
+      // Conversation exists but transcript not populated yet
+      if (convStatus === "processing" || convStatus === "in_progress" || attempt < FETCH_TRANSCRIPT_MAX_ATTEMPTS) {
+        console.warn(`[FETCH-TRANSCRIPT] Empty transcript (status=${String(data.status ?? "unknown")}) for ${conversationId} — retrying in ${FETCH_TRANSCRIPT_BACKOFF_MS}ms`);
+        if (attempt < FETCH_TRANSCRIPT_MAX_ATTEMPTS) {
+          await sleep(FETCH_TRANSCRIPT_BACKOFF_MS);
+          continue;
         }
       }
 
-      if (!transcriptText || transcriptText.trim().length === 0) {
-        console.warn(`[FETCH-TRANSCRIPT] Transcript is empty or incomplete for conversation_id: ${conversationId}`);
-        return null;
-      }
-
-      console.log(`[FETCH-TRANSCRIPT] Successfully fetched transcript (${transcriptText.length} chars) for conversation_id: ${conversationId}`);
-      return transcriptText;
+      console.warn(`[FETCH-TRANSCRIPT] Transcript still empty for conversation_id: ${conversationId} after ${attempt} attempt(s)`);
+      return null;
     } catch (error: any) {
       console.error(`[FETCH-TRANSCRIPT] Error fetching transcript for conversation_id ${conversationId} (attempt ${attempt}):`, error.message || error);
-      
-      // Only retry on network errors if it's the first attempt
-      if (attempt === 1 && (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.message?.includes('fetch'))) {
-        console.log(`[FETCH-TRANSCRIPT] Network error on attempt ${attempt}, waiting 1000ms before retry`);
-        await sleep(1000);
-        return attemptFetch(2);
+      if (attempt < FETCH_TRANSCRIPT_MAX_ATTEMPTS && (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.message?.includes('fetch'))) {
+        await sleep(FETCH_TRANSCRIPT_BACKOFF_MS);
+        continue;
       }
-      
       return null;
     }
-  };
+  }
 
-  return attemptFetch(1);
+  return null;
+}
+
+/**
+ * Persist a transcript when needed, parse it for Q&A pairs, and enqueue evaluation.
+ * Centralizes the repeated "write transcript → parse → gate on Q&A pairs → enqueue"
+ * pattern used by the webhook and /api/save-interview.
+ */
+async function finalizeInterviewTranscript({
+  interviewId,
+  conversationId,
+  transcript,
+  source,
+}: {
+  interviewId: string;
+  conversationId: string | undefined;
+  transcript: string | undefined | null;
+  source: string;
+}): Promise<void> {
+  if (!transcript?.trim()) {
+    console.log(`[FINALIZE-TRANSCRIPT] ${source}: no transcript available for interview ${interviewId}`);
+    return;
+  }
+
+  try {
+    const existingInterview = await (db.query as any).interviews?.findFirst({
+      where: (interviews: any, { eq }: any) => eq(interviews.id, interviewId),
+    });
+
+    if (!existingInterview) {
+      console.warn(`[FINALIZE-TRANSCRIPT] ${source}: interview ${interviewId} not found`);
+      return;
+    }
+
+    if (!existingInterview.transcript) {
+      await db.update(interviews)
+        .set({ transcript, status: 'completed' })
+        .where(eq(interviews.id, interviewId));
+      console.log(`[FINALIZE-TRANSCRIPT] ${source}: saved transcript (${transcript.length} chars) for interview ${interviewId}`);
+    } else {
+      console.log(`[FINALIZE-TRANSCRIPT] ${source}: interview ${interviewId} already has transcript, preserving existing transcript`);
+    }
+
+    const transcriptForEvaluation = existingInterview.transcript || transcript;
+    const { parseTranscriptWithFallback } = await import('./evaluation');
+    const qaPairs = await parseTranscriptWithFallback(transcriptForEvaluation);
+    if (qaPairs.length === 0) {
+      console.log(`[FINALIZE-TRANSCRIPT] ${source}: transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+      return;
+    }
+    console.log(`[FINALIZE-TRANSCRIPT] ${source}: transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
+    await evaluationQueue.enqueue(interviewId, conversationId || '');
+    console.log(`[FINALIZE-TRANSCRIPT] ${source}: evaluation enqueued for interview ${interviewId}`);
+  } catch (evalError: any) {
+    console.error(`[FINALIZE-TRANSCRIPT] ${source}: error finalizing transcript for interview ${interviewId}:`, evalError?.message || evalError);
+    // Don't re-throw - evaluation can be retried later via webhook or stalled-evaluation health check
+  }
 }
 
 const parseRetryAfter = (value: string | null): number | null => {
@@ -249,56 +289,24 @@ const cacheTokenResponse = (requestId: string, status: number, body: any) => {
   }, TOKEN_CACHE_TTL_MS);
 };
 
-function buildResumeProfile(resumeText: string) {
-  const lines = resumeText.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-
-  const extractListAfterLabel = (label: string) => {
-    const line = lines.find(l => l.toLowerCase().startsWith(label));
-    if (!line) return [];
-    const parts = line.split(':');
-    if (parts.length < 2) return [];
-    return parts[1].split(/[,;•|-]/).map(s => s.trim()).filter(Boolean).slice(0, 15);
-  };
-
-  const skills = extractListAfterLabel('skills');
-  const educationLines = lines.filter(l => /education/i.test(l)).slice(0, 5);
-  const experienceLines = lines.filter(l => /experience/i.test(l)).slice(0, 5);
-  const projectLines = lines.filter(l => /project/i.test(l)).slice(0, 5);
-
-  return {
-    skills,
-    projects: projectLines,
-    experience: experienceLines,
-    education: educationLines,
-  };
-}
-
-interface AuthRequest extends Express.Request {
-  userId?: string;
-}
-
 function authenticateToken(req: any, res: any, next: any) {
+  const requestId = req.requestId as string | undefined;
   try {
-    // Express normalizes headers to lowercase, but check both for robustness
     const authHeader = req.headers['authorization'] || req.headers['Authorization'];
-    
-    // Enhanced debug logging as requested
-    console.log('[Auth] Header present:', !!authHeader);
-    
-    // Log auth header for debugging (masked)
-    if (authHeader) {
+
+    if (!authHeader) {
+      console.error("[Auth] No Authorization header for path:", req.path, { requestId });
+      return res.status(401).json({ error: "No authorization header provided", requestId });
+    }
+
+    if (!isProd) {
+      console.log("[Auth] Header present:", !!authHeader, "path:", req.path);
       const headerPreview = authHeader.length > 30 ? `${authHeader.substring(0, 30)}...` : authHeader;
-      console.log('[Auth] Authorization header received:', {
-        exists: true,
+      console.log("[Auth] Authorization header received:", {
         length: authHeader.length,
         preview: headerPreview,
-        startsWithBearer: authHeader.startsWith('Bearer ') || authHeader.startsWith('bearer '),
-        hasDoubleBearer: authHeader.includes('Bearer Bearer') || authHeader.includes('bearer bearer')
+        startsWithBearer: authHeader.startsWith("Bearer ") || authHeader.startsWith("bearer "),
       });
-    } else {
-      console.error('[Auth] No Authorization header found for path:', req.path);
-      console.error('[Auth] Available headers:', Object.keys(req.headers));
-      return res.status(401).json({ error: 'No authorization header provided' });
     }
     
     // Robust token extraction - handle various formats
@@ -327,77 +335,69 @@ function authenticateToken(req: any, res: any, next: any) {
     }
 
     if (!token) {
-      console.error('[Auth] No token extracted from header for path:', req.path);
-      console.error('[Auth] Auth header value:', authHeader || 'null');
-      console.error('[Auth] Auth header type:', typeof authHeader);
-      return res.status(401).json({ error: 'Invalid authorization header format. Expected: Bearer <token>' });
+      console.error("[Auth] No token extracted from header for path:", req.path, { requestId });
+      return res.status(401).json({ error: "Invalid authorization header format. Expected: Bearer <token>", requestId });
     }
 
     // Trim token to handle any remaining whitespace issues
     const trimmedToken = token.trim();
     if (!trimmedToken) {
-      console.error('[Auth] Token is empty after trimming for path:', req.path);
-      return res.status(401).json({ error: 'Invalid token format' });
+      console.error("[Auth] Token empty after trim for path:", req.path, { requestId });
+      return res.status(401).json({ error: "Invalid token format", requestId });
     }
 
-    // Log token info for debugging (masked)
-    const tokenPreview = trimmedToken.length > 20 ? `${trimmedToken.substring(0, 20)}...` : trimmedToken;
-    console.log('[Auth] Verifying token:', {
-      length: trimmedToken.length,
-      preview: tokenPreview,
-      path: req.path
-    });
-    
-    // Log JWT secret info for debugging (masked)
-    const jwtSecret = getJWTSecret();
-    const secretPreview = jwtSecret.length > 10 ? `${jwtSecret.substring(0, 10)}...` : jwtSecret;
-    console.log('[Auth] JWT Secret info:', {
-      exists: !!jwtSecret,
-      length: jwtSecret.length,
-      preview: secretPreview
-    });
+    if (!isProd) {
+      const tokenPreview = trimmedToken.length > 20 ? `${trimmedToken.substring(0, 20)}...` : trimmedToken;
+      console.log("[Auth] Verifying token:", { length: trimmedToken.length, preview: tokenPreview, path: req.path });
+    }
 
-    jwt.verify(trimmedToken, getJWTSecret(), (err: any, decoded: any) => {
+    let jwtSecret: string;
+    try {
+      jwtSecret = getJWTSecret();
+    } catch (e) {
+      console.error("[Auth] JWT configuration error", { requestId });
+      return res.status(500).json({ error: "Server authentication misconfiguration", requestId });
+    }
+
+    jwt.verify(trimmedToken, jwtSecret, (err: any, decoded: any) => {
       if (err) {
-        console.error('[Auth] Token verified: false');
-        console.error('[Auth] Error:', {
-          error: err.message,
+        console.error("[Auth] Token verify failed:", {
           name: err.name,
           path: req.path,
-          tokenLength: trimmedToken.length,
-          errorCode: err.code || 'N/A'
+          requestId,
+          ...(isProd ? {} : { message: err.message, tokenLength: trimmedToken.length }),
         });
-        
-        // Provide more helpful error messages
-        let errorMessage = 'Invalid token';
-        if (err.name === 'JsonWebTokenError') {
-          errorMessage = 'Invalid token format. Please sign in again.';
-        } else if (err.name === 'TokenExpiredError') {
-          errorMessage = 'Token expired. Please sign in again.';
-        } else if (err.message?.includes('secret')) {
-          errorMessage = 'Token signature mismatch. Please sign in again to get a new token.';
+
+        let errorMessage = "Invalid token";
+        if (err.name === "JsonWebTokenError") {
+          errorMessage = "Invalid token format. Please sign in again.";
+        } else if (err.name === "TokenExpiredError") {
+          errorMessage = "Token expired. Please sign in again.";
+        } else if (err.message?.includes("secret")) {
+          errorMessage = "Token signature mismatch. Please sign in again to get a new token.";
         }
-        
-        return res.status(401).json({ error: errorMessage });
+
+        return res.status(401).json({ error: errorMessage, requestId });
       }
-      
-      console.log('[Auth] Token verified: true');
-      console.log('[Auth] Token verified successfully:', {
-        userId: decoded.userId,
-        path: req.path
-      });
-      
+
+      if (!isProd) {
+        console.log("[Auth] Token ok:", { userId: decoded.userId, path: req.path });
+      }
+
       req.userId = decoded.userId;
-      // Token verified
       next();
     });
   } catch (error: any) {
-    console.error('[Auth] Error in authenticateToken middleware:', {
-      error: error.message,
-      stack: error.stack,
-      path: req.path
+    console.error("[Auth] authenticateToken exception:", {
+      message: error?.message,
+      stack: error?.stack,
+      path: req.path,
+      requestId,
     });
-    return res.status(500).json({ error: 'Authentication error: ' + error.message });
+    return res.status(500).json({
+      error: isProd ? "Authentication failed" : `Authentication error: ${error.message}`,
+      requestId,
+    });
   }
 }
 
@@ -413,23 +413,42 @@ function authenticateToken(req: any, res: any, next: any) {
  */
 export function registerRoutes(app: Express) {
   console.log('[ROUTE REGISTRATION] Starting route registration...');
+
+  const authRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: isProd ? 30 : 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => rateLimitIpKey(req),
+    handler: (req, res) => {
+      const requestId = (req as { requestId?: string }).requestId || randomUUID();
+      res.status(429).json({
+        error: {
+          code: "AUTH_RATE_LIMIT",
+          message: "Too many sign-in or sign-up attempts. Please try again later.",
+          requestId,
+        },
+      });
+    },
+  });
   
   // Favicon handler - prevent 404 errors
   app.get('/favicon.ico', (_req, res) => {
     res.status(204).end();
   });
   
-  // Health check endpoint - accessible without authentication
-  app.get('/health', async (_req, res) => {
+  // Health check — also at /api/health so Vite's /api proxy resolves a real route
+  // (otherwise the request hits embedded Vite middleware and can recurse via proxy).
+  const healthCheck = async (_req: Request, res: Response) => {
     try {
-      // Check database connection
       const dbConnected = await storage.checkDbConnection();
       const environment = process.env.NODE_ENV || 'development';
       const port = process.env.PORT || '5000';
-      
+      const jwtReady = Boolean(process.env.JWT_SECRET?.trim());
+
       if (dbConnected) {
-        res.json({ 
-          status: 'healthy', 
+        res.json({
+          status: 'healthy',
           database: 'connected',
           environment,
           port,
@@ -437,27 +456,30 @@ export function registerRoutes(app: Express) {
           services: {
             api: 'operational',
             websocket: 'operational',
-            database: 'connected'
-          }
+            database: 'connected',
+          },
+          ...(environment === 'development' ? { checks: { jwtConfigured: jwtReady } } : {}),
         });
       } else {
-        res.status(500).json({ 
-          status: 'unhealthy', 
+        res.status(500).json({
+          status: 'unhealthy',
           database: 'disconnected',
           environment,
           port,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
         });
       }
     } catch (error: any) {
       console.error('Health check error:', error);
-      res.status(500).json({ 
-        status: 'unhealthy', 
+      res.status(500).json({
+        status: 'unhealthy',
         database: 'error',
-        error: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        error: process.env.NODE_ENV === 'development' ? error?.message : undefined,
       });
     }
-  });
+  };
+  app.get('/health', healthCheck);
+  app.get('/api/health', healthCheck);
 
   // Dev-only: Expected dynamicVariables shape for a given year (for test assertions)
   app.get("/api/dev/dynamic-variables-schema", (req, res) => {
@@ -551,12 +573,15 @@ export function registerRoutes(app: Express) {
       return res.json(validated);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      return res.status(500).json({ error: "Evaluation failed", details: msg });
+      return res.status(500).json({
+        error: "Evaluation failed",
+        ...(isProd ? {} : { details: msg }),
+      });
     }
   });
 
   // Auth endpoints
-  app.post("/api/auth/signup", async (req, res) => {
+  app.post("/api/auth/signup", authRateLimiter, async (req, res) => {
     try {
       const { email, password, fullName } = req.body;
       
@@ -584,29 +609,27 @@ export function registerRoutes(app: Express) {
       console.log(`[SIGNUP] Success! Profile created with ID: ${profile.id}`);
       res.json({ message: "Account created successfully" });
     } catch (error: any) {
-      console.error("❌ [SIGNUP] Error:", error);
-      console.error("❌ [SIGNUP] Error message:", error?.message);
-      console.error("❌ [SIGNUP] Error stack:", error?.stack);
-      console.error("❌ [SIGNUP] Error code:", error?.code);
-      
-      // Provide more helpful error messages
+      console.error("❌ [SIGNUP] Error:", error?.message || error, { code: error?.code, stack: error?.stack });
+
       let errorMessage = "Signup failed";
       if (error?.message?.includes('relation') && error?.message?.includes('does not exist')) {
         errorMessage = "Database tables not created. Please run database setup script.";
       } else if (error?.message?.includes('connection') || error?.code === 'ECONNREFUSED') {
         errorMessage = "Database connection failed. Please check DATABASE_URL.";
-      } else if (error?.message) {
+      } else if (!isProd && error?.message) {
         errorMessage = `Signup failed: ${error.message}`;
       }
-      
+
+      const requestId = (req as { requestId?: string }).requestId;
       res.status(500).json({ 
         error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        requestId,
+        details: !isProd ? error?.message : undefined,
       });
     }
   });
 
-  app.post("/api/auth/signin", async (req, res) => {
+  app.post("/api/auth/signin", authRateLimiter, async (req, res) => {
     try {
       console.log(`[SIGNIN] Request received:`, {
         method: req.method,
@@ -637,7 +660,16 @@ export function registerRoutes(app: Express) {
       }
 
       console.log(`[SIGNIN] Password valid, generating token...`);
-      const token = jwt.sign({ userId: profile.id }, getJWTSecret(), { expiresIn: '7d' });
+      let token: string;
+      try {
+        token = jwt.sign({ userId: profile.id }, getJWTSecret(), { expiresIn: '7d' });
+      } catch (jwtErr) {
+        console.error("[SIGNIN] JWT signing failed:", jwtErr);
+        return res.status(500).json({
+          error: isProd ? "Signin failed" : "JWT configuration error",
+          requestId: (req as { requestId?: string }).requestId,
+        });
+      }
       
       console.log(`[SIGNIN] Success! Token generated for user: ${profile.id}`);
       res.json({ 
@@ -649,24 +681,22 @@ export function registerRoutes(app: Express) {
         }
       });
     } catch (error: any) {
-      console.error("❌ [SIGNIN] Error:", error);
-      console.error("❌ [SIGNIN] Error message:", error?.message);
-      console.error("❌ [SIGNIN] Error stack:", error?.stack);
-      console.error("❌ [SIGNIN] Error code:", error?.code);
-      
-      // Provide more helpful error messages
+      console.error("❌ [SIGNIN] Error:", error?.message || error, { code: error?.code, stack: error?.stack });
+
       let errorMessage = "Signin failed";
       if (error?.message?.includes('relation') && error?.message?.includes('does not exist')) {
         errorMessage = "Database tables not created. Please run database setup script.";
       } else if (error?.message?.includes('connection') || error?.code === 'ECONNREFUSED') {
         errorMessage = "Database connection failed. Please check DATABASE_URL.";
-      } else if (error?.message) {
+      } else if (!isProd && error?.message) {
         errorMessage = `Signin failed: ${error.message}`;
       }
-      
+
+      const requestId = (req as { requestId?: string }).requestId;
       res.status(500).json({ 
         error: errorMessage,
-        details: process.env.NODE_ENV === 'development' ? error?.message : undefined
+        requestId,
+        details: !isProd ? error?.message : undefined,
       });
     }
   });
@@ -981,8 +1011,29 @@ export function registerRoutes(app: Express) {
       // Clear file buffer from memory immediately after processing
       req.file.buffer = null as any;
 
-      const resumeFulltext = resumeText.trim();
-      const resumeProfile = buildResumeProfile(resumeFulltext);
+      const resumeFulltext = stripResumeContactInfo(resumeText.trim());
+      const heuristicProfile = buildResumeProfile(resumeFulltext);
+
+      // Priority 1: Enhance profile with Hugging Face NER (skills, companies, etc.)
+      let resumeProfile = heuristicProfile;
+      try {
+        resumeProfile = await extractResumeProfileWithNER(resumeFulltext, heuristicProfile);
+      } catch (hfErr: any) {
+        console.warn("[UPLOAD-RESUME] HF NER skipped:", hfErr?.message || hfErr);
+      }
+
+      // Priority 2: Summarize resume for ElevenLabs context (resume_summary, resume_highlights)
+      let resumeSummary = resumeFulltext.slice(0, 1500);
+      let resumeHighlights = resumeFulltext.slice(0, 500);
+      try {
+        const hfSummary = await summarizeResume(resumeFulltext);
+        if (hfSummary) {
+          resumeSummary = hfSummary.summary;
+          resumeHighlights = hfSummary.highlights;
+        }
+      } catch (hfErr: any) {
+        console.warn("[UPLOAD-RESUME] HF summarization skipped:", hfErr?.message || hfErr);
+      }
 
       // Persist resume content keyed by sessionId (interviewid)
       try {
@@ -1007,7 +1058,10 @@ export function registerRoutes(app: Express) {
       res.json({
         sessionId,
         resumeText: resumeFulltext,
-        candidateName: sanitizedName
+        candidateName: sanitizedName,
+        resume_summary: resumeSummary,
+        resume_highlights: resumeHighlights,
+        resumeProfile,
       });
     } catch (error: any) {
       // Enhanced error logging
@@ -1084,7 +1138,7 @@ export function registerRoutes(app: Express) {
         resumeText = resumeText.substring(0, maxLength) + "...";
       }
 
-      res.json({ resumeText: resumeText.trim() });
+      res.json({ resumeText: stripResumeContactInfo(resumeText.trim()) });
     } catch (error: any) {
       console.error("Resume upload error:", error);
       res.status(500).json({ 
@@ -1372,8 +1426,7 @@ const tokenRateLimiter = rateLimit({
     if (req.userId) {
       return req.userId;
     }
-    // Use ipKeyGenerator helper for proper IPv6 handling
-    return ipKeyGenerator(req);
+    return rateLimitIpKey(req);
   },
   handler: (req, res) => {
     const requestId = req.header('X-Request-Id') || randomUUID();
@@ -1933,17 +1986,12 @@ const tokenRateLimiter = rateLimit({
       if (existingInterview) {
         console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists (id: ${existingInterview.id})`);
         
-        // Verify transcript hasn't changed (if webhook fires twice with different data)
-        if (transcript && existingInterview.transcript !== transcript) {
-          console.warn(`[WEBHOOK] Transcript mismatch for existing interview - updating`);
-          try {
-            await db.update(interviews)
-              .set({ transcript })
-              .where(eq(interviews.id, existingInterview.id));
-          } catch (updateError: any) {
-            console.error(`[WEBHOOK] Failed to update transcript for existing interview:`, updateError);
-            // Don't fail - transcript update is non-critical
-          }
+        if (transcript && existingInterview.transcript && existingInterview.transcript !== transcript) {
+          console.warn(`[WEBHOOK] Transcript mismatch for existing interview - preserving existing transcript`, {
+            interviewId: existingInterview.id,
+            existingLength: existingInterview.transcript.length,
+            incomingLength: transcript.length,
+          });
         }
         
         // Link to session if not already linked (idempotent)
@@ -1984,21 +2032,12 @@ const tokenRateLimiter = rateLimit({
           }
         }
         
-        // Enqueue evaluation if not already complete
-        try {
-          const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
-            where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, existingInterview.id),
-          });
-          
-          if (!existingEvaluation || existingEvaluation.status === 'failed') {
-            console.log(`[WEBHOOK] Enqueuing evaluation for existing interview ${existingInterview.id}`);
-            evaluationQueue.enqueue(existingInterview.id, conversation_id).catch((error: any) => {
-              console.error(`[WEBHOOK] Failed to enqueue evaluation for existing interview ${existingInterview.id}:`, error);
-            });
-          }
-        } catch (evalCheckError: any) {
-          console.error(`[WEBHOOK] Error checking evaluation status (non-critical):`, evalCheckError);
-        }
+        await finalizeInterviewTranscript({
+          interviewId: existingInterview.id,
+          conversationId: conversation_id,
+          transcript: existingInterview.transcript || transcript,
+          source: 'webhook / existing interview',
+        });
         
         // Always return success for idempotent operations
         return res.json({ 
@@ -2137,29 +2176,12 @@ const tokenRateLimiter = rateLimit({
         console.error(`[WEBHOOK] Failed to link interview to session (non-critical):`, linkError);
       }
 
-      // Enqueue evaluation job asynchronously (non-critical - don't fail webhook if this fails)
-      try {
-        console.log(`[WEBHOOK] 🔄 Enqueuing evaluation for interview ${interview.id}...`);
-        console.log(`[WEBHOOK] Evaluation queue status:`, {
-          interviewId: interview.id,
-          conversationId: conversation_id,
-          hasTranscript: !!interview.transcript,
-          transcriptLength: interview.transcript?.length || 0,
-          interviewStatus: interview.status,
-        });
-        
-        await evaluationQueue.enqueue(interview.id, conversation_id);
-        console.log(`[WEBHOOK] ✅ Successfully enqueued evaluation for interview ${interview.id} (conversation_id: ${conversation_id})`);
-        console.log(`[WEBHOOK] 📊 Evaluation will be processed asynchronously - check logs for [EVALUATION] messages`);
-      } catch (evalError: any) {
-        console.error(`[WEBHOOK] ❌ Failed to enqueue evaluation (non-critical):`, {
-          error: evalError.message,
-          stack: evalError.stack,
-          interviewId: interview.id,
-          conversationId: conversation_id,
-        });
-        // Don't fail webhook - evaluation can be retried later
-      }
+      await finalizeInterviewTranscript({
+        interviewId: interview.id,
+        conversationId: conversation_id,
+        transcript: interview.transcript || transcript,
+        source: 'webhook / new interview',
+      });
 
       res.json({ success: true, interviewId: interview.id });
     } catch (error: any) {
@@ -2316,7 +2338,12 @@ const tokenRateLimiter = rateLimit({
             if (!raw || typeof raw !== "object" || Object.keys(raw).length === 0) return null;
             try {
               return normalizeEvaluationJson(raw, []);
-            } catch {
+            } catch (normalizationError: any) {
+              console.error('[RESULTS] Failed to normalize stored evaluation JSON:', {
+                interviewId,
+                evaluationId: evaluation.id,
+                error: normalizationError?.message || normalizationError,
+              });
               return null;
             }
           })(),
@@ -2351,10 +2378,11 @@ const tokenRateLimiter = rateLimit({
 
   // Client-side interview end notification endpoint
   // Records that the frontend has ended the interview (user click or disconnect)
-  // Webhook is the source of truth for transcript - this endpoint only records client state
+  // Transcript: webhook + server fetch are preferred; body.transcript is a fallback (e.g. localhost without webhook).
   // Idempotent and safe to call before webhook arrives
   app.post("/api/save-interview", authenticateToken, async (req: any, res) => {
-    let interviewId: string | null = null; // Declare before try so it's in scope for catch
+    let interviewId: string | null = null;
+    let client_session_id: string | undefined;
     try {
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - incoming request body:', {
         body: req.body,
@@ -2363,7 +2391,7 @@ const tokenRateLimiter = rateLimit({
       });
       
       const userId = req.userId; // candidate_id is userId from JWT
-      const client_session_id = req.body?.client_session_id as string;
+      client_session_id = req.body?.client_session_id as string;
       const conversation_id = req.body?.conversation_id as string | undefined;
       const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
       const agent_id = req.body?.agent_id as string | undefined;
@@ -2453,59 +2481,23 @@ const tokenRateLimiter = rateLimit({
             if (!existingInterview.transcript) {
               if (transcript_from_tool) {
                 // Use transcript provided by tool
-                try {
-                  await db.update(interviews)
-                    .set({ transcript: transcript_from_tool })
-                    .where(eq(interviews.id, interviewId));
-                  console.log(`[SAVE-INTERVIEW] Successfully saved transcript from tool (${transcript_from_tool.length} chars) for interview ${interviewId}`);
-                  
-                  // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
-                  try {
-                    const { parseTranscript } = await import('./evaluation');
-                    const qaPairs = parseTranscript(transcript_from_tool);
-                    if (qaPairs.length > 0) {
-                      console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
-                      await evaluationQueue.enqueue(interviewId, conversation_id);
-                      console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
-                    } else {
-                      console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
-                    }
-                  } catch (evalError: any) {
-                    console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
-                    // Don't fail - evaluation can be triggered later via webhook
-                  }
-                } catch (updateError: any) {
-                  console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
-                }
+                await finalizeInterviewTranscript({
+                  interviewId,
+                  conversationId: conversation_id,
+                  transcript: transcript_from_tool,
+                  source: 'existing interview / tool transcript',
+                });
               } else if (conversation_id) {
                 // Fetch transcript asynchronously (non-blocking)
                 fetchTranscriptFromElevenLabs(conversation_id)
                   .then(async (transcript) => {
                     if (transcript) {
-                      try {
-                        await db.update(interviews)
-                          .set({ transcript })
-                          .where(eq(interviews.id, interviewId));
-                        console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for interview ${interviewId}`);
-                        
-                        // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
-                        try {
-                          const { parseTranscript } = await import('./evaluation');
-                          const qaPairs = parseTranscript(transcript);
-                          if (qaPairs.length > 0) {
-                            console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
-                            await evaluationQueue.enqueue(interviewId, conversation_id);
-                            console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
-                          } else {
-                            console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
-                          }
-                        } catch (evalError: any) {
-                          console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation:`, evalError.message || evalError);
-                          // Don't fail - evaluation can be triggered later via webhook
-                        }
-                      } catch (updateError: any) {
-                        console.error(`[SAVE-INTERVIEW] Error updating transcript:`, updateError.message || updateError);
-                      }
+                      await finalizeInterviewTranscript({
+                        interviewId,
+                        conversationId: conversation_id,
+                        transcript,
+                        source: 'existing interview / fetched transcript',
+                      });
                     }
                   })
                   .catch((transcriptError: any) => {
@@ -2513,28 +2505,15 @@ const tokenRateLimiter = rateLimit({
                   });
               }
             } else if (existingInterview.transcript) {
-              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, checking if evaluation needed`);
-              
-              // If transcript already exists, check if evaluation is needed
-              try {
-                const existingEvaluation = await (db.query as any).interviewEvaluations?.findFirst({
-                  where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
-                });
-                
-                // Only enqueue if no evaluation exists or it failed
-                if (!existingEvaluation || existingEvaluation.status === 'failed') {
-                  const { parseTranscript } = await import('./evaluation');
-                  const qaPairs = parseTranscript(existingInterview.transcript);
-                  if (qaPairs.length > 0) {
-                    console.log(`[SAVE-INTERVIEW] Existing transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
-                    await evaluationQueue.enqueue(interviewId, conversation_id || '');
-                    console.log(`[SAVE-INTERVIEW] Evaluation enqueued for interview ${interviewId}`);
-                  }
-                }
-              } catch (evalError: any) {
-                console.error(`[SAVE-INTERVIEW] Error checking/enqueuing evaluation:`, evalError.message || evalError);
-                // Don't fail - evaluation can be triggered later
-              }
+              console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, ensuring evaluation is enqueued`);
+              // enqueue() is idempotent: it skips when an evaluation is already complete,
+              // processing, or freshly pending, and resets/retries stalled or failed rows.
+              await finalizeInterviewTranscript({
+                interviewId,
+                conversationId: conversation_id,
+                transcript: existingInterview.transcript,
+                source: 'existing interview / existing transcript',
+              });
             }
           }
         } catch (dbError: any) {
@@ -2595,7 +2574,8 @@ const tokenRateLimiter = rateLimit({
           
           // If resume_text was provided, store it in resumes table asynchronously (non-blocking)
           if (resumeText && interviewId) {
-            storage.upsertResume(interviewId, resumeText, buildResumeProfile(resumeText))
+            const safeResumeText = stripResumeContactInfo(resumeText);
+            storage.upsertResume(interviewId, safeResumeText, buildResumeProfile(safeResumeText))
               .then(() => {
                 console.log(`[SAVE-INTERVIEW] Successfully stored resume text for interview ${interviewId}`);
               })
@@ -2608,59 +2588,23 @@ const tokenRateLimiter = rateLimit({
           // Process transcript: use provided transcript or fetch from ElevenLabs
           if (transcript_from_tool) {
             // Use transcript provided by tool
-            try {
-              await db.update(interviews)
-                .set({ transcript: transcript_from_tool })
-                .where(eq(interviews.id, interviewId));
-              console.log(`[SAVE-INTERVIEW] Successfully saved transcript from tool (${transcript_from_tool.length} chars) for newly created interview ${interviewId}`);
-              
-              // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
-              try {
-                const { parseTranscript } = await import('./evaluation');
-                const qaPairs = parseTranscript(transcript_from_tool);
-                if (qaPairs.length > 0) {
-                  console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for newly created interview ${interviewId}`);
-                  await evaluationQueue.enqueue(interviewId, conversation_id || '');
-                  console.log(`[SAVE-INTERVIEW] Evaluation enqueued for newly created interview ${interviewId}`);
-                } else {
-                  console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
-                }
-              } catch (evalError: any) {
-                console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation for newly created interview:`, evalError.message || evalError);
-                // Don't fail - evaluation can be triggered later via webhook
-              }
-            } catch (updateError: any) {
-              console.error(`[SAVE-INTERVIEW] Error updating transcript for newly created interview:`, updateError.message || updateError);
-            }
+            await finalizeInterviewTranscript({
+              interviewId,
+              conversationId: conversation_id,
+              transcript: transcript_from_tool,
+              source: 'new interview / tool transcript',
+            });
           } else if (conversation_id) {
             // If conversation_id is available, try to fetch transcript and enqueue evaluation
             fetchTranscriptFromElevenLabs(conversation_id)
               .then(async (transcript) => {
                 if (transcript) {
-                  try {
-                    await db.update(interviews)
-                      .set({ transcript })
-                      .where(eq(interviews.id, interviewId));
-                    console.log(`[SAVE-INTERVIEW] Successfully saved transcript (${transcript.length} chars) for newly created interview ${interviewId}`);
-                    
-                    // CRITICAL: Check if transcript has Q&A pairs and enqueue evaluation
-                    try {
-                      const { parseTranscript } = await import('./evaluation');
-                      const qaPairs = parseTranscript(transcript);
-                      if (qaPairs.length > 0) {
-                        console.log(`[SAVE-INTERVIEW] Transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for newly created interview ${interviewId}`);
-                        await evaluationQueue.enqueue(interviewId, conversation_id);
-                        console.log(`[SAVE-INTERVIEW] Evaluation enqueued for newly created interview ${interviewId}`);
-                      } else {
-                        console.log(`[SAVE-INTERVIEW] Transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
-                      }
-                    } catch (evalError: any) {
-                      console.error(`[SAVE-INTERVIEW] Error enqueuing evaluation for newly created interview:`, evalError.message || evalError);
-                      // Don't fail - evaluation can be triggered later via webhook
-                    }
-                  } catch (updateError: any) {
-                    console.error(`[SAVE-INTERVIEW] Error updating transcript for newly created interview:`, updateError.message || updateError);
-                  }
+                  await finalizeInterviewTranscript({
+                    interviewId,
+                    conversationId: conversation_id,
+                    transcript,
+                    source: 'new interview / fetched transcript',
+                  });
                 } else {
                   console.log(`[SAVE-INTERVIEW] Transcript not available yet for newly created interview ${interviewId} - will be available via webhook`);
                 }
@@ -2877,9 +2821,10 @@ const tokenRateLimiter = rateLimit({
       }
 
       const truncated = resume.resumeFulltext.length > RESUME_FULLTEXT_MAX_CHARS;
-      const safeText = truncated 
+      const rawTruncated = truncated
         ? resume.resumeFulltext.substring(0, RESUME_FULLTEXT_MAX_CHARS)
         : resume.resumeFulltext;
+      const safeText = stripResumeContactInfo(rawTruncated);
 
       return res.json({
         interviewid: interviewId,

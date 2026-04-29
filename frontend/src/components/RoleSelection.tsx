@@ -47,128 +47,117 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   ];
 
   return (
-    <AnimatedBackground className="flex items-center justify-center min-h-screen p-6">
-      <div className="max-w-4xl mx-auto space-y-10 animate-scale-in flex flex-col items-center justify-center w-full py-12">
-        {/* PERF: Entrance uses opacity + y only; no blur here to reduce repaint cost. */}
-        <motion.div 
-          className="text-center space-y-4 bg-white/70 px-8 py-6 rounded-2xl shadow-lg border border-white/30"
+    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+      <div className="animate-scale-in flex w-full max-w-3xl flex-col items-center justify-center gap-8 py-10 sm:py-14">
+        <motion.div
+          className="w-full space-y-4 text-center"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1] }}
         >
-          <h1 className="text-5xl font-bold bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
-            Start Your Interview
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
+            For students &amp; new grads
+          </p>
+          <h1 className="text-balance text-3xl font-bold tracking-tight text-foreground sm:text-4xl md:text-5xl">
+            The voice interview that feels{" "}
+            <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+              real
+            </span>
           </h1>
-          <p className="text-xl text-muted-foreground max-w-3xl mx-auto">
-            Practice your interview skills with our AI-powered voice interview platform
+          <p className="text-balance text-lg text-muted-foreground sm:text-xl">
+            One focused session, tailored feedback, and a scorecard you can share with coaches or mentors.
           </p>
         </motion.div>
 
-        {/* PERF: One card with backdrop-blur; smaller shadow to reduce paint cost. */}
-        <motion.div 
-          className="w-full max-w-xl space-y-4 bg-white/80 backdrop-blur-md p-6 rounded-2xl border border-white/40 shadow-xl"
+        <motion.div
+          className="w-full max-w-lg space-y-5 rounded-2xl border border-white/70 bg-card/95 p-6 shadow-2xl shadow-slate-900/10 ring-1 ring-slate-200/70 backdrop-blur-sm sm:p-8"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
+          transition={{ duration: 0.55, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
         >
-          {/* PERF: Removed JS-driven blur glow and Mic scale loop; use CSS-only subtle pulse. */}
+          <div className="space-y-1 text-center sm:text-left">
+            <h2 className="text-base font-semibold text-foreground">Start a session</h2>
+            <p className="text-sm text-muted-foreground">
+              We&apos;ll ask for a resume next so the AI can anchor questions to your background.
+            </p>
+          </div>
           <div className="relative">
             <Button
               onClick={handleBeginInterview}
               size="lg"
-              className="relative w-full gradient-primary text-white shadow-md hover:shadow-glow text-lg px-8 py-6 hover:scale-[1.02] transition-transform duration-[400ms]"
+              className="btn-pulse-hero !inline-flex w-full !gap-0 items-center justify-evenly bg-primary px-2 py-6 text-base font-semibold text-primary-foreground shadow-md transition-transform duration-500 ease-out hover:scale-[1.01] hover:bg-primary/90 sm:px-4"
               data-testid="button-begin-interview"
             >
-              <span className="btn-pulse-hero inline-flex">
-                <Mic className="w-5 h-5 mr-2" />
-              </span>
-              Begin Interview
-              <ArrowRight className="w-5 h-5 ml-2" />
+              <Mic className="h-5 w-5 shrink-0" aria-hidden />
+              <span className="min-w-0 text-center leading-tight">Begin interview</span>
+              <ArrowRight className="h-5 w-5 shrink-0" aria-hidden />
             </Button>
           </div>
 
-          {/* Enhanced Divider */}
-          <div className="relative py-4">
-            <motion.div 
-              className="absolute inset-0 flex items-center"
-              initial={{ scaleX: 0 }}
-              animate={{ scaleX: 1 }}
-              transition={{ duration: 1, delay: 0.8 }}
-            >
-              <div className="w-full h-px bg-gradient-to-r from-transparent via-purple-300 to-transparent"></div>
-            </motion.div>
-            <div className="relative flex justify-center">
-              <span className="px-4 py-1 bg-gradient-to-r from-purple-50 to-blue-50 text-gray-600 text-sm rounded-full shadow-sm border border-purple-100">
-                Or
-              </span>
+          <div className="relative py-1">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-border" />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="bg-card px-3 py-0.5 text-muted-foreground">or preview a report</span>
             </div>
           </div>
 
-          {/* Quick Demo: Tech and Business options */}
-          <div className="flex flex-row gap-3 w-full">
+          <div className="flex w-full flex-col gap-2 sm:flex-row sm:gap-3">
             <Button
-              onClick={() => handleTryDemo('tech')}
+              onClick={() => handleTryDemo("tech")}
               size="lg"
               variant="outline"
-              className="relative flex-1 min-w-0 border-2 border-purple-500 text-purple-700 hover:bg-purple-50 hover:border-purple-600 hover:text-purple-700 shadow-md hover:shadow-lg text-sm sm:text-base px-4 sm:px-6 py-5 transition-transform duration-300 overflow-hidden group"
+              className="!inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-primary/20 px-3 py-4 text-foreground sm:min-w-0"
             >
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
-              <span className="inline-flex items-center gap-0">
-                <span className="inline-flex items-center gap-x-1">
-                  <Zap className="w-5 h-5 shrink-0" />
-                  Technical
-                </span>
-                <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-semibold shrink-0">
-                  Instant
-                </span>
+              <span className="inline-flex min-w-0 items-center justify-center gap-1 text-sm font-medium">
+                <Zap className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                <span className="min-w-0 truncate">Technical</span>
+              </span>
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Sample
               </span>
             </Button>
             <Button
-              onClick={() => handleTryDemo('business')}
+              onClick={() => handleTryDemo("business")}
               size="lg"
               variant="outline"
-              className="relative flex-1 min-w-0 border-2 border-teal-500 text-teal-700 hover:bg-teal-50 hover:border-teal-600 hover:text-teal-700 shadow-md hover:shadow-lg text-sm sm:text-base px-4 sm:px-6 py-5 transition-transform duration-300 overflow-hidden group"
+              className="!inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-secondary/25 px-3 py-4 text-foreground sm:min-w-0"
             >
-              <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent -translate-x-full group-hover:translate-x-full transition-transform duration-500" />
-              <span className="inline-flex items-center gap-0">
-                <span className="inline-flex items-center gap-x-1">
-                  <Zap className="w-5 h-5 shrink-0" />
-                  Non-Tech
-                </span>
-                <span className="text-xs bg-teal-100 text-teal-700 px-2 py-0.5 rounded-full font-semibold shrink-0">
-                  Instant
-                </span>
+              <span className="inline-flex min-w-0 items-center justify-center gap-1 text-sm font-medium">
+                <Zap className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
+                <span className="min-w-0 truncate">Non-technical</span>
+              </span>
+              <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Sample
               </span>
             </Button>
           </div>
-          <p 
-            className="text-xs text-center text-gray-700 font-medium"
-            style={{
-              textShadow: '0 1px 2px rgba(255, 255, 255, 0.8)',
-            }}
-          >
-            See sample results—Technical (engineering) or Non-Technical (marketing, business)
+          <p className="text-center text-xs text-muted-foreground">
+            Opens a read-only results demo—no audio, perfect for a quick product walkthrough.
           </p>
         </motion.div>
 
         {/* PERF: CSS hover scale instead of Framer spring; no backdrop-blur, simpler shadow. */}
-        <motion.div 
-          className="flex flex-wrap justify-center gap-3 w-full max-w-2xl"
-          initial={{ opacity: 0, y: 20 }}
+        <motion.div
+          className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-3"
+          initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.9, ease: "easeOut" }}
+          transition={{ duration: 0.6, delay: 0.35, ease: "easeOut" }}
         >
           {features.map((feature, index) => (
             <div
               key={index}
-              className="flex items-center gap-2 bg-white/95 px-4 py-2 rounded-full shadow-md border border-gray-300/60 hover:shadow-lg hover:border-orange-400/40 hover:scale-105 transition-transform duration-200 group"
+              className="group flex items-start gap-3 rounded-xl border border-white/70 bg-card/90 px-4 py-3 shadow-md shadow-slate-900/5 ring-1 ring-slate-200/60 transition-all duration-500 ease-out hover:-translate-y-1 hover:scale-[1.02] hover:border-primary/25 hover:bg-card/95 hover:shadow-xl hover:shadow-slate-900/10"
             >
-              <div className="flex items-center justify-center w-8 h-8 rounded-full bg-gradient-to-br from-orange-100 to-amber-100 group-hover:from-orange-200 group-hover:to-amber-200 transition-colors duration-200 shadow-sm">
-                <feature.icon className="w-4 h-4 text-orange-600 group-hover:scale-110 transition-transform duration-200" />
+              <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/10">
+                <feature.icon className="h-4 w-4" aria-hidden />
               </div>
-              <div className="flex flex-col">
-                <span className="text-sm font-semibold text-gray-900">{feature.title}</span>
-                <span className="text-xs text-gray-600 font-medium">{feature.description}</span>
+              <div className="min-w-0 text-left">
+                <span className="block text-sm font-semibold text-foreground">{feature.title}</span>
+                <span className="mt-0.5 block text-xs leading-snug text-muted-foreground">
+                  {feature.description}
+                </span>
               </div>
             </div>
           ))}

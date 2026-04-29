@@ -89,6 +89,9 @@ dist
 # Gatsby files
 .cache/
 public
+# Keep Vite/React public assets (e.g. ambient sounds, worklets) tracked
+!frontend/public
+!frontend/public/**
 
 # Vuepress build output
 .vuepress/dist
@@ -146,3 +149,12 @@ Desktop.ini
 
 # Temporary uploads directory
 uploads/
+
+# Local SQLite (dev)
+backend/local.db
+backend/local.db-shm
+backend/local.db-wal
+
+# Debug / scratch artifacts
+*.trace.json
+inp-trace.json

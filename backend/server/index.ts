@@ -4,6 +4,10 @@ dotenv.config();
 
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
+import helmet from "helmet";
+import { randomUUID } from "crypto";
+import { assertRequiredProductionEnv } from "./assertProductionEnv";
+import { installErrorHandlers } from "./errorHandler";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
@@ -19,6 +23,11 @@ const require = createRequire(import.meta.url);
 const { createVoiceServer } = require("../voiceServer");
 
 const app = express();
+
+/** Railway / Vercel / other reverse proxies — required for accurate req.ip and rate limiting */
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS ?? 1));
+
+assertRequiredProductionEnv();
 
 // CORS configuration for Railway backend + Vercel frontend deployment
 // Supports both production and preview deployments on Vercel
@@ -61,35 +70,55 @@ const isOriginAllowed = (origin: string | undefined): boolean => {
   return false;
 };
 
+const isProduction = process.env.NODE_ENV === "production";
+
 // CORS configuration using cors package for better reliability
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    // Log all requests for debugging
     if (origin) {
       log(`🌐 Request from origin: ${origin}`);
     }
-    
-    // Allow requests with no origin (mobile apps, Postman, etc.)
+
     if (!origin) {
       callback(null, true);
       return;
     }
-    
-    // Check if origin is allowed
+
     if (isOriginAllowed(origin)) {
       log(`✅ CORS: Allowed origin: ${origin}`);
       callback(null, true);
-    } else {
-      log(`⚠️  CORS: Unknown origin: ${origin} - allowing for now`);
-      // Allow for now but log for monitoring
-      callback(null, true);
+      return;
     }
+
+    if (isProduction) {
+      log(`🚫 CORS: Blocked origin: ${origin}`);
+      callback(null, false);
+      return;
+    }
+
+    log(`⚠️  CORS: Unknown origin (dev allow): ${origin}`);
+    callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'x-api-secret', 'X-Request-Id', 'x-request-id'],
   maxAge: 86400 // 24 hours
 };
+
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: false,
+  })
+);
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const incoming = req.header("X-Request-Id");
+  const id = typeof incoming === "string" && incoming.trim() ? incoming.trim().slice(0, 128) : randomUUID();
+  req.requestId = id;
+  res.setHeader("X-Request-Id", id);
+  next();
+});
 
 // Apply CORS middleware - must be before routes
 app.use(cors(corsOptions));
@@ -202,7 +231,9 @@ app.use((req, res, next) => {
       }
     }
 
-    const PORT = process.env.PORT || 5000;
+    installErrorHandlers(app);
+
+    const PORT = Number.parseInt(String(process.env.PORT || 5000), 10) || 5000;
     const server = app.listen(PORT, "0.0.0.0", async () => {
       log(`Server running on port ${PORT}`);
       log(`Environment: ${process.env.NODE_ENV || "development"}`);
@@ -219,7 +250,7 @@ app.use((req, res, next) => {
       log(`Environment Variables Status:`);
       log(`  ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? '✅ Set' : '❌ Missing (CRITICAL for voice interviews)'}`);
       log(`  ELEVENLABS_AGENT_ID: ${process.env.ELEVENLABS_AGENT_ID ? '✅ Set' : '⚠️  Missing (will use default)'}`);
-      log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '⚠️  Missing (recommended for auth)'}`);
+      log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '❌ Missing (required in production)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
       

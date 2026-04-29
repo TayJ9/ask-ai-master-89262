@@ -33,7 +33,7 @@ export default function Index() {
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
-  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string; resumeText?: string; resumeSource?: string} | null>(null);
+  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string; resumeText?: string; resumeSource?: string; resume_summary?: string; resume_highlights?: string} | null>(null);
   const [previousLocation, setPreviousLocation] = useState<string>("");
   const { toast } = useToast();
   
@@ -167,7 +167,10 @@ export default function Index() {
         year: candidateInfo.year,
         sessionId: candidateInfo.sessionId,
         resumeText: resume,
-        resumeSource: candidateInfo.resumeSource || "unknown"
+        resumeSource: candidateInfo.resumeSource || "unknown",
+        resume_summary: candidateInfo.resume_summary,
+        resume_highlights: candidateInfo.resume_highlights,
+        skills: candidateInfo.skills,
       };
       devLog.log('[FLIGHT_RECORDER] [SETUP] candidateContext updated:', {
         firstName: newCandidateContext.firstName,
@@ -188,7 +191,10 @@ export default function Index() {
           year: candidateInfo.year,
           sessionId: candidateInfo.sessionId,
           resumeText: resume,
-          resumeSource: candidateInfo.resumeSource || "unknown"
+          resumeSource: candidateInfo.resumeSource || "unknown",
+          resume_summary: candidateInfo.resume_summary,
+          resume_highlights: candidateInfo.resume_highlights,
+          skills: candidateInfo.skills,
         };
         localStorage.setItem('candidate_context', JSON.stringify(contextToStore));
         devLog.log('[FLIGHT_RECORDER] [SETUP] candidateContext persisted to localStorage:', {
@@ -427,43 +433,53 @@ export default function Index() {
 
   return (
     <>
-      <div className="fixed top-2 right-2 sm:top-4 sm:right-4 flex flex-wrap gap-2 z-50 max-w-[calc(100vw-1rem)]">
-          {currentView === "resume" && (
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/90 shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-background/85">
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
+          <p className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground">
+            AI Interview Coach
+          </p>
+          <div className="flex max-w-[calc(100vw-8rem)] flex-wrap justify-end gap-1.5 sm:gap-2">
+            {currentView === "resume" && (
+              <Button
+                onClick={handleBackToRoles}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs sm:text-sm"
+                aria-label="Go back to role selection"
+              >
+                <ArrowLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">Back</span>
+              </Button>
+            )}
+            {currentView === "roles" && (
+              <Button
+                onClick={handleViewHistory}
+                variant="outline"
+                size="sm"
+                className="gap-1.5 text-xs sm:text-sm"
+                data-testid="button-view-history"
+                aria-label="View interview history"
+              >
+                <History className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                <span className="hidden sm:inline">History</span>
+              </Button>
+            )}
             <Button
-              onClick={handleBackToRoles}
+              onClick={handleSignOut}
               variant="outline"
-              className="gap-2 bg-card shadow-md text-xs sm:text-sm"
-              aria-label="Go back to role selection"
+              size="sm"
+              className="gap-1.5 text-xs sm:text-sm"
+              data-testid="button-signout"
+              aria-label="Sign out"
             >
-              <ArrowLeft className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden sm:inline">Back</span>
+              <LogOut className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              <span className="hidden sm:inline">Sign out</span>
             </Button>
-          )}
-          {currentView === "roles" && (
-            <Button
-              onClick={handleViewHistory}
-              variant="outline"
-              className="gap-2 bg-card shadow-md text-xs sm:text-sm"
-              data-testid="button-view-history"
-              aria-label="View interview history"
-            >
-              <History className="w-3 h-3 sm:w-4 sm:h-4" />
-              <span className="hidden sm:inline">History</span>
-            </Button>
-          )}
-          <Button
-            onClick={handleSignOut}
-            variant="outline"
-            className="gap-2 bg-card shadow-md text-xs sm:text-sm"
-            data-testid="button-signout"
-            aria-label="Sign out"
-          >
-            <LogOut className="w-3 h-3 sm:w-4 sm:h-4" />
-            <span className="hidden sm:inline">Sign Out</span>
-          </Button>
+          </div>
         </div>
+      </header>
 
-      <div style={{ position: "relative", minHeight: "100vh" }}>
+      <div className="relative min-h-screen">
         <AnimatePresence mode="sync" initial={false}>
           {currentView === "roles" && (
             <motion.div
@@ -473,7 +489,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
+              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
             >
               <RoleSelection onSelectRole={handleSelectRole} />
             </motion.div>
@@ -487,7 +503,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
+              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
             >
               <ResumeUpload
                 onResumeUploaded={handleResumeUploaded}
@@ -505,7 +521,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
+              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
             >
               {/* VoiceInterviewWebSocket: Always mounted when we have candidateContext, but only visible when currentView === 'voice'.
                   This prevents unmounting during async operations like getUserMedia.
@@ -525,6 +541,8 @@ export default function Index() {
                     summary: candidateContext.summary,
                     resumeText: candidateContext.resumeText,
                     resumeSource: candidateContext.resumeSource,
+                    resume_summary: candidateContext.resume_summary,
+                    resume_highlights: candidateContext.resume_highlights,
                   }}
                   onComplete={handleCompleteInterview}
                   onInterviewEnd={(data) => {
@@ -551,7 +569,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              style={{ position: "absolute", inset: 0, width: "100%", minHeight: "100vh" }}
+              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
             >
               <SessionHistory userId={user.id} onBack={handleBackToRoles} />
             </motion.div>

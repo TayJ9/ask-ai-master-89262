@@ -8,13 +8,16 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Professional Blue Base */
-    --background: 220 25% 97%;
-    --foreground: 220 40% 10%;
+    /* Typography: loaded in index.html (Plus Jakarta Sans) */
+    --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+
+    /* Calm, investor-ready neutral base (cool slate + warm paper) */
+    --background: 220 18% 97%;
+    --foreground: 222 32% 12%;
 
     /* Card Styling */
     --card: 0 0% 100%;
-    --card-foreground: 220 40% 10%;
+    --card-foreground: 222 32% 12%;
 
     /* Popover */
     --popover: 0 0% 100%;
@@ -34,8 +37,8 @@ All colors MUST be HSL.
     --accent-foreground: 0 0% 100%;
 
     /* Muted */
-    --muted: 220 20% 94%;
-    --muted-foreground: 220 15% 40%;
+    --muted: 220 16% 93%;
+    --muted-foreground: 220 12% 38%;
 
     /* Destructive */
     --destructive: 0 84% 60%;
@@ -46,9 +49,13 @@ All colors MUST be HSL.
     --success-foreground: 0 0% 100%;
 
     /* Borders & Inputs */
-    --border: 220 20% 88%;
-    --input: 220 20% 88%;
+    --border: 220 16% 86%;
+    --input: 220 16% 86%;
     --ring: 217 91% 60%;
+
+    /* Interview room panels (shared with voice UI) */
+    --interview-surface: 40 24% 97%;
+    --interview-surface-edge: 40 14% 88%;
 
     /* Radius */
     --radius: 0.75rem;
@@ -72,6 +79,9 @@ All colors MUST be HSL.
   .dark {
     --background: 220 40% 8%;
     --foreground: 220 20% 95%;
+
+    --interview-surface: 220 24% 14%;
+    --interview-surface-edge: 220 18% 22%;
 
     --card: 220 35% 12%;
     --card-foreground: 220 20% 95%;
@@ -122,8 +132,8 @@ All colors MUST be HSL.
    * Use .scroll-smooth utility on specific containers or anchor links instead. */
   html {
     scroll-behavior: auto;
-    /* Fallback background matching AnimatedBackground so fast-scroll never reveals white. */
-    background-color: #E8A052;
+    /* Fallback when overscrolling: matches app canvas, not a loud accent. */
+    background-color: hsl(220 18% 95%);
   }
 
   /* Prevent overscroll rubber-banding to avoid weird visuals at bottom of long pages (e.g. Results). */
@@ -141,6 +151,7 @@ All colors MUST be HSL.
 
   body {
     @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss01";
   }
 
@@ -150,6 +161,21 @@ All colors MUST be HSL.
 }
 
 @layer utilities {
+  /* App route canvas behind Framer page transitions (replaces ad-hoc #fff / canvas hex). */
+  .app-page-tint {
+    @apply pointer-events-none absolute inset-0 -z-10;
+    background: linear-gradient(
+      180deg,
+      hsl(var(--background) / 0.98) 0%,
+      hsl(42 32% 96% / 0.88) 45%,
+      hsl(var(--background) / 1) 100%
+    );
+  }
+
+  .text-balance {
+    text-wrap: balance;
+  }
+
   /* PERF: Apply only to elements that need smooth scroll (e.g. anchor buttons), not globally. */
   .scroll-smooth {
     scroll-behavior: smooth;
