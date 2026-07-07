@@ -6,12 +6,9 @@ import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
 import { Pool as PgPool } from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
-import { drizzle as drizzleSqlite } from 'drizzle-orm/better-sqlite3';
-import Database from 'better-sqlite3';
+import type { Database as SqliteDatabase } from 'better-sqlite3';
 import ws from "ws";
 import * as schema from "../shared/schema";
-import { fileURLToPath } from 'url';
-import { dirname, join } from 'path';
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -26,20 +23,22 @@ const isNeonDatabase = process.env.DATABASE_URL.includes('neon.tech') ||
                        process.env.USE_NEON === 'true';
 
 let pool: NeonPool | PgPool | undefined;
-let sqlite: Database | undefined;
+let sqlite: SqliteDatabase | undefined;
 let db: ReturnType<typeof drizzlePg>;
 
 if (isSqliteDatabase) {
-  // Use SQLite for local development
+  // SQLite is local-dev only; dynamic import avoids native build deps on Railway/Postgres.
+  const { default: Database } = await import('better-sqlite3');
+  const { drizzle: drizzleSqlite } = await import('drizzle-orm/better-sqlite3');
+
   const dbPath = process.env.DATABASE_URL.replace('file:', '');
   console.log('🗄️  Using SQLite database:', dbPath);
-  
+
   sqlite = new Database(dbPath);
-  // Enable WAL mode for better concurrency
   sqlite.pragma('journal_mode = WAL');
-  
+
   db = drizzleSqlite(sqlite, { schema }) as any;
-  
+
   console.log('✅ SQLite database connected successfully');
 } else if (isNeonDatabase) {
   // Use Neon serverless driver for Neon databases

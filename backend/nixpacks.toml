@@ -7,7 +7,7 @@ nixPkgs = ["nodejs_20"]
 
 [phases.install]
 # Install all dependencies including dev dependencies (needed for tsx and TypeScript)
-cmds = ["npm install --include=dev"]
+cmds = ["npm install --omit=dev"]
 
 [phases.build]
 # No build step needed - TypeScript runs directly with tsx at runtime
