@@ -7,7 +7,23 @@
  * Falls back to heuristic/slice when HUGGINGFACE_TOKEN is not set or on API errors.
  */
 
-import { InferenceClient } from "@huggingface/inference";
+import { InferenceClient, type InferenceProviderOrPolicy } from "@huggingface/inference";
+
+/** Serverless HF Inference API — avoids auto-routing "provider: undefined" warnings. */
+const HF_INFERENCE_PROVIDER: InferenceProviderOrPolicy =
+  (process.env.HF_INFERENCE_PROVIDER?.trim() as InferenceProviderOrPolicy | undefined) ||
+  "hf-inference";
+
+/** NER models known to run on hf-inference (resume-specific repos are not hosted there). */
+const NER_MODELS = [
+  "dslim/bert-base-NER",
+  "dbmdz/bert-large-cased-finetuned-conll03-english",
+] as const;
+
+const SUMMARIZATION_MODELS = [
+  "sshleifer/distilbart-cnn-12-6",
+  "facebook/bart-large-cnn",
+] as const;
 
 // Resume profile shape (matches buildResumeProfile)
 export interface ResumeProfile {
@@ -242,19 +258,13 @@ export async function extractResumeProfileWithNER(
     // Resume text may exceed model limits; use first ~2000 chars (roughly 500 tokens)
     const textChunk = resumeText.slice(0, 2000);
 
-    // Try resume-specific model first; fallback to generic NER
-    const models = [
-      "Anjali-2026/resume-ner-bert-v2",
-      "yashpwr/resume-ner-bert-v2",
-      "dslim/bert-base-NER",
-    ];
-
     let entities: NEREntity[] = [];
-    for (const model of models) {
+    for (const model of NER_MODELS) {
       try {
         const result = await hf.tokenClassification({
           model,
           inputs: textChunk,
+          provider: HF_INFERENCE_PROVIDER,
           parameters: { aggregation_strategy: "simple" },
         });
         entities = Array.isArray(result) ? result : [];
@@ -350,17 +360,13 @@ export async function summarizeResume(
     const summaryMaxTokens = Math.min(250, Math.floor(maxSummaryChars / 4));
     const highlightsMaxTokens = Math.min(80, Math.floor(maxHighlightsChars / 4));
 
-    const models = [
-      "sshleifer/distilbart-cnn-12-6",
-      "facebook/bart-large-cnn",
-    ];
-
     let summaryText = "";
-    for (const model of models) {
+    for (const model of SUMMARIZATION_MODELS) {
       try {
         const result = await hf.summarization({
           model,
           inputs: textToSummarize,
+          provider: HF_INFERENCE_PROVIDER,
           parameters: {
             max_length: summaryMaxTokens,
             min_length: Math.floor(summaryMaxTokens * 0.3),

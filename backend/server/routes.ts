@@ -13,11 +13,11 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { randomUUID, createHmac } from "crypto";
 import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
-import { evaluationQueue } from "./evaluation";
+import { evaluationQueue, recordTerminalEvaluationFailure } from "./evaluation";
 import { normalizeEvaluationJson, scoreInterview, EvaluationJsonSchema } from "./llm/openaiEvaluator";
-import { extractResumeProfileWithNER, summarizeResume } from "./llm/huggingfaceResume";
 import { buildResumeProfile } from "./resumeProfileHeuristic";
 import { stripResumeContactInfo } from "./resumeSanitize";
+import { persistResumeForSession } from "./persistResume";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
@@ -193,19 +193,193 @@ async function fetchTranscriptFromElevenLabs(conversationId: string): Promise<st
  * Centralizes the repeated "write transcript → parse → gate on Q&A pairs → enqueue"
  * pattern used by the webhook and /api/save-interview.
  */
+type TranscriptFinalizeJob = {
+  interviewId: string;
+  conversationId: string | undefined;
+  transcript: string | undefined | null;
+  source: string;
+};
+
+type CandidateContextInput = {
+  firstName?: unknown;
+  first_name?: unknown;
+  name?: unknown;
+  major?: unknown;
+  year?: unknown;
+  role?: unknown;
+  target_role?: unknown;
+};
+
+function buildCandidateContext(
+  input: CandidateContextInput | null | undefined,
+): Record<string, string> | null {
+  if (!input || typeof input !== "object") return null;
+  const ctx: Record<string, string> = {};
+  const nameRaw = input.firstName ?? input.first_name ?? input.name;
+  if (typeof nameRaw === "string" && nameRaw.trim()) {
+    ctx.first_name = nameRaw.trim();
+  }
+  const majorRaw = input.major;
+  if (typeof majorRaw === "string" && majorRaw.trim()) {
+    ctx.major = majorRaw.trim();
+  }
+  const roleRaw = input.role ?? input.target_role;
+  if (typeof roleRaw === "string" && roleRaw.trim()) {
+    ctx.role = roleRaw.trim();
+  } else if (ctx.major) {
+    // Upload form "major" is the interview focus; evaluation reads `role`.
+    ctx.role = ctx.major;
+  }
+  const yearRaw = input.year;
+  if (typeof yearRaw === "string" && yearRaw.trim()) {
+    ctx.year = yearRaw.trim();
+  }
+  return Object.keys(ctx).length > 0 ? ctx : null;
+}
+
+function candidateContextFromResumeProfile(
+  profile: Record<string, unknown> | null | undefined,
+): Record<string, string> | null {
+  if (!profile || typeof profile !== "object") return null;
+  return buildCandidateContext({
+    firstName: profile.firstName,
+    first_name: profile.first_name,
+    name: profile.name,
+    major: profile.major,
+    year: profile.year,
+    role: profile.role,
+    target_role: profile.target_role,
+  });
+}
+
+function mergeCandidateContextRecords(
+  ...sources: Array<Record<string, unknown> | null | undefined>
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (typeof value === "string" && value.trim()) {
+        merged[key] = value.trim();
+      }
+    }
+  }
+  if (merged.major && !merged.role) {
+    merged.role = merged.major;
+  }
+  return merged;
+}
+
+/**
+ * Merge candidate context onto elevenlabs_interview_sessions (create session if missing).
+ * Form fields from resume upload / save-interview must land here for evaluation scoring.
+ */
+async function mergeCandidateContextOnSession(
+  clientSessionId: string,
+  userId: string,
+  context: Record<string, unknown> | null | undefined,
+): Promise<void> {
+  const incoming = buildCandidateContext(context as CandidateContextInput);
+  if (!incoming) return;
+
+  try {
+    const existingSession = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+      where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, clientSessionId),
+    });
+
+    if (existingSession) {
+      const existingContext = (existingSession.candidateContext as Record<string, unknown>) || {};
+      const merged = mergeCandidateContextRecords(existingContext, incoming);
+      await db
+        .update(elevenLabsInterviewSessions)
+        .set({
+          candidateContext: merged,
+          updatedAt: new Date(),
+        })
+        .where(eq(elevenLabsInterviewSessions.clientSessionId, clientSessionId));
+      console.log("[CANDIDATE-CONTEXT] Merged onto existing session", {
+        clientSessionId,
+        keys: Object.keys(merged),
+      });
+      return;
+    }
+
+    const agentId = getAgentId();
+    const sessionData = insertElevenLabsInterviewSessionSchema.parse({
+      userId,
+      agentId,
+      clientSessionId,
+      candidateContext: incoming,
+      status: "started",
+    });
+    const now = new Date();
+    const sessionValues = process.env.DATABASE_URL?.startsWith("file:")
+      ? { ...sessionData, id: randomUUID(), startedAt: now, createdAt: now, updatedAt: now }
+      : sessionData;
+    await db.insert(elevenLabsInterviewSessions).values(sessionValues as any);
+    console.log("[CANDIDATE-CONTEXT] Created session with candidate context", {
+      clientSessionId,
+      keys: Object.keys(incoming),
+    });
+  } catch (ctxError: unknown) {
+    const msg = ctxError instanceof Error ? ctxError.message : String(ctxError);
+    console.warn("[CANDIDATE-CONTEXT] Persist skipped:", msg);
+  }
+}
+
+/**
+ * Copy resume uploaded under client_session_id → interviewId before evaluation runs.
+ * Request-body resume_text takes precedence when provided.
+ */
+async function linkResumeFromSessionToInterview(
+  clientSessionId: string,
+  interviewId: string,
+  options?: { resumeTextFromBody?: string },
+): Promise<{ linked: boolean; profile?: Record<string, unknown> }> {
+  try {
+    if (options?.resumeTextFromBody?.trim()) {
+      const safeResumeText = stripResumeContactInfo(options.resumeTextFromBody.trim());
+      const profile = buildResumeProfile(safeResumeText);
+      await storage.upsertResume(interviewId, safeResumeText, profile);
+      console.log(`[SAVE-INTERVIEW] Stored resume_text from request body for interview ${interviewId}`);
+      return { linked: true, profile };
+    }
+
+    const resumeForSession = await storage.getResume(clientSessionId);
+    if (resumeForSession?.resumeFulltext) {
+      const profile =
+        (resumeForSession.resumeProfile as Record<string, unknown> | null) ??
+        buildResumeProfile(resumeForSession.resumeFulltext);
+      await storage.upsertResume(interviewId, resumeForSession.resumeFulltext, profile);
+      console.log(
+        `[SAVE-INTERVIEW] Linked resume from session ${clientSessionId} to interview ${interviewId}`,
+      );
+      return { linked: true, profile };
+    }
+  } catch (resumeLinkError: unknown) {
+    const msg = resumeLinkError instanceof Error ? resumeLinkError.message : String(resumeLinkError);
+    console.warn("[SAVE-INTERVIEW] Resume session→interview link skipped:", msg);
+  }
+  return { linked: false };
+}
+
+function readResumeUploadCandidateFields(req: any): Record<string, string> | null {
+  return buildCandidateContext({
+    firstName: req.body?.firstName ?? req.body?.first_name,
+    major: req.body?.major,
+    year: req.body?.year,
+  });
+}
+
 async function finalizeInterviewTranscript({
   interviewId,
   conversationId,
   transcript,
   source,
-}: {
-  interviewId: string;
-  conversationId: string | undefined;
-  transcript: string | undefined | null;
-  source: string;
-}): Promise<void> {
+}: TranscriptFinalizeJob): Promise<void> {
   if (!transcript?.trim()) {
     console.log(`[FINALIZE-TRANSCRIPT] ${source}: no transcript available for interview ${interviewId}`);
+    await recordTerminalEvaluationFailure(interviewId, 'no_transcript');
     return;
   }
 
@@ -233,6 +407,7 @@ async function finalizeInterviewTranscript({
     const qaPairs = await parseTranscriptWithFallback(transcriptForEvaluation);
     if (qaPairs.length === 0) {
       console.log(`[FINALIZE-TRANSCRIPT] ${source}: transcript has no Q&A pairs - skipping evaluation for interview ${interviewId}`);
+      await recordTerminalEvaluationFailure(interviewId, 'no_qa_pairs');
       return;
     }
     console.log(`[FINALIZE-TRANSCRIPT] ${source}: transcript has ${qaPairs.length} Q&A pairs - enqueuing evaluation for interview ${interviewId}`);
@@ -833,320 +1008,157 @@ export function registerRoutes(app: Express) {
       }
     }
   });
-  
-  // Alternative upload endpoint that matches frontend expectations (/api/upload-resume)
-  // This endpoint accepts FormData with 'resume', 'name', 'major', 'year' fields
-  // SECURITY: Requires authentication and validates file types/sizes
-  // Middleware order: authenticateToken -> multer wrapper -> route handler
-  app.post("/api/upload-resume", authenticateToken, (req: any, res: any, next: any) => {
-    // Custom wrapper to catch Multer errors before they become 403/500
-    upload.single('resume')(req, res, (err: any) => {
-      if (err) {
-        console.error('[UPLOAD-RESUME] Multer Error:', {
-          error: err.message,
-          code: err.code,
-          field: err.field,
-          name: err.name
-        });
-        
-        // Handle specific Multer error codes
-        if (err.code === 'LIMIT_FILE_SIZE') {
-          const fileSizeMB = err.limit ? (err.limit / (1024 * 1024)).toFixed(2) : '10';
-          return res.status(413).json({ 
-            error: 'File too large',
-            message: `File size exceeds ${fileSizeMB}MB limit. Please compress your PDF or use a smaller file.`
-          });
-        }
-        
-        // Handle file filter errors (invalid file type)
-        if (err.message && err.message.includes('Only PDF')) {
-          return res.status(400).json({ 
-            error: 'Invalid file type',
-            message: 'Only PDF files are allowed' 
-          });
-        }
-        
-        // Generic Multer error
-        return res.status(400).json({ 
-          error: 'File upload error',
-          message: err.message || 'Failed to process file upload'
+
+  const RESUME_SESSION_ID_RE =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+  /** Multer wrapper with consistent PDF upload error responses. */
+  const resumeMulterSingle = (fieldName: string) => (req: any, res: any, next: any) => {
+    upload.single(fieldName)(req, res, (err: any) => {
+      if (!err) {
+        next();
+        return;
+      }
+      console.error(`[RESUME-UPLOAD] Multer error (${fieldName}):`, {
+        error: err.message,
+        code: err.code,
+        field: err.field,
+        name: err.name,
+      });
+      if (err.code === "LIMIT_FILE_SIZE") {
+        const fileSizeMB = err.limit ? (err.limit / (1024 * 1024)).toFixed(2) : "10";
+        return res.status(413).json({
+          error: "File too large",
+          message: `File size exceeds ${fileSizeMB}MB limit. Please compress your PDF or use a smaller file.`,
         });
       }
-      
-      // No error - proceed to route handler
-      next();
+      if (err.message?.includes("Only PDF")) {
+        return res.status(400).json({
+          error: "Invalid file type",
+          message: "Only PDF files are allowed",
+        });
+      }
+      return res.status(400).json({
+        error: "File upload error",
+        message: err.message || "Failed to process file upload",
+      });
     });
-  }, async (req: any, res) => {
-    // Log request received at the very start of route handler
-    console.log('[UPLOAD-RESUME] Received resume upload request:', {
-      timestamp: new Date().toISOString(),
-      userId: req.userId || 'unknown',
-      hasFile: !!req.file,
-      fileInfo: req.file ? {
-        fieldname: req.file.fieldname,
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        encoding: req.file.encoding
-      } : null,
-      formFields: {
-        name: req.body?.name || 'missing',
-        major: req.body?.major || 'missing',
-        year: req.body?.year || 'missing'
-      },
-      headers: {
-        'content-type': req.headers['content-type'],
-        'content-length': req.headers['content-length']
-      }
-    });
+  };
 
-    try {
-      // Validate file was uploaded
-      if (!req.file) {
-        console.error('[UPLOAD-RESUME] No file provided in request');
-        console.error('[UPLOAD-RESUME] Request body keys:', Object.keys(req.body || {}));
-        console.error('[UPLOAD-RESUME] Multer error:', (req as any).multerError);
-        return res.status(400).json({ error: 'No resume file provided' });
-      }
-
-      // Validate file size (additional check)
-      const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-      if (req.file.size > MAX_FILE_SIZE) {
-        const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
-        console.error('[UPLOAD-RESUME] File size exceeds limit:', {
-          fileSize: req.file.size,
-          fileSizeMB: fileSizeMB,
-          maxSizeMB: 10,
-          fileName: req.file.originalname
-        });
-        return res.status(400).json({ 
-          error: 'File size exceeds 10MB limit',
-          message: `File size (${fileSizeMB}MB) exceeds the 10MB limit. Please compress your PDF or use a smaller file.`
-        });
-      }
-
-      // Validate and sanitize form fields
-      const { name, major, year } = req.body;
-      
-      console.log('[UPLOAD-RESUME] Validating form fields:', {
-        name: name || 'missing',
-        major: major || 'missing',
-        year: year || 'missing',
-        allFieldsPresent: !!(name && major && year)
-      });
-      
-      if (!name || !major || !year) {
-        console.error('[UPLOAD-RESUME] Missing required fields:', {
-          hasName: !!name,
-          hasMajor: !!major,
-          hasYear: !!year
-        });
-        return res.status(400).json({ 
-          error: 'Missing required fields',
-          message: 'Name, major, and year are required' 
-        });
-      }
-
-      // Sanitize inputs (basic validation)
-      const sanitizedName = String(name).trim().substring(0, 200);
-      const sanitizedMajor = String(major).trim().substring(0, 200);
-      const sanitizedYear = String(year).trim().substring(0, 50);
-
-      if (!sanitizedName || !sanitizedMajor || !sanitizedYear) {
-        return res.status(400).json({ 
-          error: 'Invalid input data',
-          message: 'Please provide valid name, major, and year' 
-        });
-      }
-
-      // Parse PDF securely
-      let resumeText = "";
-      try {
-        const pdfBuffer = req.file.buffer;
-        
-        console.log('[UPLOAD-RESUME] Parsing PDF:', {
-          bufferSize: pdfBuffer.length,
-          fileName: req.file.originalname
-        });
-        
-        // Additional validation: Check PDF magic bytes
-        const pdfMagicBytes = pdfBuffer.slice(0, 4).toString();
-        if (pdfMagicBytes !== '%PDF') {
-          console.error('[UPLOAD-RESUME] Invalid PDF magic bytes:', {
-            magicBytes: pdfMagicBytes,
-            expected: '%PDF',
-            fileName: req.file.originalname
-          });
-          return res.status(400).json({ 
-            error: 'Invalid PDF file',
-            message: 'File does not appear to be a valid PDF' 
-          });
-        }
-
-        const pdfData = await pdfParse(pdfBuffer);
-        resumeText = pdfData.text;
-        
-        console.log('[UPLOAD-RESUME] PDF parsed successfully:', {
-          textLength: resumeText.length,
-          pages: pdfData.numpages || 'unknown'
-        });
-        
-        // Limit extracted text length for security
-        const maxTextLength = 50000; // 50k characters max
-        if (resumeText.length > maxTextLength) {
-          resumeText = resumeText.substring(0, maxTextLength);
-        }
-      } catch (error: any) {
-        // Don't leak internal error details to client
-        console.error("PDF parsing error:", error);
-        return res.status(400).json({ 
-          error: 'Failed to parse PDF file',
-          message: 'The PDF file could not be processed. Please ensure it is a valid PDF file.' 
-        });
-      }
-
-      // Generate session ID
-      const sessionId = uuidv4();
-
-      // Clear file buffer from memory immediately after processing
-      req.file.buffer = null as any;
-
-      const resumeFulltext = stripResumeContactInfo(resumeText.trim());
-      const heuristicProfile = buildResumeProfile(resumeFulltext);
-
-      // Priority 1: Enhance profile with Hugging Face NER (skills, companies, etc.)
-      let resumeProfile = heuristicProfile;
-      try {
-        resumeProfile = await extractResumeProfileWithNER(resumeFulltext, heuristicProfile);
-      } catch (hfErr: any) {
-        console.warn("[UPLOAD-RESUME] HF NER skipped:", hfErr?.message || hfErr);
-      }
-
-      // Priority 2: Summarize resume for ElevenLabs context (resume_summary, resume_highlights)
-      let resumeSummary = resumeFulltext.slice(0, 1500);
-      let resumeHighlights = resumeFulltext.slice(0, 500);
-      try {
-        const hfSummary = await summarizeResume(resumeFulltext);
-        if (hfSummary) {
-          resumeSummary = hfSummary.summary;
-          resumeHighlights = hfSummary.highlights;
-        }
-      } catch (hfErr: any) {
-        console.warn("[UPLOAD-RESUME] HF summarization skipped:", hfErr?.message || hfErr);
-      }
-
-      // Persist resume content keyed by sessionId (interviewid)
-      try {
-        await storage.upsertResume(sessionId, resumeFulltext, resumeProfile);
-        console.log('[UPLOAD-RESUME] Resume persisted successfully:', {
-          sessionId,
-          resumeTextLength: resumeFulltext.length,
-          hasProfile: !!resumeProfile
-        });
-      } catch (persistError) {
-        console.error("[UPLOAD-RESUME] Failed to persist resume text/profile:", persistError);
-        // Continue to return success so the user flow is not blocked; downstream tool calls will 404 if missing.
-      }
-
-      // Return response matching what frontend expects
-      console.log('[UPLOAD-RESUME] Upload completed successfully:', {
-        sessionId,
-        candidateName: sanitizedName,
-        resumeTextLength: resumeFulltext.length
-      });
-      
-      res.json({
-        sessionId,
-        resumeText: resumeFulltext,
-        candidateName: sanitizedName,
-        resume_summary: resumeSummary,
-        resume_highlights: resumeHighlights,
-        resumeProfile,
-      });
-    } catch (error: any) {
-      // Enhanced error logging
-      console.error("[UPLOAD-RESUME] Error processing resume upload:", {
-        error: error.message || error,
-        errorName: error.name,
-        errorCode: error.code,
-        errorStack: error.stack,
-        userId: req.userId || 'unknown',
-        fileName: req.file?.originalname || 'unknown',
-        timestamp: new Date().toISOString()
-      });
-      
-      // Handle multer errors specifically
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'LIMIT_FILE_SIZE') {
-        console.error('[UPLOAD-RESUME] Multer file size limit exceeded');
-        return res.status(400).json({ 
-          error: 'File too large',
-          message: 'File size exceeds 10MB limit' 
-        });
-      }
-      
-      // Handle multer file filter errors
-      if (error && typeof error === 'object' && 'message' in error && 
-          typeof error.message === 'string' && error.message.includes('Only PDF')) {
-        console.error('[UPLOAD-RESUME] Multer file filter rejected file:', {
-          fileName: req.file?.originalname,
-          mimetype: req.file?.mimetype
-        });
-        return res.status(400).json({ 
-          error: 'Invalid file type',
-          message: 'Only PDF files are allowed' 
-        });
-      }
-      
-      // Generic error response (don't leak internal details)
-      res.status(500).json({ 
-        error: 'Failed to process resume',
-        message: 'An error occurred while processing your resume. Please try again.' 
-      });
-    }
-  });
-  
-  app.post("/api/resume/upload", authenticateToken, upload.single('file'), async (req: any, res) => {
+  /** Canonical resume persist handler — PDF (multipart) or pasted text (JSON). */
+  const handleResumeUpload = async (req: any, res: Response) => {
     try {
       let resumeText = "";
 
       if (req.file) {
-        // PDF file uploaded
+        const MAX_FILE_SIZE = 10 * 1024 * 1024;
+        if (req.file.size > MAX_FILE_SIZE) {
+          const fileSizeMB = (req.file.size / (1024 * 1024)).toFixed(2);
+          return res.status(400).json({
+            error: "File size exceeds 10MB limit",
+            message: `File size (${fileSizeMB}MB) exceeds the 10MB limit. Please compress your PDF or use a smaller file.`,
+          });
+        }
+
         try {
           const pdfBuffer = req.file.buffer;
+          const pdfMagicBytes = pdfBuffer.slice(0, 4).toString();
+          if (pdfMagicBytes !== "%PDF") {
+            return res.status(400).json({
+              error: "Invalid PDF file",
+              message: "File does not appear to be a valid PDF",
+            });
+          }
           const pdfData = await pdfParse(pdfBuffer);
           resumeText = pdfData.text;
         } catch (error: any) {
-          return res.status(400).json({ 
-            error: 'Failed to parse PDF file',
-            details: error.message 
+          console.error("[RESUME-UPLOAD] PDF parsing error:", error);
+          return res.status(400).json({
+            error: "Failed to parse PDF file",
+            message: "The PDF file could not be processed. Please ensure it is a valid PDF file.",
           });
         }
-      } else if (req.body.text) {
-        // Text pasted directly
-        resumeText = req.body.text;
+        req.file.buffer = null as any;
+      } else if (req.body?.text) {
+        resumeText = String(req.body.text);
       } else {
-        return res.status(400).json({ error: 'No file or text provided' });
+        return res.status(400).json({ error: "No file or text provided" });
       }
 
       if (!resumeText || resumeText.trim().length === 0) {
-        return res.status(400).json({ error: 'Resume text is empty' });
+        return res.status(400).json({ error: "Resume text is empty" });
       }
 
-      // Limit resume text length (optional, adjust as needed)
-      const maxLength = 5000;
-      if (resumeText.length > maxLength) {
-        resumeText = resumeText.substring(0, maxLength) + "...";
+      const requestedSessionId = req.body?.sessionId as string | undefined;
+      const sessionId =
+        requestedSessionId && RESUME_SESSION_ID_RE.test(requestedSessionId)
+          ? requestedSessionId
+          : uuidv4();
+
+      const formCandidateContext = readResumeUploadCandidateFields(req);
+
+      let persisted;
+      try {
+        persisted = await persistResumeForSession(sessionId, resumeText, "[RESUME-UPLOAD]");
+      } catch (persistError) {
+        console.error("[RESUME-UPLOAD] Failed to persist resume text/profile:", persistError);
+        const resumeFulltext = stripResumeContactInfo(resumeText.trim());
+        persisted = {
+          sessionId,
+          resumeText: resumeFulltext,
+          resumeProfile: buildResumeProfile(resumeFulltext),
+          resume_summary: resumeFulltext.slice(0, 1500),
+          resume_highlights: resumeFulltext.slice(0, 500),
+        };
       }
 
-      res.json({ resumeText: stripResumeContactInfo(resumeText.trim()) });
+      if (formCandidateContext) {
+        const mergedProfile = mergeCandidateContextRecords(
+          persisted.resumeProfile as Record<string, unknown>,
+          formCandidateContext,
+        );
+        try {
+          await storage.upsertResume(sessionId, persisted.resumeText, mergedProfile);
+          persisted = { ...persisted, resumeProfile: mergedProfile };
+        } catch (profileMergeError: unknown) {
+          const msg =
+            profileMergeError instanceof Error ? profileMergeError.message : String(profileMergeError);
+          console.warn("[RESUME-UPLOAD] Could not merge form fields into resume profile:", msg);
+        }
+        await mergeCandidateContextOnSession(sessionId, req.userId, formCandidateContext);
+      }
+
+      res.json({
+        sessionId: persisted.sessionId,
+        resumeText: persisted.resumeText,
+        resume_summary: persisted.resume_summary,
+        resume_highlights: persisted.resume_highlights,
+        resumeProfile: persisted.resumeProfile,
+      });
     } catch (error: any) {
-      console.error("Resume upload error:", error);
-      res.status(500).json({ 
-        error: 'Failed to process resume',
-        details: error.message || String(error)
+      console.error("[RESUME-UPLOAD] Error processing resume upload:", error);
+      res.status(500).json({
+        error: "Failed to process resume",
+        message: "An error occurred while processing your resume. Please try again.",
       });
     }
-  });
+  };
+
+  // Canonical resume upload — PDF (field: file) or pasted text (JSON body.text).
+  app.post(
+    "/api/resume/upload",
+    authenticateToken,
+    resumeMulterSingle("file"),
+    handleResumeUpload,
+  );
+
+  // Deprecated alias for older clients/tests that POST multipart field "resume".
+  app.post(
+    "/api/upload-resume",
+    authenticateToken,
+    resumeMulterSingle("resume"),
+    handleResumeUpload,
+  );
 
   // Voice interview endpoints (proxy to Python Flask server)
   // IMPORTANT: Python backend must run on a DIFFERENT port than Node.js server (5000)
@@ -2233,8 +2245,13 @@ const tokenRateLimiter = rateLimit({
       });
 
       if (!session) {
-        return res.status(404).json({ error: 'Session not found' });
+        return res.status(404).json({
+          error: 'Session not found',
+          message: 'Interview save was not found for this session. The interview may still be saving — try again shortly.',
+        });
       }
+
+      const linkStatus = session.interviewId ? 'linked' : 'pending';
 
       // If interviewId is linked, return it
       if (session.interviewId) {
@@ -2247,15 +2264,17 @@ const tokenRateLimiter = rateLimit({
           interviewId: session.interviewId,
           conversationId: session.conversationId,
           status: session.status,
+          linkStatus,
           evaluationStatus: evaluation?.status || null,
         });
       }
 
-      // Interview not linked yet (webhook delayed)
+      // Interview not linked yet (save in flight or webhook delayed)
       return res.json({
         interviewId: null,
         conversationId: session.conversationId,
         status: session.status,
+        linkStatus,
         evaluationStatus: null,
       });
     } catch (error: any) {
@@ -2306,7 +2325,10 @@ const tokenRateLimiter = rateLimit({
           userId,
           timestamp: new Date().toISOString()
         });
-        return res.status(404).json({ error: 'Interview not found' });
+        return res.status(404).json({
+          error: 'Interview not found',
+          message: 'Interview not found or not accessible with this account.',
+        });
       }
       
       console.log('[FLIGHT_RECORDER] [BACKEND] GET /api/interviews/:id/results - Interview found:', {
@@ -2393,10 +2415,11 @@ const tokenRateLimiter = rateLimit({
       const userId = req.userId; // candidate_id is userId from JWT
       client_session_id = req.body?.client_session_id as string;
       const conversation_id = req.body?.conversation_id as string | undefined;
-      const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'disconnect'
+      const ended_by = req.body?.ended_by as string | undefined; // 'user' | 'agent' | 'disconnect'
       const agent_id = req.body?.agent_id as string | undefined;
       const resume_text = req.body?.resume_text as string | undefined; // Optional resume text from request
       const transcript_from_tool = req.body?.transcript as string | undefined; // Transcript from SaveInterviewResults tool
+      const candidate_context_from_body = req.body?.candidate_context as Record<string, unknown> | undefined;
       
       console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - parsed fields:', { 
         userId, 
@@ -2438,7 +2461,7 @@ const tokenRateLimiter = rateLimit({
       }
 
       // Validate ended_by enum
-      const validEndedBy = ['user', 'disconnect'];
+      const validEndedBy = ['user', 'agent', 'disconnect'];
       if (ended_by && !validEndedBy.includes(ended_by)) {
         console.error('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - VALIDATION FAILED: Invalid ended_by value:', ended_by);
         return res.status(400).json({ 
@@ -2450,6 +2473,8 @@ const tokenRateLimiter = rateLimit({
 
       const clientEndedAt = new Date();
       const agentId = agent_id || getAgentId();
+      let pendingFinalize: TranscriptFinalizeJob | null = null;
+      let pendingAsyncFetch: { interviewId: string; conversationId: string; source: string } | null = null;
       
       // CRITICAL FIX: Always create interview record synchronously if it doesn't exist
       // This ensures interviewId is always returned, preventing frontend hang
@@ -2477,43 +2502,30 @@ const tokenRateLimiter = rateLimit({
               console.log(`[SAVE-INTERVIEW] Updated existing interview ${interviewId} with end time`);
             }
             
-            // Process transcript: use provided transcript or fetch from ElevenLabs
+            // Defer transcript finalization until resume is linked to interviewId
             if (!existingInterview.transcript) {
               if (transcript_from_tool) {
-                // Use transcript provided by tool
-                await finalizeInterviewTranscript({
+                pendingFinalize = {
                   interviewId,
                   conversationId: conversation_id,
                   transcript: transcript_from_tool,
                   source: 'existing interview / tool transcript',
-                });
+                };
               } else if (conversation_id) {
-                // Fetch transcript asynchronously (non-blocking)
-                fetchTranscriptFromElevenLabs(conversation_id)
-                  .then(async (transcript) => {
-                    if (transcript) {
-                      await finalizeInterviewTranscript({
-                        interviewId,
-                        conversationId: conversation_id,
-                        transcript,
-                        source: 'existing interview / fetched transcript',
-                      });
-                    }
-                  })
-                  .catch((transcriptError: any) => {
-                    console.error(`[SAVE-INTERVIEW] Error fetching transcript:`, transcriptError.message || transcriptError);
-                  });
+                pendingAsyncFetch = {
+                  interviewId,
+                  conversationId: conversation_id,
+                  source: 'existing interview / fetched transcript',
+                };
               }
             } else if (existingInterview.transcript) {
               console.log(`[SAVE-INTERVIEW] Interview ${interviewId} already has transcript, ensuring evaluation is enqueued`);
-              // enqueue() is idempotent: it skips when an evaluation is already complete,
-              // processing, or freshly pending, and resets/retries stalled or failed rows.
-              await finalizeInterviewTranscript({
+              pendingFinalize = {
                 interviewId,
                 conversationId: conversation_id,
                 transcript: existingInterview.transcript,
                 source: 'existing interview / existing transcript',
-              });
+              };
             }
           }
         } catch (dbError: any) {
@@ -2526,21 +2538,6 @@ const tokenRateLimiter = rateLimit({
       if (!interviewId) {
         try {
           console.log('[SAVE-INTERVIEW] No existing interview found - creating new interview record synchronously');
-          
-          // Get resume text from request body if provided, otherwise try session lookup
-          let resumeText: string | null = resume_text || null;
-          if (!resumeText) {
-            try {
-              const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-                where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, client_session_id),
-              });
-              // Resume text might be stored elsewhere - for now we'll create without it
-              // It can be updated later via webhook or other means
-            } catch (resumeError) {
-              // Resume lookup is optional - continue without it
-              console.log('[SAVE-INTERVIEW] Resume text lookup skipped (optional)');
-            }
-          }
           
           // Create interview record with status 'pending'
           const interviewData = insertInterviewSchema.parse({
@@ -2567,52 +2564,25 @@ const tokenRateLimiter = rateLimit({
             conversationId: conversation_id || 'null',
             agentId,
             status: 'pending',
-            hasResumeText: !!resumeText,
-            resumeTextLength: resumeText?.length || 0,
+            hasResumeText: !!resume_text,
+            resumeTextLength: resume_text?.length || 0,
             timestamp: new Date().toISOString()
           });
           
-          // If resume_text was provided, store it in resumes table asynchronously (non-blocking)
-          if (resumeText && interviewId) {
-            const safeResumeText = stripResumeContactInfo(resumeText);
-            storage.upsertResume(interviewId, safeResumeText, buildResumeProfile(safeResumeText))
-              .then(() => {
-                console.log(`[SAVE-INTERVIEW] Successfully stored resume text for interview ${interviewId}`);
-              })
-              .catch((resumeError: any) => {
-                console.error(`[SAVE-INTERVIEW] Error storing resume text:`, resumeError.message || resumeError);
-                // Don't fail - resume can be stored later
-              });
-          }
-          
-          // Process transcript: use provided transcript or fetch from ElevenLabs
+          // Defer transcript finalization until resume is linked to interviewId
           if (transcript_from_tool) {
-            // Use transcript provided by tool
-            await finalizeInterviewTranscript({
+            pendingFinalize = {
               interviewId,
               conversationId: conversation_id,
               transcript: transcript_from_tool,
               source: 'new interview / tool transcript',
-            });
+            };
           } else if (conversation_id) {
-            // If conversation_id is available, try to fetch transcript and enqueue evaluation
-            fetchTranscriptFromElevenLabs(conversation_id)
-              .then(async (transcript) => {
-                if (transcript) {
-                  await finalizeInterviewTranscript({
-                    interviewId,
-                    conversationId: conversation_id,
-                    transcript,
-                    source: 'new interview / fetched transcript',
-                  });
-                } else {
-                  console.log(`[SAVE-INTERVIEW] Transcript not available yet for newly created interview ${interviewId} - will be available via webhook`);
-                }
-              })
-              .catch((transcriptError: any) => {
-                console.error(`[SAVE-INTERVIEW] Error fetching transcript for newly created interview:`, transcriptError.message || transcriptError);
-                // Transcript may be available later via webhook
-              });
+            pendingAsyncFetch = {
+              interviewId,
+              conversationId: conversation_id,
+              source: 'new interview / fetched transcript',
+            };
           }
         } catch (createError: any) {
           // Handle conflict: if conversation_id already exists (race condition)
@@ -2644,6 +2614,11 @@ const tokenRateLimiter = rateLimit({
         throw new Error('Failed to create interview record');
       }
 
+      // Link resume BEFORE finalizeInterviewTranscript enqueues evaluation
+      const linkResult = await linkResumeFromSessionToInterview(client_session_id, interviewId, {
+        resumeTextFromBody: resume_text,
+      });
+
       // Find or create elevenlabs_interview_sessions record
       // Wrap in try/catch to handle database errors gracefully
       try {
@@ -2654,7 +2629,13 @@ const tokenRateLimiter = rateLimit({
         if (existingSession) {
           // Update existing session
           try {
-            const updateData = {
+            const existingContext = (existingSession.candidateContext as Record<string, unknown>) || {};
+            const mergedContext = mergeCandidateContextRecords(
+              existingContext,
+              buildCandidateContext(candidate_context_from_body as CandidateContextInput),
+              linkResult.profile ? candidateContextFromResumeProfile(linkResult.profile) : null,
+            );
+            const updateData: Record<string, unknown> = {
               conversationId: conversation_id || existingSession.conversationId,
               interviewId: interviewId, // Always set since we guarantee interviewId exists
               status: 'completed', // Interview exists, so status is completed
@@ -2663,8 +2644,11 @@ const tokenRateLimiter = rateLimit({
               clientEndedAt: clientEndedAt,
               updatedAt: new Date(),
             };
+            if (Object.keys(mergedContext).length > 0) {
+              updateData.candidateContext = mergedContext;
+            }
             await db.update(elevenLabsInterviewSessions)
-              .set(updateData)
+              .set(updateData as any)
               .where(eq(elevenLabsInterviewSessions.clientSessionId, client_session_id));
             console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - Database UPDATE session:', {
               sessionId: existingSession.id,
@@ -2686,6 +2670,10 @@ const tokenRateLimiter = rateLimit({
           // Create new session record
           try {
             const agentId = agent_id || getAgentId();
+            const mergedContext = mergeCandidateContextRecords(
+              buildCandidateContext(candidate_context_from_body as CandidateContextInput),
+              linkResult.profile ? candidateContextFromResumeProfile(linkResult.profile) : null,
+            );
             const sessionData = insertElevenLabsInterviewSessionSchema.parse({
               userId,
               agentId,
@@ -2696,6 +2684,7 @@ const tokenRateLimiter = rateLimit({
               endedBy: ended_by || null,
               endedAt: clientEndedAt,
               clientEndedAt: clientEndedAt,
+              ...(Object.keys(mergedContext).length > 0 ? { candidateContext: mergedContext } : {}),
             });
             // SQLite doesn't have gen_random_uuid() or now() - provide id and all timestamps explicitly
             const now = new Date();
@@ -2725,6 +2714,61 @@ const tokenRateLimiter = rateLimit({
       } catch (sessionError: any) {
         console.error('[SAVE-INTERVIEW] Error querying/updating session:', sessionError);
         // Continue - don't fail the request
+      }
+
+      if (candidate_context_from_body) {
+        await mergeCandidateContextOnSession(client_session_id, userId, candidate_context_from_body);
+      } else if (linkResult.linked && linkResult.profile) {
+        await mergeCandidateContextOnSession(client_session_id, userId, linkResult.profile);
+      }
+
+      if (pendingFinalize) {
+        await finalizeInterviewTranscript(pendingFinalize);
+      }
+
+      if (pendingAsyncFetch) {
+        const { interviewId: asyncInterviewId, conversationId: asyncConversationId, source: asyncSource } =
+          pendingAsyncFetch;
+        fetchTranscriptFromElevenLabs(asyncConversationId)
+          .then(async (transcript) => {
+            if (transcript) {
+              await linkResumeFromSessionToInterview(client_session_id, asyncInterviewId, {
+                resumeTextFromBody: resume_text,
+              });
+              await finalizeInterviewTranscript({
+                interviewId: asyncInterviewId,
+                conversationId: asyncConversationId,
+                transcript,
+                source: asyncSource,
+              });
+            } else {
+              console.log(
+                `[SAVE-INTERVIEW] Transcript not available yet for interview ${asyncInterviewId} - will be available via webhook`,
+              );
+            }
+          })
+          .catch((transcriptError: any) => {
+            console.error(
+              `[SAVE-INTERVIEW] Error fetching transcript for interview ${asyncInterviewId}:`,
+              transcriptError.message || transcriptError,
+            );
+          });
+      }
+
+      // No transcript source: fail fast so Results does not poll for minutes
+      const hasToolTranscript = !!transcript_from_tool?.trim();
+      const willFetchTranscriptAsync = !!conversation_id && !hasToolTranscript;
+      if (!hasToolTranscript && !willFetchTranscriptAsync) {
+        try {
+          const savedInterview = await (db.query as any).interviews?.findFirst({
+            where: (interviews: any, { eq }: any) => eq(interviews.id, interviewId),
+          });
+          if (!savedInterview?.transcript?.trim()) {
+            await recordTerminalEvaluationFailure(interviewId, 'no_transcript');
+          }
+        } catch (terminalEvalError: any) {
+          console.warn('[SAVE-INTERVIEW] Could not record no_transcript failure:', terminalEvalError?.message || terminalEvalError);
+        }
       }
 
       // CRITICAL: Always return interviewId - we guarantee it exists at this point
@@ -2771,7 +2815,17 @@ const tokenRateLimiter = rateLimit({
 
   // ========================================================================
   // ElevenLabs Server Tools: Fetch resume profile/fulltext by interviewid
+  // Called from ElevenLabs cloud — requires a public backend URL (not localhost).
+  // Resume context is also injected at session start via dynamicVariables in the frontend.
   // ========================================================================
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(
+      '[RESUME-PROFILE] Dev note: ElevenLabs server tools call this backend from the cloud. ' +
+      'Use ngrok or a deployed URL for live tool calls; missing [RESUME-PROFILE] logs during ' +
+      'interviews is normal when resume_summary/resume_highlights dynamic vars are set.'
+    );
+  }
+
   app.post("/api/get-resume-profile", async (req, res) => {
     try {
       const apiSecret = req.headers['x-api-secret'];
@@ -2861,10 +2915,30 @@ const tokenRateLimiter = rateLimit({
         });
       }
 
-      // Log the completion signal
       console.log(`MARK_INTERVIEW_COMPLETE interviewid=${interviewId}, conversationid=${conversationId}`);
 
-      // Return success response
+      // interviewid is the frontend client_session_id (see dynamicVariables.interviewid)
+      try {
+        const existingSession = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+          where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, interviewId),
+        });
+
+        if (existingSession) {
+          await db.update(elevenLabsInterviewSessions)
+            .set({
+              status: 'completed',
+              endedBy: 'agent',
+              endedAt: new Date(),
+              conversationId: conversationId || existingSession.conversationId,
+              updatedAt: new Date(),
+            })
+            .where(eq(elevenLabsInterviewSessions.clientSessionId, interviewId));
+          console.log(`[MARK-INTERVIEW-COMPLETE] Updated session for client_session_id ${interviewId}`);
+        }
+      } catch (dbError: any) {
+        console.warn('[MARK-INTERVIEW-COMPLETE] Session update failed (non-fatal):', dbError?.message || dbError);
+      }
+
       return res.json({
         status: "completed",
         interviewid: interviewId,

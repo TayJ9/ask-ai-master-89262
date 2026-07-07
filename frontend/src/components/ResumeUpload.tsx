@@ -11,6 +11,7 @@ import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { motion } from "framer-motion";
 import { devLog } from "@/lib/utils";
+import { generateClientSessionId } from "@/lib/sessionId";
 
 /**
  * Lightweight heuristic: does the text look like a resume?
@@ -58,6 +59,11 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
   const [candidateMajor, setCandidateMajor] = useState("");
   const [candidateYear, setCandidateYear] = useState("");
   const [resumeWarning, setResumeWarning] = useState<string | null>(null);
+  /** Server-persisted session id (PDF upload or text persist) for ElevenLabs resume tools */
+  const [resumeSessionId, setResumeSessionId] = useState<string | null>(null);
+  const [resumeSummary, setResumeSummary] = useState<string | undefined>();
+  const [resumeHighlights, setResumeHighlights] = useState<string | undefined>();
+  const [resumeSkills, setResumeSkills] = useState<string[] | undefined>();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   const isCandidateProfileComplete =
@@ -170,32 +176,38 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
         year: candidateYear.trim()
       });
 
+      const clientSessionId = resumeSessionId ?? generateClientSessionId();
       const formData = new FormData();
-      formData.append("resume", file);
-      // Backend expects "name", send first name there for compatibility
-      formData.append("name", candidateFirstName.trim());
+      formData.append("file", file);
+      formData.append("sessionId", clientSessionId);
+      formData.append("firstName", candidateFirstName.trim());
       formData.append("major", candidateMajor.trim());
       formData.append("year", candidateYear.trim());
 
-      // Log headers being sent (masking token)
       const tokenForLog = localStorage.getItem('auth_token');
       const maskedToken = tokenForLog 
         ? `${tokenForLog.substring(0, 10)}...${tokenForLog.substring(tokenForLog.length - 4)}`
         : 'MISSING';
-      devLog.log('[ResumeUpload] Sending upload request to /api/upload-resume with headers:', {
+      devLog.log('[ResumeUpload] Sending upload request to /api/resume/upload with headers:', {
         hasAuthorization: !!tokenForLog,
         authorizationPreview: tokenForLog ? `Bearer ${maskedToken}` : 'none',
-        contentType: 'multipart/form-data (set by browser)'
+        contentType: 'multipart/form-data (set by browser)',
+        sessionId: clientSessionId,
       });
       
-      devLog.log('[ResumeUpload] Sending upload request to /api/upload-resume');
-      const data = await apiPostFormData('/api/upload-resume', formData);
+      devLog.log('[ResumeUpload] Sending upload request to /api/resume/upload');
+      const data = await apiPostFormData('/api/resume/upload', formData);
       devLog.log('[ResumeUpload] Upload successful:', {
         sessionId: data.sessionId,
         hasResumeText: !!data.resumeText,
         resumeTextLength: data.resumeText?.length || 0
       });
       
+      setResumeSessionId(data.sessionId);
+      setResumeSummary(data.resume_summary);
+      setResumeHighlights(data.resume_highlights);
+      setResumeSkills(data.resumeProfile?.skills);
+
       // Store sessionId and candidate info (include HF-enhanced summary/highlights when available)
       const candidateInfo = {
         firstName: candidateFirstName.trim(),
@@ -267,20 +279,6 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
     }
   };
 
-  // Generate UUID v4 for session IDs
-  const generateSessionId = (): string => {
-    // Use crypto.randomUUID() if available (modern browsers), otherwise fallback
-    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return crypto.randomUUID();
-    }
-    // Fallback UUID v4 generator
-    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-      const r = Math.random() * 16 | 0;
-      const v = c === 'x' ? r : (r & 0x3 | 0x8);
-      return v.toString(16);
-    });
-  };
-
   const handleTextPaste = async () => {
     if (!resumeText.trim()) {
       toast({
@@ -303,12 +301,21 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
     setIsUploading(true);
 
     try {
-      const data = await apiPost('/api/resume/upload', { text: resumeText });
+      const data = await apiPost('/api/resume/upload', {
+        text: resumeText,
+        sessionId: resumeSessionId ?? generateClientSessionId(),
+      });
       setResumeText(data.resumeText || resumeText);
-      
+      if (data.sessionId) {
+        setResumeSessionId(data.sessionId);
+      }
+      if (data.resume_summary) setResumeSummary(data.resume_summary);
+      if (data.resume_highlights) setResumeHighlights(data.resume_highlights);
+      if (data.resumeProfile?.skills) setResumeSkills(data.resumeProfile.skills);
+
       toast({
         title: "Resume saved",
-        description: "Your resume text has been saved.",
+        description: "Your resume text has been saved for the interview.",
       });
     } catch (error: any) {
       const errorMessage = error instanceof ApiError 
@@ -325,7 +332,7 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
     }
   };
 
-  const handleContinue = () => {
+  const handleContinue = async () => {
     if (!candidateFirstName.trim() || !candidateMajor.trim() || !candidateYear.trim()) {
       toast({
         title: "Missing Information",
@@ -347,7 +354,6 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
     // Soft content check on first click -- warn but allow a second click to proceed
     const contentCheck = checkResumeContent(resumeText);
     if (!contentCheck.ok && !resumeWarning) {
-      // First attempt with suspicious content: show warning, don't proceed yet
       setResumeWarning(contentCheck.reason ?? null);
       toast({
         title: "Heads up -- this may not be a resume",
@@ -358,20 +364,63 @@ function ResumeUpload({ onResumeUploaded, onSkip, onBack }: ResumeUploadProps) {
       return;
     }
 
-    // Either content looks fine, or user already saw the warning and clicked again
     setResumeWarning(null);
+    setIsUploading(true);
 
-    // Generate sessionId for text-only uploads (when no file was uploaded)
-    const sessionId = generateSessionId();
-    
-    const candidateInfo = {
-      firstName: candidateFirstName.trim(),
-      major: candidateMajor.trim(),
-      year: candidateYear.trim(),
-      sessionId: sessionId,
-      resumeSource: uploadedFileName ? "pdf_upload" : "text_resume"
-    };
-    onResumeUploaded(resumeText, candidateInfo);
+    try {
+      let sessionId = resumeSessionId;
+      let resume_summary = resumeSummary;
+      let resume_highlights = resumeHighlights;
+      let skills = resumeSkills;
+
+      // PDF upload already persisted under resumeSessionId; text-only must persist now
+      if (!sessionId || !uploadedFileName) {
+        const clientSessionId = sessionId ?? generateClientSessionId();
+        const data = await apiPost('/api/resume/upload', {
+          text: resumeText,
+          sessionId: clientSessionId,
+          firstName: candidateFirstName.trim(),
+          major: candidateMajor.trim(),
+          year: candidateYear.trim(),
+        });
+        sessionId = data.sessionId || clientSessionId;
+        setResumeSessionId(sessionId);
+        resume_summary = data.resume_summary;
+        resume_highlights = data.resume_highlights;
+        skills = data.resumeProfile?.skills;
+        if (data.resumeText) {
+          setResumeText(data.resumeText);
+        }
+      }
+
+      if (!sessionId) {
+        throw new Error("Could not register resume session for the interview.");
+      }
+
+      const candidateInfo = {
+        firstName: candidateFirstName.trim(),
+        major: candidateMajor.trim(),
+        year: candidateYear.trim(),
+        sessionId,
+        resumeSource: uploadedFileName ? "pdf_upload" : "text_resume",
+        resume_summary,
+        resume_highlights,
+        skills,
+      };
+      onResumeUploaded(resumeText, candidateInfo);
+    } catch (error: unknown) {
+      const errorMessage =
+        error instanceof ApiError
+          ? error.message
+          : (error instanceof Error ? error.message : "Failed to save resume before starting the interview.");
+      toast({
+        title: "Could not save resume",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   return (

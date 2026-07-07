@@ -7,6 +7,16 @@
 
 import { z } from "zod";
 import { stripResumeContactInfo } from "../resumeSanitize";
+import {
+  analyzeAnswerQuality,
+  buildCoachingImprovements,
+  capQuestionScore,
+  extractVagueQuote,
+  inferQuestionType,
+  isGenericImprovement,
+  mergeCoachingImprovements,
+  type QuestionTypeHint,
+} from "./answerQuality";
 
 // STAR breakdown rating: strong | weak | missing
 const StarRatingSchema = z.enum(["strong", "weak", "missing"]);
@@ -28,6 +38,8 @@ const QuestionItemSchema = z.object({
   }).optional(),
   improvement_quote: z.string().optional(),
   sample_better_answer: z.string().optional(),
+  vagueness_flags: z.array(z.string()).optional(),
+  score_capped: z.boolean().optional(),
 });
 
 // Zod schema for evaluation output
@@ -89,13 +101,8 @@ export function normalizeEvaluationJson(
     let score = 0;
     if (typeof item.score === "number") {
       score = Math.round(item.score);
-    } else if (item.score && typeof item.score === "object") {
-      if (typeof item.score.total === "number") {
-        score = Math.round(item.score.total);
-      } else {
-        const vals = Object.values(item.score).filter((v) => typeof v === "number") as number[];
-        if (vals.length > 0) score = Math.round(vals.reduce((a, b) => a + b, 0));
-      }
+    } else if (item.score && typeof item.score === "object" && typeof item.score.total === "number") {
+      score = Math.round(item.score.total);
     }
     score = Math.max(0, Math.min(100, score));
 
@@ -126,14 +133,10 @@ export function normalizeEvaluationJson(
     };
   });
 
-  // Overall score
-  let overallScore = 0;
-  if (typeof raw.overall_score === "number") {
-    overallScore = Math.round(raw.overall_score);
-  } else {
-    const scores = questions.map((q) => q.score);
-    overallScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
-  }
+  // Overall score: always average of per-question scores (ignore LLM overall to prevent inflation)
+  const scores = questions.map((q) => q.score);
+  let overallScore =
+    scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
   overallScore = Math.max(0, Math.min(100, overallScore));
 
   // Overall strengths/improvements
@@ -156,6 +159,66 @@ export function normalizeEvaluationJson(
   return {
     overall_score: overallScore,
     overall_strengths,
+    overall_improvements,
+    questions,
+  };
+}
+
+/**
+ * Apply deterministic vagueness caps to each question and recompute overall score.
+ */
+export function applyStrictScoreCaps(evaluation: EvaluationJson): EvaluationJson {
+  const questions = evaluation.questions.map((q) => {
+    const questionType = (q.question_type as QuestionTypeHint | undefined) ?? inferQuestionType(q.question);
+    const quality = analyzeAnswerQuality(q.question, q.answer, questionType);
+    const capped = capQuestionScore({
+      question: q.question,
+      answer: q.answer,
+      score: q.score,
+      questionType,
+      starBreakdown: q.star_breakdown,
+    });
+
+    const coaching = buildCoachingImprovements({
+      flags: capped.vagueness_flags,
+      questionType,
+      starBreakdown: q.star_breakdown,
+      wordCount: quality.wordCount,
+      score: capped.score,
+    });
+    const improvements = mergeCoachingImprovements(q.improvements, coaching);
+
+    const vagueQuote = extractVagueQuote(q.answer);
+    const improvement_quote =
+      q.improvement_quote ??
+      (vagueQuote && capped.vagueness_flags.length > 0 ? vagueQuote : undefined);
+
+    return {
+      ...q,
+      score: capped.score,
+      improvements,
+      ...(improvement_quote && { improvement_quote }),
+      ...(capped.vagueness_flags.length > 0 && { vagueness_flags: capped.vagueness_flags }),
+      ...(capped.capped && { score_capped: true }),
+    };
+  });
+
+  const overallScore =
+    questions.length > 0
+      ? Math.round(questions.reduce((sum, q) => sum + q.score, 0) / questions.length)
+      : 0;
+
+  const meaningfulOverall = (evaluation.overall_improvements ?? []).filter(
+    (i) => !isGenericImprovement(i),
+  );
+  const overall_improvements =
+    meaningfulOverall.length > 0
+      ? meaningfulOverall.slice(0, 5)
+      : [...new Set(questions.flatMap((q) => q.improvements))].slice(0, 5);
+
+  return {
+    ...evaluation,
+    overall_score: overallScore,
     overall_improvements,
     questions,
   };
@@ -318,14 +381,21 @@ export async function scoreInterview({
     ? stripResumeContactInfo(resumeText.trim())
     : "";
 
-  // Build resume context (never send email/phone to OpenAI)
+  // Resume for misalignment detection only — do not boost scores from resume content not spoken aloud
   const resumeContext = safeResumeText
-    ? `\n\nCANDIDATE RESUME:\n${safeResumeText.substring(0, 2000)}${safeResumeText.length > 2000 ? "..." : ""}\n\nWhen evaluating, consider whether answers align with skills/experience mentioned in the resume.`
+    ? `\n\nCANDIDATE RESUME (reference only):\n${safeResumeText.substring(0, 2000)}${safeResumeText.length > 2000 ? "..." : ""}\n\nUse the resume ONLY to detect misalignment (e.g., claimed skill never mentioned when directly relevant). Do NOT increase scores based on resume content the candidate did not verbalize in their answer.`
     : "";
 
-  // Build questions text
+  // Build questions text with deterministic quality signals
   const questionsText = questions
-    .map((qa, idx) => `Question ${idx + 1}:\nQ: ${qa.question}\nA: ${qa.answer}`)
+    .map((qa, idx) => {
+      const quality = analyzeAnswerQuality(qa.question, qa.answer);
+      const signalLine =
+        quality.flags.length > 0
+          ? `Quality signals: ${quality.flags.join(", ")} (word count: ${quality.wordCount})`
+          : `Quality signals: none detected (word count: ${quality.wordCount})`;
+      return `Question ${idx + 1}:\nQ: ${qa.question}\nA: ${qa.answer}\n${signalLine}`;
+    })
     .join("\n\n");
 
   const systemPrompt = `You are an evaluator for internship and entry-level job interviews. Your task is to evaluate candidate answers and provide constructive feedback.
@@ -377,16 +447,28 @@ ADAPTIVE EVALUATION RUBRIC (Score 0-100 per answer):
 - Coachability (5 points): Does the answer show openness to learning and growth?
 
 UNIVERSAL CONSIDERATIONS:
-- **Coachability (15 points for entry-level)**: For entry-level candidates, emphasize growth mindset and learning ability. This is especially important for candidates with limited experience.
-- **Resume Alignment**: If a resume is provided, consider whether answers align with claimed skills/experience. Note inconsistencies or missed opportunities to highlight relevant experience.
+- **Coachability**: Reward coachability only when demonstrated in the answer (reflection, learning, specific growth). Do not infer coachability from vague or generic responses.
+- **Resume**: Use resume only to flag misalignment. Never inflate scores for skills/experience that appear on the resume but were not mentioned in the spoken answer.
+
+VAGUENESS PENALTIES (mandatory — apply before finalizing each score):
+- If an answer lacks a concrete example (project, role, tool, metric, or timeframe), behavioral and technical scores MUST NOT exceed 60.
+- If a behavioral answer would have 2+ STAR components rated "missing" or "weak", the score MUST NOT exceed 55.
+- Informational answers without specifics MUST NOT exceed 65.
+- When "Quality signals" include no_concrete_detail or short_answer, score conservatively within the caps above.
+- Encouragement belongs in improvements, not inflated scores.
+
+IMPROVEMENT QUALITY (mandatory):
+- Each question MUST have 1-3 UNIQUE improvements — never repeat the same phrase across questions.
+- NEVER use generic-only feedback like "Could provide more specific details" without naming what to add.
+- Each improvement must reference something from THAT answer (a missing STAR part, missing metric, weak phrase, or absent example).
+- improvements[0] should be the highest-priority fix for that specific answer.
 
 CONSTRAINTS:
 - Strengths and improvements must be concrete and tied to the specific answer content.
 - Keep strengths and improvements arrays to 1-3 items each.
 - Do NOT mention that you are an AI or use AI-related language.
-- Be encouraging but honest - even lower scores should have constructive feedback.
+- Be honest and constructive — lower scores with actionable improvements are preferred over generous scoring.
 - Overall strengths/improvements should synthesize patterns across all answers.
-- For entry-level candidates, emphasize potential and coachability over extensive experience.
 - All scores must be positive integers (0-100), no decimals.
 
 REQUIRED ENHANCED FIELDS (per question):
@@ -403,14 +485,15 @@ IMPORTANT INSTRUCTIONS:
 1. For EACH question, set question_type (required): behavioral, technical, situational, or informational
 2. Apply the appropriate rubric weights based on question type
 3. If question_type = behavioral, add star_breakdown with situation/task/action/result rated strong/weak/missing
-4. For entry-level candidates, give significant weight to coachability (15 points) when appropriate
-5. If a resume is provided, note any alignment or inconsistencies between answers and resume claims
+4. Honor all VAGUENESS PENALTIES — vague answers should receive low scores even if polite and on-topic
+5. If a resume is provided, only note misalignment; do not credit unspoken resume details
 
 OUTPUT RULES (minimal hallucination):
 - Quote exact phrases only: improvement_quote must be a verbatim substring from the candidate's answer. If no suitable phrase exists, omit improvement_quote.
 - Do not invent facts: Use only what appears in the transcript or resume. No fabricated roles, companies, or experiences.
 - sample_better_answer: Add ONLY for the lowest-scoring question OR any question with score < 60. One per evaluation. Ground in candidate's answer and resume.
 - Keep it concise: This feeds a UI—short, actionable feedback. No essays.
+- Every improvements[] entry must be a distinct, answer-specific coaching tip (not a generic placeholder).
 
 Provide a strict JSON evaluation matching the schema. Score each answer individually using the adaptive rubric, then calculate the overall_score as a weighted average. All scores must be integers (round to nearest whole number).`;
 
@@ -428,7 +511,7 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       ],
       response_format: { type: "json_object" },
       temperature: 0.2, // Low temperature for determinism
-      max_tokens: 2000,
+      max_tokens: 4000,
     });
     
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -453,7 +536,8 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
 
     try {
       const normalized = normalizeEvaluationJson(parsed, inputQuestions);
-      return EvaluationJsonSchema.parse(normalized);
+      const capped = applyStrictScoreCaps(normalized);
+      return EvaluationJsonSchema.parse(capped);
     } catch (normErr: any) {
       if (normErr instanceof z.ZodError) {
         const msgs = normErr.errors.map((e) => `${e.path.join(".")}: ${e.message}`);

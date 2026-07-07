@@ -18,6 +18,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 import { devLog } from "@/lib/utils";
+import { generateClientSessionId } from "@/lib/sessionId";
 
 // Smooth internal view transitions - using shared animation config
 const viewTransition = defaultFadeTransition;
@@ -244,9 +245,8 @@ export default function Index() {
         return;
       }
       
-      // Start voice interview
-      // Generate session ID (use user.id if available, otherwise generate unique ID)
-      const sessionId = user?.id ? `${user.id}-${Date.now()}` : `session-${Date.now()}`;
+      // Start voice interview — session id must be UUID (save-interview validates format)
+      const sessionId = generateClientSessionId();
       const response = await apiRequest("/api/voice-interview/start", "POST", {
         session_id: sessionId,
         role: selectedRole,
@@ -347,7 +347,7 @@ export default function Index() {
     // Navigate to results page with interviewId in state (preferred) or sessionId as fallback
     const sessionId = voiceSessionId || results?.sessionId;
     const conversationId = results?.conversationId;
-    const interviewId = results?.interviewId; // Database ID from save-interview response
+    const interviewId = results?.interviewId ?? undefined; // Database ID from save-interview response
     
     devLog.log('[FLIGHT_RECORDER] [TRANSITION] handleCompleteInterview called:', {
       resultsProvided: !!results,

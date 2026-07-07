@@ -10,11 +10,21 @@ import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Loader2, CheckCircle2, AlertCircle, AlertTriangle, XCircle, RefreshCw, ArrowLeft, Home, Clock, Sparkles, TrendingUp, Award } from "lucide-react";
+import { CheckCircle2, AlertCircle, AlertTriangle, XCircle, RefreshCw, ArrowLeft, Home, Clock, Sparkles, TrendingUp, Award, FileText, ChevronDown } from "lucide-react";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { apiGet } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { mockInterviewResults, mockInterviewResultsBusiness } from "@/mocks/resultsMockData";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import MocklyProgressWordmark from "@/components/MocklyProgressWordmark";
 import { cn, devLog } from "@/lib/utils";
 // Dev-only fixtures for UI render verification (enhanced vs legacy evaluation shape)
 import fixtureEnhanced from "@/__fixtures__/evaluation_enhanced.json";
@@ -62,6 +72,8 @@ interface InterviewResults {
         };
         improvement_quote?: string;
         sample_better_answer?: string;
+        vagueness_flags?: string[];
+        score_capped?: boolean;
       }>;
     } | null;
     error: string | null;
@@ -73,14 +85,6 @@ interface InterviewResults {
     userEmail: string | null;
   };
 }
-
-// Processing steps for the progress stepper
-const PROCESSING_STEPS = [
-  { id: 1, text: "Interview Saved", completed: true },
-  { id: 2, text: "Processing Transcript...", completed: false },
-  { id: 3, text: "Analyzing Responses...", completed: false },
-  { id: 4, text: "Generating Feedback...", completed: false },
-];
 
 const POLL_TIMEOUT = 240000; // 4 minutes, covering backend retries and LLM latency
 const EVALUATION_POLL_DELAYS_MS = [2000, 5000, 10000];
@@ -122,6 +126,44 @@ const RESULTS_CARD =
   "rounded-2xl border border-border/80 bg-card/95 text-card-foreground shadow-sm";
 const RESULTS_INSET = "rounded-xl border border-border/60 bg-muted/25";
 const RESULTS_INSET_EMPHASIS = "rounded-xl border border-border/50 bg-card";
+const LOADING_CARD = cn(RESULTS_CARD, "w-full max-w-lg overflow-visible");
+
+/** Shared Mockly wordmark block for initial loading and processing screens. */
+function ResultsLoadingWordmark({
+  progress,
+  statusLine,
+  animateStatus = false,
+  statusKey,
+}: {
+  progress: number;
+  statusLine: string;
+  animateStatus?: boolean;
+  statusKey?: string | number;
+}) {
+  return (
+    <div className="space-y-1 overflow-visible text-center">
+      <MocklyProgressWordmark progress={progress} />
+      <div className="relative h-5">
+        {animateStatus ? (
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={statusKey}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -6 }}
+              transition={{ duration: 0.3, ease: "easeOut" }}
+              className="text-sm font-medium text-foreground"
+            >
+              {statusLine}
+            </motion.p>
+          </AnimatePresence>
+        ) : (
+          <p className="text-sm font-medium text-foreground">{statusLine}</p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function scoreBarClass(score: number): string {
   if (score >= 80) return "from-primary to-primary/85";
@@ -135,6 +177,271 @@ function scoreAccentBorder(score: number): string {
   if (score >= 60) return "border-l-4 border-l-sky-500";
   if (score >= 40) return "border-l-4 border-l-amber-500";
   return "border-l-4 border-l-destructive";
+}
+
+type EvaluatedQuestion = NonNullable<
+  NonNullable<InterviewResults["evaluation"]>["evaluation"]
+>["questions"][number];
+
+/** Fire once when element nears viewport — lazy-mount below-the-fold sections. */
+function useInViewOnce(rootMargin = "300px 0px") {
+  const ref = useRef<HTMLDivElement>(null);
+  const [inView, setInView] = useState(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || inView) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) {
+          setInView(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin, threshold: 0 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [inView, rootMargin]);
+
+  return { ref, inView };
+}
+
+/** Defer Framer Motion until after first paint so LCP elements render statically. */
+function useDeferredAnimations() {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    const enable = () => {
+      if (!cancelled) setReady(true);
+    };
+    const raf = requestAnimationFrame(() => {
+      requestAnimationFrame(enable);
+    });
+    const timeout = window.setTimeout(enable, 2500);
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timeout);
+    };
+  }, []);
+
+  return ready;
+}
+
+function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: number }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <Card
+        className={cn(
+          "overflow-hidden rounded-xl border border-border/80 bg-card/95 text-card-foreground shadow-sm",
+          scoreAccentBorder(qa.score),
+        )}
+      >
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex w-full flex-col gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between sm:pl-5"
+            aria-expanded={open}
+          >
+            <div className="flex flex-wrap items-center gap-2">
+              <h3 className="text-lg font-semibold text-foreground sm:text-xl">Question {index + 1}</h3>
+              {qa.question_type && (
+                <span
+                  className={cn(
+                    "rounded-full px-2.5 py-0.5 text-xs font-medium",
+                    qa.question_type === "behavioral"
+                      ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                      : qa.question_type === "technical"
+                        ? "bg-primary/10 text-primary"
+                        : qa.question_type === "situational"
+                          ? "bg-secondary/15 text-secondary-foreground"
+                          : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {qa.question_type.charAt(0).toUpperCase() + qa.question_type.slice(1)}
+                </span>
+              )}
+              {qa.score_capped && (
+                <span className="rounded-full bg-amber-500/15 px-2.5 py-0.5 text-xs font-medium text-amber-800 dark:text-amber-200">
+                  Limited specificity
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="relative h-2.5 w-24 overflow-hidden rounded-full bg-muted">
+                <div
+                  className={cn("h-full rounded-full bg-gradient-to-r", scoreBarClass(qa.score))}
+                  style={{ width: `${qa.score}%` }}
+                />
+              </div>
+              <span
+                className={cn(
+                  "whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-bold tabular-nums",
+                  qa.score >= 80
+                    ? "bg-primary/10 text-primary"
+                    : qa.score >= 60
+                      ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
+                      : qa.score >= 40
+                        ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                        : "bg-destructive/10 text-destructive",
+                )}
+              >
+                {qa.score}/100
+              </span>
+              <ChevronDown
+                className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", open && "rotate-180")}
+                aria-hidden
+              />
+            </div>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent className="pt-0 pl-4 sm:pl-5">
+            <div className="space-y-3 border-t border-border/60 pt-4">
+              <div className={cn(RESULTS_INSET, "p-4")}>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question</p>
+                <p className="font-medium leading-relaxed text-foreground">{qa.question}</p>
+              </div>
+
+              <div className={cn(RESULTS_INSET, "p-4")}>
+                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Your answer</p>
+                <p className="leading-relaxed text-foreground/90">{qa.answer}</p>
+              </div>
+
+              {qa.star_breakdown && (
+                <div className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}>
+                  <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Sparkles className="h-4 w-4 text-amber-600" aria-hidden />
+                    STAR
+                  </h4>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
+                    {(["situation", "task", "action", "result"] as const).map((key) => {
+                      const val = qa.star_breakdown![key];
+                      const label = key.charAt(0).toUpperCase() + key.slice(1);
+                      const isStrong = val === "strong";
+                      const isWeak = val === "weak";
+                      const Icon = isStrong ? CheckCircle2 : isWeak ? AlertTriangle : XCircle;
+                      const cellClass = isStrong
+                        ? "border-emerald-500/20 bg-emerald-500/5"
+                        : isWeak
+                          ? "border-amber-500/20 bg-amber-500/5"
+                          : "border-border bg-muted/30";
+                      const iconClass = isStrong
+                        ? "text-emerald-600"
+                        : isWeak
+                          ? "text-amber-600"
+                          : "text-muted-foreground";
+                      const badgeClass = isStrong
+                        ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                        : isWeak
+                          ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
+                          : "bg-muted text-muted-foreground";
+                      return (
+                        <div
+                          key={key}
+                          className={cn("flex flex-col items-center rounded-lg border py-3 px-2 text-center", cellClass)}
+                        >
+                          <Icon className={cn("mb-1 h-6 w-6", iconClass)} strokeWidth={2.5} />
+                          <span className="text-xs font-medium text-foreground">{label}</span>
+                          <span className={cn("mt-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold", badgeClass)}>
+                            {val.toUpperCase()}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {qa.strengths && qa.strengths.length > 0 && (
+                <div className={cn(RESULTS_INSET, "border-l-2 border-l-primary/40 p-4")}>
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                    Strengths
+                  </h4>
+                  <ul className="list-none space-y-2">
+                    {qa.strengths.map((strength, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95">
+                        <span className="pt-0.5 text-primary" aria-hidden>·</span>
+                        <span>{strength}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {qa.improvements && qa.improvements.length > 0 && (
+                <div className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}>
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
+                    Improve next
+                  </h4>
+                  {qa.improvement_quote && (
+                    <div className="mb-3 rounded-lg border border-border bg-muted/40 p-3">
+                      <p className="mb-1 text-xs font-medium text-muted-foreground">You said</p>
+                      <p className="text-sm italic text-foreground/90">&ldquo;{qa.improvement_quote}&rdquo;</p>
+                    </div>
+                  )}
+                  <ul className="list-none space-y-2">
+                    {qa.improvements.map((improvement, i) => (
+                      <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95">
+                        <span className="pt-0.5 text-amber-600" aria-hidden>·</span>
+                        <span>{improvement}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
+  );
+}
+
+function DetailedFeedbackSection({ questions }: { questions: EvaluatedQuestion[] }) {
+  const { ref, inView } = useInViewOnce("400px 0px");
+
+  return (
+    <div ref={ref}>
+      <Card className={cn(RESULTS_CARD, "mb-6")}>
+        <CardHeader>
+          <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
+            Detailed feedback
+          </CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">
+            {inView
+              ? "Question, answer, and coaching notes — tap a row to expand"
+              : `${questions.length} questions — scroll to load coaching notes`}
+          </p>
+        </CardHeader>
+        <CardContent>
+          {!inView ? (
+            <div className="space-y-3" aria-hidden>
+              {questions.map((_, index) => (
+                <div
+                  key={index}
+                  className="h-16 rounded-xl border border-border/60 bg-muted/20"
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="space-y-5">
+              {questions.map((qa, index) => (
+                <QuestionFeedbackCard key={index} qa={qa} index={index} />
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 // Format transcript with proper line breaks and speaker labels
@@ -164,6 +471,67 @@ const formatTranscript = (transcript: string): string => {
     .join('\n\n');
 };
 
+function InterviewTranscriptContent({ paragraphs }: { paragraphs: string[] }) {
+  if (paragraphs.length === 0) {
+    return (
+      <p className="text-sm text-muted-foreground">No transcript available for this session.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-2 pr-3">
+      {paragraphs.map((paragraph, i) => {
+        const speakerMatch = paragraph.match(/^(Interviewer|Candidate|User|AI|Agent):\s*(.*)$/i);
+        if (speakerMatch) {
+          const [, speaker, text] = speakerMatch;
+          const isAI = /^(Interviewer|AI|Agent)$/i.test(speaker);
+          const isUser = /^(Candidate|User)$/i.test(speaker);
+
+          return (
+            <div
+              key={i}
+              className={cn(
+                "rounded-xl border p-3 sm:p-4",
+                isAI
+                  ? "ml-0 border-l-2 border-l-primary/70 bg-primary/[0.04] sm:mr-8"
+                  : isUser
+                    ? "ml-0 border-l-2 border-l-secondary/50 bg-secondary/[0.06] sm:ml-8"
+                    : "border-border bg-muted/30",
+              )}
+              style={{
+                transform: "translateZ(0)",
+                willChange: "auto",
+                contain: "layout style paint",
+              }}
+            >
+              <div className="flex items-start gap-3">
+                <span
+                  className={cn(
+                    "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:text-xs",
+                    isAI
+                      ? "bg-primary/10 text-primary"
+                      : isUser
+                        ? "bg-secondary/15 text-secondary-foreground"
+                        : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {isAI ? "Interviewer" : isUser ? "You" : speaker}
+                </span>
+                <p className="flex-1 text-sm font-normal leading-relaxed text-foreground/95">{text}</p>
+              </div>
+            </div>
+          );
+        }
+        return (
+          <p key={i} className="mb-2 text-sm leading-relaxed text-muted-foreground last:mb-0">
+            {paragraph}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function Results() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
@@ -176,7 +544,7 @@ export default function Results() {
   
   // useSearch triggers re-render when URL search changes (e.g. demo switcher); useLocation only has pathname
   const searchString = useSearch();
-  const { finalInterviewId, finalSessionId, isMockMode, isDemoMode, demoVariant, fixtureMode } = useMemo(() => {
+  const { finalInterviewId, finalSessionId, isMockMode, isDemoMode, demoVariant, fixtureMode, isProcessingPreview } = useMemo(() => {
     const urlParts = location.split('?');
     const queryString = urlParts.length > 1 ? urlParts[1] : '';
     const params = new URLSearchParams(queryString);
@@ -187,6 +555,7 @@ export default function Results() {
     const mock = windowParams?.get('mock') || params.get("mock");
     const demo = windowParams?.get('demo') || params.get("demo");
     const fixture = windowParams?.get('fixture') || params.get("fixture");
+    const preview = windowParams?.get('preview') || params.get("preview");
     
     return { 
       finalInterviewId: interviewId, 
@@ -194,7 +563,8 @@ export default function Results() {
       isMockMode: mock === 'true' || mock === '1',
       isDemoMode: demo === 'true' || demo === '1' || demo === 'business' || demo === 'tech',
       demoVariant: demo === 'business' ? 'business' : 'tech',
-      fixtureMode: import.meta.env.DEV && (fixture === 'enhanced' || fixture === 'legacy') ? fixture : null
+      fixtureMode: import.meta.env.DEV && (fixture === 'enhanced' || fixture === 'legacy') ? fixture : null,
+      isProcessingPreview: import.meta.env.DEV && preview === 'processing',
     };
   }, [location, searchString]);
   
@@ -203,6 +573,17 @@ export default function Results() {
   // `spin` animation on the SVG icon triggers a layout shift before results replace it).
   // Dev-only: ?fixture=enhanced|legacy loads fixture for UI render verification.
   const getInitialResults = (): InterviewResults | null => {
+    if (isProcessingPreview) {
+      const base = mockInterviewResults as InterviewResults;
+      return {
+        ...base,
+        evaluation: {
+          ...base.evaluation,
+          status: "processing",
+          evaluation: null,
+        },
+      };
+    }
     if (fixtureMode === 'enhanced') return fixtureEnhanced as InterviewResults;
     if (fixtureMode === 'legacy') return fixtureLegacy as InterviewResults;
     if (isMockMode) return (demoVariant === 'business' ? mockInterviewResultsBusiness : mockInterviewResults) as InterviewResults;
@@ -213,14 +594,18 @@ export default function Results() {
   const [isPolling, setIsPolling] = useState(false);
   /** After poll timeout / max attempts, stop showing full-screen processing (backend may still be working). */
   const [evaluationPollExhausted, setEvaluationPollExhausted] = useState(false);
+  /** Session exists but interviewId not linked yet (save still in flight). */
+  const [sessionSavePending, setSessionSavePending] = useState(false);
+  const [transcriptSheetOpen, setTranscriptSheetOpen] = useState(false);
   /** Reveal main results content only after paint to avoid showing a half-rendered page. */
-  const [contentReady, setContentReady] = useState(false);
+  const [contentReady, setContentReady] = useState(() => getInitialResults() !== null);
   /** Simulated progress for initial loading bar (0–95%, time-based). */
   const [loadingProgress, setLoadingProgress] = useState(0);
   const loadStartTimeRef = useRef<number | null>(null);
 
   const prevDemoVariantRef = useRef<string | null>(null);
   const hasShownResultsRef = useRef(false);
+  const animationsReady = useDeferredAnimations();
 
   // White transition when switching between Technical and Non-Technical demos
   const [showWhiteTransition, setShowWhiteTransition] = useState(false);
@@ -267,8 +652,13 @@ export default function Results() {
         return null;
       }
       devLog.error('Error fetching results:', err);
-      // In development, if server is down, fall back to mock data
-      if (import.meta.env.DEV && window.location.hostname === 'localhost') {
+      const status = err?.statusCode ?? err?.status;
+      const isDevLocalhost =
+        import.meta.env.DEV && typeof window !== 'undefined' && window.location.hostname === 'localhost';
+      const isTransient =
+        status === undefined || status === 502 || status === 503 || status === 504;
+      // Dev-only mock fallback for unreachable API — never mask 401/403/404
+      if (isDevLocalhost && isTransient) {
         devLog.warn('[RESULTS] Server unavailable, using mock data as fallback');
         return mockInterviewResults as InterviewResults;
       }
@@ -276,22 +666,38 @@ export default function Results() {
     }
   }, [isMockMode]);
 
+  type SessionLookupResult = {
+    interviewId: string | null;
+    linkStatus: 'linked' | 'pending' | 'not_found';
+  };
+
   // Poll for interviewId by sessionId (fallback)
-  const pollForInterviewId = useCallback(async (sessionId: string, signal?: AbortSignal): Promise<string | null> => {
-    // In mock mode, return a mock interview ID
+  const pollForInterviewBySession = useCallback(async (
+    sessionId: string,
+    signal?: AbortSignal
+  ): Promise<SessionLookupResult> => {
     if (isMockMode) {
-      return "mock-interview-id-123";
+      return { interviewId: 'mock-interview-id-123', linkStatus: 'linked' };
     }
     
     try {
       const data = await apiGet(`/api/interviews/by-session/${sessionId}`, { signal });
-      return data.interviewId || null;
+      if (data.interviewId) {
+        return { interviewId: data.interviewId, linkStatus: 'linked' };
+      }
+      return {
+        interviewId: null,
+        linkStatus: data.linkStatus === 'pending' ? 'pending' : 'pending',
+      };
     } catch (err: any) {
       if (signal?.aborted || err?.statusCode === 499) {
-        return null;
+        return { interviewId: null, linkStatus: 'not_found' };
+      }
+      if (err?.statusCode === 404 || err?.status === 404) {
+        return { interviewId: null, linkStatus: 'not_found' };
       }
       devLog.error('Error polling for interviewId:', err);
-      return null;
+      return { interviewId: null, linkStatus: 'not_found' };
     }
   }, [isMockMode]);
 
@@ -299,7 +705,13 @@ export default function Results() {
   const getEvaluationStatus = useCallback((data: InterviewResults | null): 'pending' | 'processing' | 'completed' | 'failed' | null => {
     if (!data) return null;
     
-    if (!data.evaluation) return 'pending';
+    if (!data.evaluation) {
+      // Interview saved but evaluation never queued (legacy rows) — avoid infinite processing UI
+      if (data.interview?.status === 'completed' && data.interview?.transcript) {
+        return 'failed';
+      }
+      return 'pending';
+    }
     
     const status = data.evaluation.status;
     const hasFeedback = data.evaluation.evaluation !== null;
@@ -335,6 +747,12 @@ export default function Results() {
       setIsPolling(false);
       return;
     }
+
+    // Dev-only: processing UI preview (?preview=processing)
+    if (isProcessingPreview) {
+      devLog.log('[RESULTS] Processing preview mode');
+      return;
+    }
     
     const interviewId = finalInterviewId;
     const sessionId = finalSessionId;
@@ -345,9 +763,11 @@ export default function Results() {
     }
 
     setEvaluationPollExhausted(false);
+    setSessionSavePending(false);
 
     let effectiveInterviewId = interviewId;
     let sessionPollCount = 0;
+    const SESSION_LINK_MAX_POLLS = 45;
 
     const startPolling = async () => {
       // First, get interviewId if we only have sessionId
@@ -356,9 +776,11 @@ export default function Results() {
         setIsPolling(true);
         
         // Poll for interviewId first
-        while (!effectiveInterviewId && sessionPollCount < 30 && !signal.aborted) {
+        while (!effectiveInterviewId && sessionPollCount < SESSION_LINK_MAX_POLLS && !signal.aborted) {
           sessionPollCount++;
-          effectiveInterviewId = await pollForInterviewId(sessionId, signal);
+          const lookup = await pollForInterviewBySession(sessionId, signal);
+          effectiveInterviewId = lookup.interviewId;
+          setSessionSavePending(lookup.linkStatus === 'pending' && !lookup.interviewId);
           
           if (!effectiveInterviewId) {
             await sleep(1000, signal);
@@ -367,8 +789,14 @@ export default function Results() {
         
         if (signal.aborted || cancelled) return;
 
+        setSessionSavePending(false);
+
         if (!effectiveInterviewId) {
-          setError('Interview not found. Please try again in a few moments.');
+          setError(
+            sessionPollCount >= SESSION_LINK_MAX_POLLS
+              ? 'Your interview is still being saved. Wait a moment, then tap Retry.'
+              : 'Interview not found or not accessible with this account. If you just finished, wait a few seconds and retry.'
+          );
           setIsPolling(false);
           return;
         }
@@ -456,7 +884,7 @@ export default function Results() {
         // as a defensive fallback for any non-ApiError shapes.
         const httpStatus = err?.statusCode ?? err?.status;
         if (httpStatus === 404) {
-          setError('Interview not found');
+          setError('Interview not found or not accessible with this account.');
         } else {
           setError(err.message || 'Failed to load results');
         }
@@ -470,7 +898,7 @@ export default function Results() {
       cancelled = true;
       controller.abort();
     };
-  }, [finalInterviewId, finalSessionId, isMockMode, demoVariant, fixtureMode, fetchResults, pollForInterviewId, getEvaluationStatus, toast]);
+  }, [finalInterviewId, finalSessionId, isMockMode, demoVariant, fixtureMode, isProcessingPreview, fetchResults, pollForInterviewBySession, getEvaluationStatus, toast]);
 
   const handleRetry = () => {
     setError(null);
@@ -500,6 +928,15 @@ export default function Results() {
     return formattedTranscript.split('\n\n');
   }, [formattedTranscript]);
 
+  const hasTranscript = transcriptParagraphs.length > 0;
+  const questionCount = useMemo(() => {
+    const evaluatedCount = results?.evaluation?.evaluation?.questions?.length;
+    if (evaluatedCount && evaluatedCount > 0) return evaluatedCount;
+    return transcriptParagraphs.filter((p) => /^(Interviewer|AI|Agent):/i.test(p)).length;
+  }, [results?.evaluation?.evaluation?.questions, transcriptParagraphs]);
+  const questionCountLabel =
+    questionCount === 1 ? "1 question" : `${questionCount} questions`;
+
   const averageQuestionScore = useMemo(() => {
     if (!results?.evaluation?.evaluation?.questions?.length) return 0;
     return Math.round(
@@ -522,17 +959,56 @@ export default function Results() {
   const showingResultsUI = !!(results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview));
   useEffect(() => {
     if (!showingResultsUI) return;
-    setContentReady(false);
     const isDemoSwitch = isDemoMode && hasShownResultsRef.current;
     hasShownResultsRef.current = true;
-    const delayMs = isDemoSwitch ? 550 : 0;
+    if (!isDemoSwitch) {
+      setContentReady(true);
+      return;
+    }
+    setContentReady(false);
     const t = setTimeout(() => {
       requestAnimationFrame(() => {
         requestAnimationFrame(() => setContentReady(true));
       });
-    }, delayMs);
+    }, 550);
     return () => clearTimeout(t);
   }, [showingResultsUI, isDemoMode, demoVariant]);
+
+  // Lock page scroll while transcript drawer is open (html has overflow-y:auto globally).
+  useEffect(() => {
+    if (!transcriptSheetOpen) return;
+
+    const html = document.documentElement;
+    const body = document.body;
+    const scrollY = window.scrollY;
+
+    const prevHtmlOverflow = html.style.overflow;
+    const prevBodyOverflow = body.style.overflow;
+    const prevBodyPosition = body.style.position;
+    const prevBodyTop = body.style.top;
+    const prevBodyWidth = body.style.width;
+    const prevBodyPaddingRight = body.style.paddingRight;
+
+    const scrollbarWidth = window.innerWidth - html.clientWidth;
+    html.style.overflow = "hidden";
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.top = `-${scrollY}px`;
+    body.style.width = "100%";
+    if (scrollbarWidth > 0) {
+      body.style.paddingRight = `${scrollbarWidth}px`;
+    }
+
+    return () => {
+      html.style.overflow = prevHtmlOverflow;
+      body.style.overflow = prevBodyOverflow;
+      body.style.position = prevBodyPosition;
+      body.style.top = prevBodyTop;
+      body.style.width = prevBodyWidth;
+      body.style.paddingRight = prevBodyPaddingRight;
+      window.scrollTo(0, scrollY);
+    };
+  }, [transcriptSheetOpen]);
 
   // Smooth time-based progress for processing UI
   const [smoothProgress, setSmoothProgress] = useState(0);
@@ -616,7 +1092,7 @@ export default function Results() {
           transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
           className="relative z-10 w-full"
         >
-          <Card className={cn(RESULTS_CARD, "w-full max-w-lg")}>
+          <Card className={LOADING_CARD}>
             <CardHeader className="pb-2">
               <CardTitle className="text-center text-xl font-semibold tracking-tight sm:text-2xl">
                 Processing your interview
@@ -625,77 +1101,14 @@ export default function Results() {
                 This can take a few minutes when feedback needs a retry
               </p>
             </CardHeader>
-            <CardContent className="pt-4">
+            <CardContent className="overflow-visible pt-4">
               <div className="flex flex-col gap-5">
-                {/* Smooth Progressive Bar */}
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="font-medium text-foreground">{stepDescription}</span>
-                    <span className="font-bold tabular-nums text-primary">{displayProgress}%</span>
-                  </div>
-                  <div className="relative h-2.5 overflow-hidden rounded-full bg-muted">
-                    <motion.div
-                      className="absolute inset-y-0 left-0 rounded-full bg-gradient-to-r from-primary to-primary/70"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${displayProgress}%` }}
-                      transition={{ duration: 0.6, ease: "easeOut" }}
-                    />
-                    {/* Shimmer effect */}
-                    <motion.div
-                      className="absolute inset-y-0 left-0 w-full"
-                      style={{
-                        background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.3) 50%, transparent 100%)',
-                        backgroundSize: '200% 100%',
-                      }}
-                      animate={{ backgroundPosition: ['200% 0', '-200% 0'] }}
-                      transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                    />
-                  </div>
-                </div>
-
-                {/* Step Indicators - Compact */}
-                <div className="space-y-3">
-                  {PROCESSING_STEPS.map((step) => {
-                    const isCompleted = step.id < currentStep;
-                    const isActive = step.id === currentStep;
-                    
-                    return (
-                      <div
-                        key={step.id}
-                        className={`flex items-center gap-3 transition-all duration-300 ${
-                          isActive ? 'opacity-100' : isCompleted ? 'opacity-100' : 'opacity-40'
-                        }`}
-                      >
-                        <div className="flex-shrink-0">
-                          {isCompleted ? (
-                            <motion.div
-                              initial={{ scale: 0 }}
-                              animate={{ scale: 1 }}
-                              transition={{ type: "spring", stiffness: 260, damping: 18 }}
-                            >
-                              <CheckCircle2 className="h-5 w-5 text-primary" />
-                            </motion.div>
-                          ) : isActive ? (
-                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                          ) : (
-                            <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />
-                          )}
-                        </div>
-                        <span
-                          className={`text-sm font-medium transition-colors duration-300 ${
-                            isCompleted
-                              ? "text-foreground"
-                              : isActive
-                                ? "text-primary"
-                                : "text-muted-foreground/80"
-                          }`}
-                        >
-                          {step.text}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
+                <ResultsLoadingWordmark
+                  progress={Math.min(100, (displayProgress / 92) * 100)}
+                  statusLine={stepDescription}
+                  animateStatus
+                  statusKey={currentStep}
+                />
 
                 <div className="border-t border-border pt-3">
                   <Button
@@ -791,12 +1204,11 @@ export default function Results() {
             />
           )}
         </AnimatePresence>
-        <motion.div
-          className="relative z-10 min-h-full"
-          initial={false}
-          animate={{ opacity: contentReady ? 1 : 0 }}
-          transition={{ duration: 0.4, ease: [0.33, 1, 0.68, 1] }}
-          style={{ pointerEvents: contentReady ? 'auto' : 'none' }}
+        <div
+          className={cn(
+            "relative z-10 min-h-full transition-opacity duration-300",
+            contentReady ? "opacity-100" : "opacity-0 pointer-events-none",
+          )}
           aria-hidden={!contentReady}
         >
         <div
@@ -805,13 +1217,11 @@ export default function Results() {
         >
           {/* Demo Mode Banner */}
           {isDemoMode && (
-            <motion.div
-              initial={{ opacity: 0, y: -20 }}
-              animate={contentReady ? { opacity: 1, y: 0 } : { opacity: 0, y: -20 }}
-              transition={{ duration: 0.55 }}
+            <div
               className={cn(
                 RESULTS_CARD,
-                "border-primary/20 bg-gradient-to-r from-primary/8 via-card to-secondary/8 px-4 py-4 sm:px-6"
+                "border-primary/20 bg-gradient-to-r from-primary/8 via-card to-secondary/8 px-4 py-4 sm:px-6",
+                animationsReady && contentReady && "motion-safe:animate-in motion-safe:fade-in motion-safe:slide-in-from-top-2 motion-safe:duration-500",
               )}
             >
               <div className="flex flex-wrap items-center justify-between gap-4">
@@ -848,7 +1258,7 @@ export default function Results() {
                   </Button>
                 </div>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {/* Breadcrumb Navigation - Sticky - Optimized for scroll */}
@@ -878,15 +1288,8 @@ export default function Results() {
 
           {/* Overall Score Badge - Wide Hero Banner */}
           {overallScore !== null && (
-            <motion.div
-              initial={{ opacity: 0, y: -10 }}
-              animate={contentReady ? { opacity: 1, y: 0 } : { opacity: 0, y: -10 }}
-              transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1], delay: 0.2 }}
-              className="mb-8"
-            >
-              <div
-                className="relative max-w-5xl mx-auto"
-              >
+            <div className="mb-8">
+              <div className="relative mx-auto max-w-5xl">
                 {/* Main banner container -- no outer glow div; it caused a visible
                     misaligned arc outside the rounded corners. The gradient + shadow-2xl
                     + border provide all the depth needed. */}
@@ -899,12 +1302,7 @@ export default function Results() {
                   {/* Content Grid */}
                   <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
                     {/* Left Panel - Interview Stats */}
-                    <motion.div 
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={contentReady ? { opacity: 1, x: 0 } : { opacity: 0, x: -10 }}
-                      transition={{ duration: 0.5, delay: 0.3, ease: [0.33, 1, 0.68, 1] }}
-                      className="flex flex-col gap-3 text-white"
-                    >
+                    <div className="flex flex-col gap-3 text-white">
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <CheckCircle2 className="h-6 w-6 text-white" />
@@ -927,15 +1325,10 @@ export default function Results() {
                           </div>
                         </div>
                       )}
-                    </motion.div>
+                    </div>
                     
-                    {/* Center Panel - Score */}
-                    <motion.div 
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      animate={contentReady ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.8 }}
-                      transition={{ delay: 0.3, type: "spring", stiffness: 200, damping: 15 }}
-                      className="flex flex-col items-center gap-4 py-4"
-                    >
+                    {/* Center Panel - Score (static first paint for LCP) */}
+                    <div className="flex flex-col items-center gap-4 py-4">
                       {/* Icon -- static to avoid infinite Framer Motion repaints */}
                       <div>
                         {overallScore >= 80 ? (
@@ -958,13 +1351,14 @@ export default function Results() {
                         <span className="text-3xl sm:text-4xl text-white/90 font-bold mb-2">/100</span>
                       </div>
                       
-                      {/* Progress bar */}
-                      <div className="w-full max-w-xs bg-white/20 rounded-full h-4 overflow-hidden shadow-inner">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
-                          transition={{ duration: 1.5, delay: 0.7, ease: [0.4, 0, 0.2, 1] }}
-                          className="h-full rounded-full bg-gradient-to-r from-amber-200/90 via-white/90 to-sky-100/90"
+                      {/* Progress bar — static width avoids layout thrash during LCP */}
+                      <div className="h-4 w-full max-w-xs overflow-hidden rounded-full bg-white/20 shadow-inner">
+                        <div
+                          className={cn(
+                            "h-full rounded-full bg-gradient-to-r from-amber-200/90 via-white/90 to-sky-100/90",
+                            animationsReady && "transition-[width] duration-1000 ease-out",
+                          )}
+                          style={{ width: `${overallScore}%` }}
                         />
                       </div>
                       
@@ -979,15 +1373,10 @@ export default function Results() {
                           {getReadinessLabel(overallScore).label}
                         </span>
                       </div>
-                    </motion.div>
+                    </div>
                     
                     {/* Right Panel - Performance Insights */}
-                    <motion.div 
-                      initial={{ opacity: 0, x: 10 }}
-                      animate={contentReady ? { opacity: 1, x: 0 } : { opacity: 0, x: 10 }}
-                      transition={{ duration: 0.5, delay: 0.35, ease: [0.33, 1, 0.68, 1] }}
-                      className="flex flex-col gap-3 text-white"
-                    >
+                    <div className="flex flex-col gap-3 text-white">
                       <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <TrendingUp className="h-6 w-6 text-white" />
@@ -1010,11 +1399,11 @@ export default function Results() {
                           </p>
                         </div>
                       </div>
-                    </motion.div>
+                    </div>
                   </div>
                 </div>
               </div>
-            </motion.div>
+            </div>
           )}
 
           {/* Results Header Card -- standalone, no giant wrapper.
@@ -1041,6 +1430,23 @@ export default function Results() {
                     </div>
                   )}
                 </div>
+                {hasTranscript && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 font-medium"
+                    onClick={() => setTranscriptSheetOpen(true)}
+                    aria-label="View full interview transcript"
+                  >
+                    <FileText className="mr-2 h-4 w-4" aria-hidden />
+                    View transcript
+                    {questionCount > 0 && (
+                      <span className="ml-1.5 text-muted-foreground">
+                        ({questionCountLabel})
+                      </span>
+                    )}
+                  </Button>
+                )}
               </div>
             </CardHeader>
           </Card>
@@ -1070,13 +1476,21 @@ export default function Results() {
                         </div>
                         <h3 className="text-lg font-semibold text-foreground">Feedback is still generating</h3>
                         <p className="max-w-md text-sm leading-relaxed text-muted-foreground">
-                          Analysis is taking longer than usual. Your transcript is below; try refreshing this page
-                          in a minute or open your dashboard later.
+                          Analysis is taking longer than usual. Try refreshing this page in a minute or open your
+                          dashboard later.
                         </p>
-                        <Button variant="outline" size="sm" onClick={() => window.location.reload()} className="mt-1">
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          Refresh results
-                        </Button>
+                        <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
+                          {hasTranscript && (
+                            <Button variant="outline" size="sm" onClick={() => setTranscriptSheetOpen(true)}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              View transcript
+                            </Button>
+                          )}
+                          <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            Refresh results
+                          </Button>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -1104,8 +1518,14 @@ export default function Results() {
                         <div className="text-center">
                           <h3 className="mb-2 text-xl font-semibold text-foreground">Evaluation unavailable</h3>
                           <p className="mb-3 text-sm leading-relaxed text-muted-foreground">
-                            We could not generate scored feedback. Your interview transcript is still available below.
+                            We could not generate scored feedback. You can still review your full interview transcript.
                           </p>
+                          {hasTranscript && (
+                            <Button variant="outline" size="sm" onClick={() => setTranscriptSheetOpen(true)}>
+                              <FileText className="mr-2 h-4 w-4" />
+                              View transcript
+                            </Button>
+                          )}
                           {results.evaluation.error && (
                             <p className="rounded-lg border border-border bg-muted/50 p-3 text-left text-xs font-mono text-muted-foreground">
                               {results.evaluation.error}
@@ -1218,11 +1638,9 @@ export default function Results() {
                               <span className="text-2xl font-bold tabular-nums text-primary">{overallScore}</span>
                             </div>
                             <div className="relative h-3 overflow-hidden rounded-full bg-muted">
-                              <motion.div
-                                initial={{ width: 0 }}
-                                animate={contentReady ? { width: `${overallScore}%` } : { width: 0 }}
-                                transition={{ duration: 1, delay: 0.4, ease: "easeOut" }}
+                              <div
                                 className="h-full rounded-full bg-primary"
+                                style={{ width: `${overallScore}%` }}
                               />
                             </div>
                           </div>
@@ -1352,211 +1770,7 @@ export default function Results() {
                         </Card>
                       </div>
 
-                      {/* Question-by-Question Feedback */}
-                      <div style={{ transform: "translateZ(0)", willChange: "auto" }}>
-                        <Card className={cn(RESULTS_CARD, "mb-6")}>
-                          <CardHeader>
-                            <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-                              Detailed feedback
-                            </CardTitle>
-                            <p className="mt-1 text-sm text-muted-foreground">Question, answer, and coaching notes</p>
-                          </CardHeader>
-                          <CardContent>
-                            <div className="space-y-5">
-                              {results.evaluation.evaluation.questions.map((qa, index) => (
-                                <Card
-                                  key={index}
-                                  className={cn(
-                                    "overflow-hidden rounded-xl border border-border/80 bg-card/95 text-card-foreground shadow-sm",
-                                    scoreAccentBorder(qa.score)
-                                  )}
-                                  style={{ transform: "translateZ(0)", willChange: "auto" }}
-                                >
-                                  <CardContent className="pt-5 pl-4 sm:pl-5">
-                                    <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                                      <div className="flex flex-wrap items-center gap-2">
-                                        <h3 className="text-lg font-semibold text-foreground sm:text-xl">
-                                          Question {index + 1}
-                                        </h3>
-                                        {qa.question_type && (
-                                          <span
-                                            className={cn(
-                                              "rounded-full px-2.5 py-0.5 text-xs font-medium",
-                                              qa.question_type === "behavioral"
-                                                ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                                                : qa.question_type === "technical"
-                                                  ? "bg-primary/10 text-primary"
-                                                  : qa.question_type === "situational"
-                                                    ? "bg-secondary/15 text-secondary-foreground"
-                                                    : "bg-muted text-muted-foreground"
-                                            )}
-                                          >
-                                            {qa.question_type.charAt(0).toUpperCase() + qa.question_type.slice(1)}
-                                          </span>
-                                        )}
-                                      </div>
-                                      <div className="flex items-center gap-3">
-                                        <div className="relative h-2.5 w-24 overflow-hidden rounded-full bg-muted">
-                                          <div
-                                            className={cn("h-full rounded-full bg-gradient-to-r", scoreBarClass(qa.score))}
-                                            style={{
-                                              width: `${qa.score}%`,
-                                              transform: "translateZ(0)",
-                                              willChange: "auto",
-                                            }}
-                                          />
-                                        </div>
-                                        <span
-                                          className={cn(
-                                            "whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-bold tabular-nums",
-                                            qa.score >= 80
-                                              ? "bg-primary/10 text-primary"
-                                              : qa.score >= 60
-                                                ? "bg-sky-500/10 text-sky-700 dark:text-sky-300"
-                                                : qa.score >= 40
-                                                  ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                                                  : "bg-destructive/10 text-destructive"
-                                          )}
-                                        >
-                                          {qa.score}/100
-                                        </span>
-                                      </div>
-                                    </div>
-
-                                    <div className="space-y-3">
-                                      <div className={cn(RESULTS_INSET, "p-4")}>
-                                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                          Question
-                                        </p>
-                                        <p className="font-medium leading-relaxed text-foreground">{qa.question}</p>
-                                      </div>
-
-                                      <div className={cn(RESULTS_INSET, "p-4")}>
-                                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                          Your answer
-                                        </p>
-                                        <p className="leading-relaxed text-foreground/90">{qa.answer}</p>
-                                      </div>
-
-                                      {qa.star_breakdown && (
-                                        <div className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}>
-                                          <h4 className="mb-3 flex items-center gap-2 text-sm font-semibold text-foreground">
-                                            <Sparkles className="h-4 w-4 text-amber-600" aria-hidden />
-                                            STAR
-                                          </h4>
-                                          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 sm:gap-3">
-                                            {(["situation", "task", "action", "result"] as const).map((key) => {
-                                              const val = qa.star_breakdown![key];
-                                              const label = key.charAt(0).toUpperCase() + key.slice(1);
-                                              const isStrong = val === "strong";
-                                              const isWeak = val === "weak";
-                                              const Icon = isStrong
-                                                ? CheckCircle2
-                                                : isWeak
-                                                  ? AlertTriangle
-                                                  : XCircle;
-                                              const cellClass = isStrong
-                                                ? "border-emerald-500/20 bg-emerald-500/5"
-                                                : isWeak
-                                                  ? "border-amber-500/20 bg-amber-500/5"
-                                                  : "border-border bg-muted/30";
-                                              const iconClass = isStrong
-                                                ? "text-emerald-600"
-                                                : isWeak
-                                                  ? "text-amber-600"
-                                                  : "text-muted-foreground";
-                                              const badgeClass = isStrong
-                                                ? "bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                                                : isWeak
-                                                  ? "bg-amber-500/10 text-amber-800 dark:text-amber-200"
-                                                  : "bg-muted text-muted-foreground";
-                                              return (
-                                                <div
-                                                  key={key}
-                                                  className={cn(
-                                                    "flex flex-col items-center rounded-lg border py-3 px-2 text-center",
-                                                    cellClass
-                                                  )}
-                                                >
-                                                  <Icon className={cn("mb-1 h-6 w-6", iconClass)} strokeWidth={2.5} />
-                                                  <span className="text-xs font-medium text-foreground">{label}</span>
-                                                  <span
-                                                    className={cn("mt-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold", badgeClass)}
-                                                  >
-                                                    {val.toUpperCase()}
-                                                  </span>
-                                                </div>
-                                              );
-                                            })}
-                                          </div>
-                                        </div>
-                                      )}
-
-                                      {qa.strengths && qa.strengths.length > 0 && (
-                                        <div
-                                          className={cn(RESULTS_INSET, "border-l-2 border-l-primary/40 p-4")}
-                                          style={{ transform: "translateZ(0)", willChange: "auto" }}
-                                        >
-                                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-                                            <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                                            Strengths
-                                          </h4>
-                                          <ul className="list-none space-y-2">
-                                            {qa.strengths.map((strength, i) => (
-                                              <li
-                                                key={i}
-                                                className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
-                                              >
-                                                <span className="pt-0.5 text-primary" aria-hidden>
-                                                  ·
-                                                </span>
-                                                <span>{strength}</span>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-
-                                      {qa.improvements && qa.improvements.length > 0 && (
-                                        <div
-                                          className={cn(RESULTS_INSET, "border-l-2 border-l-amber-500/40 p-4")}
-                                          style={{ transform: "translateZ(0)", willChange: "auto" }}
-                                        >
-                                          <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
-                                            <AlertCircle className="h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-                                            Improve next
-                                          </h4>
-                                          {qa.improvement_quote && (
-                                            <div className="mb-3 rounded-lg border border-border bg-muted/40 p-3">
-                                              <p className="mb-1 text-xs font-medium text-muted-foreground">You said</p>
-                                              <p className="text-sm italic text-foreground/90">
-                                                &ldquo;{qa.improvement_quote}&rdquo;
-                                              </p>
-                                            </div>
-                                          )}
-                                          <ul className="list-none space-y-2">
-                                            {qa.improvements.map((improvement, i) => (
-                                              <li
-                                                key={i}
-                                                className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
-                                              >
-                                                <span className="pt-0.5 text-amber-600" aria-hidden>
-                                                  ·
-                                                </span>
-                                                <span>{improvement}</span>
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </CardContent>
-                                </Card>
-                              ))}
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </div>
+                      <DetailedFeedbackSection questions={results.evaluation.evaluation.questions} />
 
                     {/* Better Answer Example card - lowest-scoring question with sample_better_answer */}
                     {betterAnswerQuestion && (
@@ -1607,70 +1821,6 @@ export default function Results() {
                 </>
               )}
 
-              {/* PERF: Transcript list - for very long transcripts (e.g. 30+ blocks), consider virtualization (e.g. react-window) to keep scroll smooth. */}
-              {results.interview?.transcript && (
-                <div>
-                  <Card className={cn(RESULTS_CARD, "mb-2")}>
-                    <CardHeader>
-                      <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">Transcript</CardTitle>
-                      <p className="mt-1 text-sm text-muted-foreground">Speaker-labeled conversation</p>
-                    </CardHeader>
-                    <CardContent>
-                      <div className="space-y-2">
-                        {transcriptParagraphs.map((paragraph, i) => {
-                          const speakerMatch = paragraph.match(/^(Interviewer|Candidate|User|AI|Agent):\s*(.*)$/i);
-                          if (speakerMatch) {
-                            const [, speaker, text] = speakerMatch;
-                            const isAI = /^(Interviewer|AI|Agent)$/i.test(speaker);
-                            const isUser = /^(Candidate|User)$/i.test(speaker);
-
-                            return (
-                              <div
-                                key={i}
-                                className={cn(
-                                  "rounded-xl border p-3 sm:p-4",
-                                  isAI
-                                    ? "ml-0 border-l-2 border-l-primary/70 bg-primary/[0.04] sm:mr-8"
-                                    : isUser
-                                      ? "ml-0 border-l-2 border-l-secondary/50 bg-secondary/[0.06] sm:ml-8"
-                                      : "border-border bg-muted/30"
-                                )}
-                                style={{
-                                  transform: "translateZ(0)",
-                                  willChange: "auto",
-                                  contain: "layout style paint",
-                                }}
-                              >
-                                <div className="flex items-start gap-3">
-                                  <span
-                                    className={cn(
-                                      "shrink-0 rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide sm:text-xs",
-                                      isAI
-                                        ? "bg-primary/10 text-primary"
-                                        : isUser
-                                          ? "bg-secondary/15 text-secondary-foreground"
-                                          : "bg-muted text-muted-foreground"
-                                    )}
-                                  >
-                                    {isAI ? "Interviewer" : isUser ? "You" : speaker}
-                                  </span>
-                                  <p className="flex-1 text-sm font-normal leading-relaxed text-foreground/95">{text}</p>
-                                </div>
-                              </div>
-                            );
-                          }
-                          return (
-                            <p key={i} className="mb-2 text-sm leading-relaxed text-muted-foreground last:mb-0">
-                              {paragraph}
-                            </p>
-                          );
-                        })}
-                      </div>
-                    </CardContent>
-                  </Card>
-                </div>
-              )}
-
               {/* Return to Dashboard Button */}
               <div
                 className="mt-8 flex justify-center"
@@ -1688,42 +1838,67 @@ export default function Results() {
               </div>
           </div>{/* end space-y-6 sections wrapper */}
         </div>
-        </motion.div>
+        </div>
+
+        <Sheet open={transcriptSheetOpen} onOpenChange={setTranscriptSheetOpen}>
+          <SheetContent
+            side="right"
+            className="flex h-full w-full flex-col gap-0 p-0 sm:max-w-xl"
+            aria-describedby="transcript-sheet-description"
+          >
+            <SheetHeader className="space-y-1 border-b border-border/80 px-6 py-5 text-left">
+              <SheetTitle className="text-xl font-semibold tracking-tight">Interview transcript</SheetTitle>
+              <SheetDescription id="transcript-sheet-description">
+                Speaker-labeled conversation
+                {questionCount > 0 && ` · ${questionCountLabel}`}
+              </SheetDescription>
+            </SheetHeader>
+            <ScrollArea className="min-h-0 flex-1 px-6 py-4">
+              <InterviewTranscriptContent paragraphs={transcriptParagraphs} />
+            </ScrollArea>
+            <div className="border-t border-border/80 px-6 py-4">
+              <Button
+                variant="outline"
+                className="w-full font-medium"
+                onClick={() => setTranscriptSheetOpen(false)}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to results
+              </Button>
+            </div>
+          </SheetContent>
+        </Sheet>
       </AnimatedBackground>
     );
   }
 
   // Loading state (initial load) - simulated progress bar
+  const initialStatusLine = sessionSavePending
+    ? "Saving your interview…"
+    : "Fetching your interview data…";
+
   return (
     <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
       <motion.div
-        initial={{ opacity: 0, scale: 0.98 }}
-        animate={{ opacity: 1, scale: 1 }}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
-        className="relative z-10 w-full max-w-md"
+        className="relative z-10 w-full"
       >
-        <Card className={cn(RESULTS_CARD, "w-full")}>
-          <CardContent className="pt-6">
-            <div className="flex flex-col items-center gap-6">
-              <div className="w-full text-center">
-                <h2 className="mb-1 text-2xl font-semibold tracking-tight text-foreground">Loading results</h2>
-                <p className="mb-4 text-sm text-muted-foreground">Fetching your interview data…</p>
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-medium text-foreground">Progress</span>
-                    <span className="font-bold tabular-nums text-primary">{Math.round(loadingProgress)}%</span>
-                  </div>
-                  <div className="relative h-2.5 overflow-hidden rounded-full bg-muted">
-                    <motion.div
-                      className="absolute bottom-0 left-0 top-0 rounded-full bg-primary"
-                      initial={{ width: 0 }}
-                      animate={{ width: `${loadingProgress}%` }}
-                      transition={{ duration: 0.3, ease: "easeOut" }}
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
+        <Card className={LOADING_CARD}>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-center text-xl font-semibold tracking-tight sm:text-2xl">
+              Loading results
+            </CardTitle>
+            <p className="mt-1 text-center text-sm text-muted-foreground">
+              Please wait while we retrieve your interview
+            </p>
+          </CardHeader>
+          <CardContent className="overflow-visible pt-4">
+            <ResultsLoadingWordmark
+              progress={Math.min(100, (loadingProgress / 95) * 100)}
+              statusLine={initialStatusLine}
+            />
           </CardContent>
         </Card>
       </motion.div>

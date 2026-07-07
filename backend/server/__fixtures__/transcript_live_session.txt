@@ -1,0 +1,19 @@
+AI: Hi Taylor! I see you're studying Computer Science! It's great to meet you. Tell me what kind of role you’re practicing for today!
+
+User: I'm practicing for a computer informations internship role.
+
+AI: That sounds like a great direction for your career. I noticed you built an AI interviewer project on your resume. Can you tell me more about your specific role in building that and what technical challenges you faced?
+
+User: Yeah, definitely. The hardest part was finding a good, uh, conversational agent that would work well.
+
+AI: Can you tell me more about what you mean by a conversational agent in that context? I'd like to understand the specific technical components you were working with.
+
+User: Yes. The conversational agent not only involved the agent speaking directly with the consumer, but it involved many other facets, such as prompting it correctly, making sure that it was a good and well-detailed interviewer, feeding its knowledge base so it had references as to how a good interview should go.
+
+AI: That makes sense, since natural language is so variable. If you had to do this project over again, what is one specific thing you would change about how you handle the flow control?
+
+AI: I'm looking forward to seeing how you grow from these projects. What are you hoping to learn or take away from an internship like this?
+
+User: An internship like this, I definitely want to expand my software development knowledge and learn how to be a better prompt engineer overall.
+
+AI: Thanks so much for your time today Taylor. Goodbye!

@@ -13,7 +13,8 @@
     "dev": "tsx scripts/setup-sqlite.ts && tsx server/index.ts",
     "dev:no-setup": "tsx server/index.ts",
     "build": "echo 'Build complete - no code execution' && exit 0",
-    "test": "echo 'No tests specified'",
+    "test": "tsx --test server/transcriptParse.test.ts",
+    "test:parse-transcript": "tsx --test server/transcriptParse.test.ts",
     "postinstall": "echo 'Dependencies installed successfully'",
     "railway-build": "echo 'Railway build phase - no code execution, just install dependencies'",
     "db:setup": "tsx scripts/setup-db.ts",
@@ -21,7 +22,11 @@
     "setup-db": "tsx scripts/setup-db.ts",
     "create-test-user": "tsx scripts/create-test-user.ts",
     "test:evaluator": "tsx scripts/test-evaluator-enhanced.ts",
-    "test:client-transcript": "tsx scripts/test-client-transcript-save.ts"
+    "test:client-transcript": "tsx scripts/test-client-transcript-save.ts",
+    "test:results-audit-fixes": "tsx scripts/test-results-audit-fixes.ts",
+    "test:vague-scoring": "tsx scripts/test-vague-answer-scoring.ts",
+    "test:resume-server-tools": "tsx scripts/test-resume-server-tools.ts",
+    "test:resume-dynamic-pipeline": "tsx scripts/setup-sqlite.ts && tsx scripts/test-resume-dynamic-pipeline.ts"
   },
   "keywords": [
     "express",

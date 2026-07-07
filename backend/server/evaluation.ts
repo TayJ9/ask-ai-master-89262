@@ -11,6 +11,9 @@ import { eq } from "drizzle-orm";
 import { scoreInterview } from "./llm/openaiEvaluator";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { randomUUID } from "crypto";
+import { parseTranscript } from "./transcriptParse";
+
+export { parseTranscript } from "./transcriptParse";
 
 // Evaluation job queue configuration
 const MAX_CONCURRENT_JOBS = 2;
@@ -396,6 +399,62 @@ class EvaluationQueue {
   }
 }
 
+/** Terminal failures — Results page should stop polling and show a clear message. */
+export const TERMINAL_EVAL_ERROR_MESSAGES = {
+  no_transcript:
+    'No interview transcript was captured. Try a longer session and ensure your microphone is enabled.',
+  no_qa_pairs:
+    'The transcript could not be parsed into interview questions and answers, so scored feedback was not generated.',
+} as const;
+
+export type TerminalEvalErrorCode = keyof typeof TERMINAL_EVAL_ERROR_MESSAGES;
+
+/**
+ * Persist a failed evaluation row so the Results UI does not poll indefinitely.
+ * Skips if evaluation is already complete.
+ */
+export async function recordTerminalEvaluationFailure(
+  interviewId: string,
+  code: TerminalEvalErrorCode,
+): Promise<void> {
+  const errorMessage = TERMINAL_EVAL_ERROR_MESSAGES[code];
+
+  const existing = await (db.query as any).interviewEvaluations?.findFirst({
+    where: (evaluations: any, { eq }: any) => eq(evaluations.interviewId, interviewId),
+  });
+
+  if (existing?.status === 'complete') {
+    return;
+  }
+
+  const isSqlite = process.env.DATABASE_URL?.startsWith('file:');
+  const now = new Date();
+
+  if (existing) {
+    await db
+      .update(interviewEvaluations)
+      .set({
+        status: 'failed',
+        error: errorMessage,
+        updatedAt: now,
+      })
+      .where(eq(interviewEvaluations.interviewId, interviewId));
+    console.log(`[EVALUATION] Marked evaluation failed (${code}) for interview ${interviewId}`);
+    return;
+  }
+
+  const evaluationData = insertInterviewEvaluationSchema.parse({
+    interviewId,
+    status: 'failed',
+    error: errorMessage,
+  });
+  const evaluationValues = isSqlite
+    ? { ...evaluationData, id: randomUUID(), createdAt: now, updatedAt: now }
+    : evaluationData;
+  await db.insert(interviewEvaluations).values(evaluationValues as any);
+  console.log(`[EVALUATION] Created failed evaluation (${code}) for interview ${interviewId}`);
+}
+
 // Singleton queue instance
 export const evaluationQueue = new EvaluationQueue();
 
@@ -449,10 +508,14 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     throw new Error(`No question-answer pairs found in transcript`);
   }
 
-  // Extract role/major from session's candidateContext and resume from resumes table
+  // Extract role/major/year from session's candidateContext and resume from resumes table
   let role: string | undefined;
   let major: string | undefined;
   let resumeText: string | undefined;
+  let studentYear: string | undefined;
+  let technicalDifficulty: string | undefined;
+  let technicalDepth: string | undefined;
+  let behavioralRatio: string | number | undefined;
 
   try {
     // Find session linked to this interview
@@ -464,17 +527,34 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
       const context = session.candidateContext as any;
       role = context.role || context.target_role;
       major = context.major;
+      studentYear = context.year;
+      technicalDifficulty = context.technical_difficulty;
+      technicalDepth = context.technical_depth;
+      behavioralRatio = context.behavioral_ratio;
+      if (!role && major) {
+        role = major;
+      }
       console.log(`[EVALUATION] ✅ Extracted context from session`, {
         role,
         major,
+        studentYear,
+        technicalDifficulty,
         hasContext: !!session.candidateContext,
       });
     }
 
-    // Get resume text and profile from resumes table
-    const resume = await (db.query as any).resumes?.findFirst({
+    // Get resume text and profile from resumes table (interviewId first, then session fallback)
+    let resume = await (db.query as any).resumes?.findFirst({
       where: (resumes: any, { eq }: any) => eq(resumes.interviewId, interviewId),
     });
+
+    if (!resume?.resumeFulltext && session?.clientSessionId) {
+      const sessionResume = await storage.getResume(session.clientSessionId);
+      if (sessionResume?.resumeFulltext) {
+        resume = sessionResume;
+        console.log(`[EVALUATION] ✅ Fallback: loaded resume from session ${session.clientSessionId}`);
+      }
+    }
 
     if (resume) {
       if (resume.resumeFulltext) {
@@ -543,6 +623,10 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     major,
     resumeText,
     questions: qaPairs,
+    studentYear,
+    technicalDifficulty,
+    technicalDepth,
+    behavioralRatio,
   });
 
   console.log(`[EVALUATION] ✅ Evaluation generated`, {
@@ -568,194 +652,6 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     status: 'complete',
     timestamp: new Date().toISOString(),
   });
-}
-
-/**
- * Parse transcript into question-answer pairs
- * Handles various transcript formats:
- * - Speaker labels (AI:, User:, Interviewer:, Candidate:)
- * - Plain text with line breaks
- * - Multiple fallback strategies for edge cases
- */
-export function parseTranscript(transcript: string): Array<{ question: string; answer: string }> {
-  const pairs: Array<{ question: string; answer: string }> = [];
-  
-  if (!transcript || transcript.trim().length === 0) {
-    console.log('[PARSE_TRANSCRIPT] Empty transcript provided');
-    return pairs;
-  }
-  
-  const transcriptLength = transcript.length;
-  const hasNewlines = transcript.includes('\n');
-  const hasSpeakerLabels = /^(AI|User|Interviewer|Candidate|Agent):/im.test(transcript);
-  
-  console.log('[PARSE_TRANSCRIPT] Format detection:', {
-    length: transcriptLength,
-    hasNewlines,
-    hasSpeakerLabels,
-    preview: transcript.substring(0, 200),
-  });
-  
-  // Strategy 1: Try to detect speaker labels
-  const speakerPattern = /^(AI|User|Interviewer|Candidate|Agent):\s*(.+)$/im;
-  const lines = transcript.split(/\n+/).filter(line => line.trim());
-  
-  let currentQuestion = '';
-  let currentAnswer = '';
-  let lastSpeaker = '';
-  let speakerLabelCount = 0;
-  
-  for (const line of lines) {
-    const match = line.match(speakerPattern);
-    
-    if (match) {
-      speakerLabelCount++;
-      const [, speaker, text] = match;
-      const normalizedSpeaker = speaker.toLowerCase();
-      
-      // If we have a question and answer, save the pair
-      if (currentQuestion && currentAnswer && lastSpeaker === 'user') {
-        pairs.push({
-          question: currentQuestion.trim(),
-          answer: currentAnswer.trim(),
-        });
-        currentQuestion = '';
-        currentAnswer = '';
-      }
-      
-      // Update current speaker and accumulate text
-      if (normalizedSpeaker === 'ai' || normalizedSpeaker === 'interviewer' || normalizedSpeaker === 'agent') {
-        if (currentQuestion) {
-          currentQuestion += ' ' + text;
-        } else {
-          currentQuestion = text;
-        }
-        lastSpeaker = 'ai';
-      } else if (normalizedSpeaker === 'user' || normalizedSpeaker === 'candidate') {
-        if (currentAnswer) {
-          currentAnswer += ' ' + text;
-        } else {
-          currentAnswer = text;
-        }
-        lastSpeaker = 'user';
-      }
-    } else {
-      // No speaker label - accumulate based on last speaker
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      
-      if (lastSpeaker === 'ai' || !lastSpeaker) {
-        if (currentQuestion) {
-          currentQuestion += ' ' + trimmed;
-        } else {
-          currentQuestion = trimmed;
-        }
-        lastSpeaker = 'ai';
-      } else if (lastSpeaker === 'user') {
-        if (currentAnswer) {
-          currentAnswer += ' ' + trimmed;
-        } else {
-          currentAnswer = trimmed;
-        }
-      }
-    }
-  }
-  
-  // Save last pair if exists
-  if (currentQuestion && currentAnswer) {
-    pairs.push({
-      question: currentQuestion.trim(),
-      answer: currentAnswer.trim(),
-    });
-  }
-  
-  console.log('[PARSE_TRANSCRIPT] Strategy 1 (speaker labels) result:', {
-    pairsFound: pairs.length,
-    speakerLabelCount,
-    lastSpeaker,
-  });
-  
-  // Strategy 2: If no pairs found with speaker labels, try alternating paragraphs
-  if (pairs.length === 0 && hasNewlines) {
-    const paragraphs = transcript.split(/\n\s*\n+/).filter(p => p.trim().length > 10);
-    console.log('[PARSE_TRANSCRIPT] Strategy 2 (alternating paragraphs):', {
-      paragraphCount: paragraphs.length,
-    });
-    
-    // Assume alternating Q&A pattern
-    for (let i = 0; i < paragraphs.length - 1; i += 2) {
-      const question = paragraphs[i].trim();
-      const answer = paragraphs[i + 1].trim();
-      
-      // Heuristic: questions often end with '?' or contain question words
-      const looksLikeQuestion = question.includes('?') || 
-        /\b(what|how|why|when|where|who|can|could|would|should|tell|describe|explain)\b/i.test(question);
-      
-      if (question.length > 10 && answer.length > 10) {
-        // If it looks like a question, use as-is; otherwise try to infer
-        if (looksLikeQuestion || i === 0) {
-          pairs.push({ question, answer });
-        }
-      }
-    }
-    
-    console.log('[PARSE_TRANSCRIPT] Strategy 2 result:', { pairsFound: pairs.length });
-  }
-  
-  // Strategy 3: Fallback - split by sentence endings (keep trailing .?! on each segment)
-  if (pairs.length === 0) {
-    console.log('[PARSE_TRANSCRIPT] Strategy 3 (sentence splitting)');
-    const bits = transcript.split(/([.!?]+)/);
-    const sentences: string[] = [];
-    for (let i = 0; i < bits.length; i += 2) {
-      const body = (bits[i] ?? "").trim();
-      const punct = (bits[i + 1] ?? "").trim();
-      if (body.length === 0) continue;
-      const s = (body + punct).trim();
-      if (s.length > 10) sentences.push(s);
-    }
-
-    const hasQuestionMarks = transcript.includes('?');
-    const looksLikeQuestionSentence = (q: string) =>
-      q.endsWith('?') ||
-      /\b(what|how|why|when|where|who|can|could|would|should|tell|describe|explain)\b/i.test(q);
-
-    if (hasQuestionMarks && sentences.length >= 2) {
-      for (let i = 0; i < sentences.length - 1; i += 2) {
-        const question = sentences[i].trim();
-        const answer = sentences[i + 1].trim();
-        if (question.length > 10 && answer.length > 10 && looksLikeQuestionSentence(question)) {
-          pairs.push({ question, answer });
-        }
-      }
-    } else if (sentences.length >= 2) {
-      // No question marks - try pairing anyway but be more conservative
-      for (let i = 0; i < sentences.length - 1 && i < 10; i += 2) {
-        const question = sentences[i].trim();
-        const answer = sentences[i + 1].trim();
-        if (question.length > 15 && answer.length > 15) {
-          pairs.push({ question, answer });
-        }
-      }
-    }
-
-    console.log('[PARSE_TRANSCRIPT] Strategy 3 result:', { pairsFound: pairs.length });
-  }
-  
-  // Final validation: filter out pairs that are too short or invalid
-  const validPairs = pairs.filter(pair => {
-    const qValid = pair.question.trim().length >= 10;
-    const aValid = pair.answer.trim().length >= 10;
-    return qValid && aValid;
-  });
-  
-  console.log('[PARSE_TRANSCRIPT] Final result:', {
-    totalPairs: pairs.length,
-    validPairs: validPairs.length,
-    filteredOut: pairs.length - validPairs.length,
-  });
-  
-  return validPairs;
 }
 
 /**

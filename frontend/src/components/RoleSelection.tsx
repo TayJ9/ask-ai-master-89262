@@ -108,10 +108,10 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
               onClick={() => handleTryDemo("tech")}
               size="lg"
               variant="outline"
-              className="!inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-primary/20 px-3 py-4 text-foreground sm:min-w-0"
+              className="group !inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-primary/20 px-3 py-4 text-foreground hover:border-primary/35 hover:bg-primary/10 hover:text-foreground sm:min-w-0"
             >
               <span className="inline-flex min-w-0 items-center justify-center gap-1 text-sm font-medium">
-                <Zap className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                <Zap className="h-4 w-4 shrink-0 text-primary group-hover:text-primary" aria-hidden />
                 <span className="min-w-0 truncate">Technical</span>
               </span>
               <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -122,10 +122,10 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
               onClick={() => handleTryDemo("business")}
               size="lg"
               variant="outline"
-              className="!inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-secondary/25 px-3 py-4 text-foreground sm:min-w-0"
+              className="group !inline-flex h-auto min-h-[3.25rem] w-full flex-1 items-center justify-center !gap-2 border-secondary/25 px-3 py-4 text-foreground hover:border-secondary/40 hover:bg-secondary/10 hover:text-foreground sm:min-w-0"
             >
               <span className="inline-flex min-w-0 items-center justify-center gap-1 text-sm font-medium">
-                <Zap className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
+                <Zap className="h-4 w-4 shrink-0 text-secondary group-hover:text-secondary" aria-hidden />
                 <span className="min-w-0 truncate">Non-technical</span>
               </span>
               <span className="shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">

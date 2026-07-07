@@ -3,9 +3,9 @@ import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Mic, Eye, EyeOff, Zap } from "lucide-react";
+import { Eye, EyeOff, Zap } from "lucide-react";
 import { z } from "zod";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { useLocation } from "wouter";
@@ -156,19 +156,15 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
     <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
       <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
         <CardHeader className="space-y-4 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-md ring-1 ring-primary/20">
-            <Mic className="h-7 w-7" aria-hidden />
-          </div>
-          <div className="space-y-1.5">
-            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-              AI Interview Coach
-            </p>
-            <CardTitle
-              className="text-2xl font-bold tracking-tight text-foreground sm:text-3xl"
+          <div className="space-y-2 overflow-visible">
+            <h1
+              className="text-5xl font-bold leading-[1.5] tracking-tight sm:text-6xl sm:leading-[1.5]"
               data-testid="text-app-title"
             >
-              Sign in to practice
-            </CardTitle>
+              <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
+                Mockly
+              </span>
+            </h1>
             <CardDescription className="text-balance text-base leading-relaxed">
               Voice sessions tailored for students and early-career roles—save progress and review
               results anytime.

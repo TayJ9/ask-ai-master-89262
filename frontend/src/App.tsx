@@ -17,19 +17,18 @@ import { devLog } from "@/lib/utils";
 import AppErrorBoundary from "@/components/AppErrorBoundary";
 import { isReactReady, waitForReact } from "@/lib/reactReady";
 
-// Temporarily disable lazy loading to test if it's causing the React initialization error
-// TODO: Re-enable lazy loading once React chunking issue is resolved
 import Index from "./pages/Index";
-import Results from "./pages/Results";
 import NotFound from "./pages/NotFound";
 import InterviewPreview from "./pages/InterviewPreview";
 
-// Lazy load route components for better code splitting and performance
-// DISABLED TEMPORARILY to fix "Cannot set properties of undefined" error
-// const Index = lazy(() => import("./pages/Index"));
-// const Results = lazy(() => import("./pages/Results"));
-// const NotFound = lazy(() => import("./pages/NotFound"));
-// const InterviewPreview = lazy(() => import("./pages/InterviewPreview"));
+// Code-split the heavy Results page (~700-node DOM, Framer Motion, mock fixtures)
+const Results = lazy(() => import("./pages/Results"));
+
+const RouteLoadingFallback = () => (
+  <div className="flex min-h-screen items-center justify-center bg-background px-4">
+    <p className="text-sm text-muted-foreground">Loading page…</p>
+  </div>
+);
 
 // Smooth page transition settings - using shared animation config
 const transition = defaultFadeTransition;
@@ -78,12 +77,14 @@ const AppContent = () => {
           style={PAGE_WRAPPER_STYLE}
         >
           <div className="app-page-tint" aria-hidden="true" />
-          <Switch>
-            <Route path="/" component={Index} />
-            <Route path="/results" component={Results} />
-            <Route path="/interview-preview" component={InterviewPreview} />
-            <Route component={NotFound} />
-          </Switch>
+          <Suspense fallback={<RouteLoadingFallback />}>
+            <Switch>
+              <Route path="/" component={Index} />
+              <Route path="/results" component={Results} />
+              <Route path="/interview-preview" component={InterviewPreview} />
+              <Route component={NotFound} />
+            </Switch>
+          </Suspense>
         </motion.div>
       </AnimatePresence>
       <AnimatePresence>
