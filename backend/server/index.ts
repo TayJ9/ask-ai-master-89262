@@ -6,6 +6,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import { randomUUID } from "crypto";
+import { isJwtSecretConfigured } from "./jwtSecret";
 import { assertRequiredProductionEnv } from "./assertProductionEnv";
 import { installErrorHandlers } from "./errorHandler";
 import { registerRoutes } from "./routes";
@@ -250,7 +251,7 @@ app.use((req, res, next) => {
       log(`Environment Variables Status:`);
       log(`  ELEVENLABS_API_KEY: ${process.env.ELEVENLABS_API_KEY ? '✅ Set' : '❌ Missing (CRITICAL for voice interviews)'}`);
       log(`  ELEVENLABS_AGENT_ID: ${process.env.ELEVENLABS_AGENT_ID ? '✅ Set' : '⚠️  Missing (will use default)'}`);
-      log(`  JWT_SECRET: ${process.env.JWT_SECRET ? '✅ Set' : '❌ Missing (required in production)'}`);
+      log(`  JWT_SECRET: ${isJwtSecretConfigured() ? '✅ Set' : '❌ Missing (required in production)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
       

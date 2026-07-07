@@ -24,6 +24,8 @@ import { dirname, join } from "path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice");
 
+import { getJwtSecretForSigning, isJwtSecretConfigured } from "./jwtSecret";
+
 const isProd = process.env.NODE_ENV === "production";
 
 /** Stable rate-limit key per client IP (IPv6-aware via express-rate-limit helper). */
@@ -32,17 +34,8 @@ function rateLimitIpKey(req: { ip?: string; socket?: { remoteAddress?: string } 
   return ipKeyGenerator(ip);
 }
 
-/** JWT signing secret. Production requires JWT_SECRET (validated at startup in assertProductionEnv). */
 function getJWTSecret(): string {
-  const env = process.env;
-  const secretKey = ["JWT", "_", "SECRET"].join("");
-  const secret = env[secretKey];
-  const trimmed = typeof secret === "string" ? secret.trim() : "";
-  if (trimmed) return trimmed;
-  if (isProd) {
-    throw new Error("JWT_SECRET is required in production");
-  }
-  return "dev-secret-key-change-before-production";
+  return getJwtSecretForSigning();
 }
 
 function getAgentId(): string {
@@ -619,7 +612,7 @@ export function registerRoutes(app: Express) {
       const dbConnected = await storage.checkDbConnection();
       const environment = process.env.NODE_ENV || 'development';
       const port = process.env.PORT || '5000';
-      const jwtReady = Boolean(process.env.JWT_SECRET?.trim());
+      const jwtReady = isJwtSecretConfigured();
 
       if (dbConnected) {
         res.json({
