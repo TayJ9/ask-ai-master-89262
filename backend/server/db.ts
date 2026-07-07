@@ -6,9 +6,13 @@ import { Pool as NeonPool, neonConfig } from '@neondatabase/serverless';
 import { Pool as PgPool } from 'pg';
 import { drizzle as drizzlePg } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzleNeon } from 'drizzle-orm/neon-serverless';
-import type { Database as SqliteDatabase } from 'better-sqlite3';
 import ws from "ws";
 import * as schema from "../shared/schema";
+
+type SqliteDatabase = {
+  pragma: (value: string) => unknown;
+  exec: (sql: string) => void;
+};
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
