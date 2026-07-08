@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 const WORD = "Mockly";
 
 const WORDMARK_CLASS =
-  "inline-block pb-[0.22em] text-5xl font-bold leading-[1.5] tracking-tight sm:text-6xl";
+  "inline-block pb-[0.22em] text-4xl font-bold leading-[1.5] tracking-tight sm:text-5xl md:text-6xl";
 
 interface MocklyProgressWordmarkProps {
   /** Loading progress, 0–100. Controls how much of the gradient is revealed left-to-right. */

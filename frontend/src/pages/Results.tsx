@@ -126,7 +126,32 @@ const RESULTS_CARD =
   "rounded-2xl border border-border/80 bg-card/95 text-card-foreground shadow-sm";
 const RESULTS_INSET = "rounded-xl border border-border/60 bg-muted/25";
 const RESULTS_INSET_EMPHASIS = "rounded-xl border border-border/50 bg-card";
-const LOADING_CARD = cn(RESULTS_CARD, "w-full max-w-lg overflow-visible");
+const LOADING_CARD = cn(RESULTS_CARD, "w-full overflow-visible");
+const LOADING_SCREEN_SHELL =
+  "flex min-h-[100dvh] items-center justify-center px-4 py-6 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.25rem,env(safe-area-inset-bottom))]";
+const LOADING_SCREEN_FRAME = "relative z-10 mx-auto w-full max-w-lg";
+const RESULTS_PAGE_SHELL =
+  "min-h-[100dvh] px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:py-8";
+const RESULTS_CARD_HEADER = "p-4 pb-3 sm:p-6 sm:pb-3";
+const RESULTS_CARD_CONTENT = "p-4 pt-0 sm:p-6 sm:pt-0";
+
+function FeedbackListItem({
+  children,
+  dotClassName,
+}: {
+  children: React.ReactNode;
+  dotClassName: string;
+}) {
+  return (
+    <li className="flex gap-3 text-sm leading-relaxed text-foreground/95">
+      <span
+        className={cn("mt-[0.55em] h-1.5 w-1.5 shrink-0 rounded-full", dotClassName)}
+        aria-hidden
+      />
+      <span className="min-w-0 flex-1">{children}</span>
+    </li>
+  );
+}
 
 /** Shared Mockly wordmark block for initial loading and processing screens. */
 function ResultsLoadingWordmark({
@@ -141,9 +166,9 @@ function ResultsLoadingWordmark({
   statusKey?: string | number;
 }) {
   return (
-    <div className="space-y-1 overflow-visible text-center">
+    <div className="space-y-2 overflow-visible text-center sm:space-y-1">
       <MocklyProgressWordmark progress={progress} />
-      <div className="relative h-5">
+      <div className="relative min-h-5 px-1 sm:px-2">
         {animateStatus ? (
           <AnimatePresence mode="wait">
             <motion.p
@@ -152,13 +177,13 @@ function ResultsLoadingWordmark({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.3, ease: "easeOut" }}
-              className="text-sm font-medium text-foreground"
+              className="text-balance text-sm font-medium text-foreground"
             >
               {statusLine}
             </motion.p>
           </AnimatePresence>
         ) : (
-          <p className="text-sm font-medium text-foreground">{statusLine}</p>
+          <p className="text-balance text-sm font-medium text-foreground">{statusLine}</p>
         )}
       </div>
     </div>
@@ -245,10 +270,10 @@ function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: num
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex w-full flex-col gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between sm:pl-5"
+            className="flex w-full touch-manipulation flex-col gap-2 px-4 py-4 text-left transition-colors hover:bg-muted/30 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:pl-5"
             aria-expanded={open}
           >
-            <div className="flex flex-wrap items-center gap-2">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
               <h3 className="text-lg font-semibold text-foreground sm:text-xl">Question {index + 1}</h3>
               {qa.question_type && (
                 <span
@@ -272,8 +297,8 @@ function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: num
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-3">
-              <div className="relative h-2.5 w-24 overflow-hidden rounded-full bg-muted">
+            <div className="flex w-full items-center justify-between gap-3 sm:w-auto sm:justify-end">
+              <div className="relative h-2.5 min-w-0 flex-1 overflow-hidden rounded-full bg-muted sm:w-24 sm:flex-none">
                 <div
                   className={cn("h-full rounded-full bg-gradient-to-r", scoreBarClass(qa.score))}
                   style={{ width: `${qa.score}%` }}
@@ -364,12 +389,11 @@ function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: num
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-primary" aria-hidden />
                     Strengths
                   </h4>
-                  <ul className="list-none space-y-2">
+                  <ul className="list-none space-y-2.5">
                     {qa.strengths.map((strength, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95">
-                        <span className="pt-0.5 text-primary" aria-hidden>·</span>
-                        <span>{strength}</span>
-                      </li>
+                      <FeedbackListItem key={i} dotClassName="bg-primary">
+                        {strength}
+                      </FeedbackListItem>
                     ))}
                   </ul>
                 </div>
@@ -387,12 +411,11 @@ function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: num
                       <p className="text-sm italic text-foreground/90">&ldquo;{qa.improvement_quote}&rdquo;</p>
                     </div>
                   )}
-                  <ul className="list-none space-y-2">
+                  <ul className="list-none space-y-2.5">
                     {qa.improvements.map((improvement, i) => (
-                      <li key={i} className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95">
-                        <span className="pt-0.5 text-amber-600" aria-hidden>·</span>
-                        <span>{improvement}</span>
-                      </li>
+                      <FeedbackListItem key={i} dotClassName="bg-amber-600 dark:bg-amber-500">
+                        {improvement}
+                      </FeedbackListItem>
                     ))}
                   </ul>
                 </div>
@@ -411,7 +434,7 @@ function DetailedFeedbackSection({ questions }: { questions: EvaluatedQuestion[]
   return (
     <div ref={ref}>
       <Card className={cn(RESULTS_CARD, "mb-6")}>
-        <CardHeader>
+        <CardHeader className={RESULTS_CARD_HEADER}>
           <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
             Detailed feedback
           </CardTitle>
@@ -421,7 +444,7 @@ function DetailedFeedbackSection({ questions }: { questions: EvaluatedQuestion[]
               : `${questions.length} questions — scroll to load coaching notes`}
           </p>
         </CardHeader>
-        <CardContent>
+        <CardContent className={RESULTS_CARD_CONTENT}>
           {!inView ? (
             <div className="space-y-3" aria-hidden>
               {questions.map((_, index) => (
@@ -1085,23 +1108,23 @@ export default function Results() {
     const displayProgress = smoothProgress;
 
     return (
-      <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
+      <AnimatedBackground fixedDecor className={LOADING_SCREEN_SHELL}>
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
-          className="relative z-10 w-full"
+          className={LOADING_SCREEN_FRAME}
         >
           <Card className={LOADING_CARD}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-center text-xl font-semibold tracking-tight sm:text-2xl">
+            <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
+              <CardTitle className="text-center text-lg font-semibold tracking-tight sm:text-xl md:text-2xl">
                 Processing your interview
               </CardTitle>
-              <p className="mt-1 text-center text-sm text-muted-foreground">
+              <p className="mt-1 text-balance text-center text-sm text-muted-foreground">
                 This can take a few minutes when feedback needs a retry
               </p>
             </CardHeader>
-            <CardContent className="overflow-visible pt-4">
+            <CardContent className="overflow-visible p-4 pt-4 sm:p-6 sm:pt-4">
               <div className="flex flex-col gap-5">
                 <ResultsLoadingWordmark
                   progress={Math.min(100, (displayProgress / 92) * 100)}
@@ -1132,15 +1155,15 @@ export default function Results() {
   // Render Error UI
   if (error && !results) {
     return (
-      <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
+      <AnimatedBackground fixedDecor className={LOADING_SCREEN_SHELL}>
         <motion.div
           initial={{ opacity: 0, scale: 0.98 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
-          className="relative z-10 w-full"
+          className={LOADING_SCREEN_FRAME}
         >
           <Card className={cn(RESULTS_CARD, "w-full max-w-md")}>
-          <CardContent className="pt-6">
+          <CardContent className="p-4 pt-6 sm:p-6 sm:pt-6">
             <div className="flex flex-col items-center gap-4">
               <div className="flex h-16 w-16 items-center justify-center rounded-full bg-destructive/10">
                 <AlertCircle className="h-8 w-8 text-destructive" />
@@ -1189,7 +1212,7 @@ export default function Results() {
   // Show Results UI if completed or if we have data (even if evaluation failed)
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
-      <AnimatedBackground fixedDecor className="py-4 sm:py-8 px-4">
+      <AnimatedBackground fixedDecor className={RESULTS_PAGE_SHELL}>
         <AnimatePresence>
           {showWhiteTransition && (
             <motion.div
@@ -1213,7 +1236,7 @@ export default function Results() {
         >
         <div
           key={demoVariant}
-          className="relative z-10 mx-auto max-w-3xl space-y-6 pb-16"
+          className="relative z-10 mx-auto max-w-3xl space-y-6 pb-[max(4rem,env(safe-area-inset-bottom))]"
         >
           {/* Demo Mode Banner */}
           {isDemoMode && (
@@ -1240,7 +1263,7 @@ export default function Results() {
                     </p>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                   <Button
                     onClick={() =>
                       setLocation(
@@ -1249,11 +1272,11 @@ export default function Results() {
                     }
                     variant="outline"
                     size="sm"
-                    className="font-medium"
+                    className="w-full font-medium sm:w-auto"
                   >
                     {demoVariant === "business" ? "View technical sample" : "View non-technical sample"}
                   </Button>
-                  <Button onClick={() => setLocation("/")} size="sm" className="font-medium">
+                  <Button onClick={() => setLocation("/")} size="sm" className="w-full font-medium sm:w-auto">
                     Start real interview
                   </Button>
                 </div>
@@ -1263,7 +1286,7 @@ export default function Results() {
 
           {/* Breadcrumb Navigation - Sticky - Optimized for scroll */}
           <nav
-            className="sticky top-0 z-50 -mx-4 mb-4 flex items-center gap-2 rounded-xl border border-border/70 bg-card/90 px-3 py-2.5 text-sm text-muted-foreground shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/75 sm:-mx-0 sm:px-4" 
+            className="sticky top-[max(0px,env(safe-area-inset-top))] z-50 -mx-4 mb-4 flex max-w-full items-center gap-2 overflow-x-auto rounded-xl border border-border/70 bg-card/90 px-3 py-2.5 text-sm text-muted-foreground shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/75 sm:-mx-0 sm:px-4"
             style={{ 
               willChange: 'transform',
               transform: 'translate3d(0, 0, 0)',
@@ -1293,32 +1316,32 @@ export default function Results() {
                 {/* Main banner container -- no outer glow div; it caused a visible
                     misaligned arc outside the rounded corners. The gradient + shadow-2xl
                     + border provide all the depth needed. */}
-                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-6 shadow-2xl ring-1 ring-white/10 sm:p-8">
+                <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-slate-900 via-slate-800 to-indigo-950 p-4 shadow-2xl ring-1 ring-white/10 sm:p-6 md:p-8">
                   {/* Restrained highlights — premium SaaS, not loud rainbow */}
                   <div className="absolute inset-0 bg-gradient-to-br from-white/[0.07] via-transparent to-indigo-500/10" />
-                  <div className="absolute -right-12 -top-12 h-56 w-56 rounded-full bg-sky-400/10 blur-2xl" />
-                  <div className="absolute -bottom-10 -left-8 h-48 w-48 rounded-full bg-violet-500/10 blur-2xl" />
-                  
-                  {/* Content Grid */}
-                  <div className="relative z-10 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
-                    {/* Left Panel - Interview Stats */}
-                    <div className="flex flex-col gap-3 text-white">
-                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
+                  <div className="absolute -right-12 -top-12 h-40 w-40 rounded-full bg-sky-400/10 blur-2xl sm:h-56 sm:w-56" />
+                  <div className="absolute -bottom-10 -left-8 h-40 w-40 rounded-full bg-violet-500/10 blur-2xl sm:h-48 sm:w-48" />
+
+                  {/* Content Grid — score first on mobile, 3-column on md+ */}
+                  <div className="relative z-10 grid grid-cols-1 gap-4 md:grid-cols-3 md:gap-6 md:items-center">
+                    {/* Left Panel - Interview Stats (desktop only) */}
+                    <div className="hidden flex-col gap-3 text-white md:flex">
+                      <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-white/10 p-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <CheckCircle2 className="h-6 w-6 text-white" />
                         </div>
                         <div>
-                          <p className="text-xs text-white/70 uppercase tracking-wide font-semibold">Questions</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Questions</p>
                           <p className="text-xl font-bold">{results.evaluation?.evaluation?.questions?.length || 0} Answered</p>
                         </div>
                       </div>
                       {results.interview?.durationSeconds && (
-                        <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
+                        <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-white/10 p-3">
                           <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                             <Clock className="h-6 w-6 text-white" />
                           </div>
                           <div>
-                            <p className="text-xs text-white/70 uppercase tracking-wide font-semibold">Duration</p>
+                            <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Duration</p>
                             <p className="text-xl font-bold">
                               {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
                             </p>
@@ -1326,33 +1349,29 @@ export default function Results() {
                         </div>
                       )}
                     </div>
-                    
+
                     {/* Center Panel - Score (static first paint for LCP) */}
-                    <div className="flex flex-col items-center gap-4 py-4">
-                      {/* Icon -- static to avoid infinite Framer Motion repaints */}
+                    <div className="order-1 flex flex-col items-center gap-3 py-2 sm:gap-4 sm:py-4 md:order-none">
                       <div>
                         {overallScore >= 80 ? (
-                          <Award className="h-16 w-16 text-amber-200/90 sm:h-20 sm:w-20" />
+                          <Award className="h-14 w-14 text-amber-200/90 sm:h-16 sm:w-16 md:h-20 md:w-20" />
                         ) : overallScore >= 60 ? (
-                          <TrendingUp className="h-16 w-16 text-emerald-200/90 sm:h-20 sm:w-20" />
+                          <TrendingUp className="h-14 w-14 text-emerald-200/90 sm:h-16 sm:w-16 md:h-20 md:w-20" />
                         ) : (
-                          <CheckCircle2 className="h-16 w-16 text-sky-200/90 sm:h-20 sm:w-20" />
+                          <CheckCircle2 className="h-14 w-14 text-sky-200/90 sm:h-16 sm:w-16 md:h-20 md:w-20" />
                         )}
                       </div>
-                      
-                      {/* Readiness Score label */}
-                      <span className="text-sm text-white/80 font-medium uppercase tracking-wide">Readiness Score</span>
-                      
-                      {/* Score */}
+
+                      <span className="text-sm font-medium uppercase tracking-wide text-white/80">Readiness Score</span>
+
                       <div className="flex items-baseline gap-2">
-                        <span className="text-7xl sm:text-8xl font-black text-white drop-shadow-2xl">
+                        <span className="text-6xl font-black text-white drop-shadow-2xl sm:text-7xl md:text-8xl">
                           {overallScore}
                         </span>
-                        <span className="text-3xl sm:text-4xl text-white/90 font-bold mb-2">/100</span>
+                        <span className="mb-2 text-2xl font-bold text-white/90 sm:text-3xl md:text-4xl">/100</span>
                       </div>
-                      
-                      {/* Progress bar — static width avoids layout thrash during LCP */}
-                      <div className="h-4 w-full max-w-xs overflow-hidden rounded-full bg-white/20 shadow-inner">
+
+                      <div className="h-3 w-full max-w-xs overflow-hidden rounded-full bg-white/20 shadow-inner sm:h-4">
                         <div
                           className={cn(
                             "h-full rounded-full bg-gradient-to-r from-amber-200/90 via-white/90 to-sky-100/90",
@@ -1361,41 +1380,102 @@ export default function Results() {
                           style={{ width: `${overallScore}%` }}
                         />
                       </div>
-                      
-                      {/* Readiness status label */}
+
                       <div className="flex flex-col items-center gap-1">
                         <span
                           className={cn(
-                            "text-center text-lg font-semibold tracking-tight drop-shadow-sm",
-                            getReadinessLabel(overallScore).colorClass
+                            "text-center text-base font-semibold tracking-tight drop-shadow-sm sm:text-lg",
+                            getReadinessLabel(overallScore).colorClass,
                           )}
                         >
                           {getReadinessLabel(overallScore).label}
                         </span>
                       </div>
                     </div>
-                    
-                    {/* Right Panel - Performance Insights */}
-                    <div className="flex flex-col gap-3 text-white">
-                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
+
+                    {/* Right Panel - Performance Insights (desktop only) */}
+                    <div className="hidden flex-col gap-3 text-white md:flex">
+                      <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-white/10 p-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <TrendingUp className="h-6 w-6 text-white" />
                         </div>
                         <div>
-                          <p className="text-xs text-white/70 uppercase tracking-wide font-semibold">Percentile</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Percentile</p>
                           <p className="text-xl font-bold">
-                            Top {overallScore >= 90 ? '10' : overallScore >= 80 ? '20' : overallScore >= 70 ? '30' : overallScore >= 60 ? '40' : '50'}%
+                            Top {overallScore >= 90 ? "10" : overallScore >= 80 ? "20" : overallScore >= 70 ? "30" : overallScore >= 60 ? "40" : "50"}%
                           </p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-3 bg-white/10 rounded-xl p-3 border border-white/20">
+                      <div className="flex items-center gap-3 rounded-xl border border-white/20 bg-white/10 p-3">
                         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
                           <Sparkles className="h-6 w-6 text-white" />
                         </div>
                         <div>
-                          <p className="text-xs text-white/70 uppercase tracking-wide font-semibold">Avg Score</p>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Avg Score</p>
                           <p className="text-xl font-bold">
-                            {overallScore >= 80 ? '+12' : overallScore >= 70 ? '+8' : overallScore >= 60 ? '+5' : '+2'} vs Avg
+                            {overallScore >= 80 ? "+12" : overallScore >= 70 ? "+8" : overallScore >= 60 ? "+5" : "+2"} vs Avg
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Mobile 2×2 stats grid */}
+                    <div className="order-2 grid grid-cols-2 gap-3 text-white md:hidden">
+                      <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 p-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
+                          <CheckCircle2 className="h-5 w-5 text-white" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Questions</p>
+                          <p className="truncate text-base font-bold">{results.evaluation?.evaluation?.questions?.length || 0} Answered</p>
+                        </div>
+                      </div>
+                      {results.interview?.durationSeconds ? (
+                        <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 p-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
+                            <Clock className="h-5 w-5 text-white" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Duration</p>
+                            <p className="truncate text-base font-bold">
+                              {Math.floor((results.interview.durationSeconds || 0) / 60)}m {(results.interview.durationSeconds || 0) % 60}s
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 p-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
+                            <TrendingUp className="h-5 w-5 text-white" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Percentile</p>
+                            <p className="truncate text-base font-bold">
+                              Top {overallScore >= 90 ? "10" : overallScore >= 80 ? "20" : overallScore >= 70 ? "30" : overallScore >= 60 ? "40" : "50"}%
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {results.interview?.durationSeconds && (
+                        <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 p-3">
+                          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
+                            <TrendingUp className="h-5 w-5 text-white" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Percentile</p>
+                            <p className="truncate text-base font-bold">
+                              Top {overallScore >= 90 ? "10" : overallScore >= 80 ? "20" : overallScore >= 70 ? "30" : overallScore >= 60 ? "40" : "50"}%
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex items-center gap-2 rounded-xl border border-white/20 bg-white/10 p-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/15 ring-1 ring-white/20">
+                          <Sparkles className="h-5 w-5 text-white" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="text-[10px] font-semibold uppercase tracking-wide text-white/70">Avg Score</p>
+                          <p className="truncate text-base font-bold">
+                            {overallScore >= 80 ? "+12" : overallScore >= 70 ? "+8" : overallScore >= 60 ? "+5" : "+2"} vs Avg
                           </p>
                         </div>
                       </div>
@@ -1411,7 +1491,7 @@ export default function Results() {
               was causing white-flash checkerboarding during fast scroll and
               hiding the animated background behind an opaque white wall. */}
           <Card className={cn(RESULTS_CARD, "mb-6")}>
-            <CardHeader className="pb-3">
+            <CardHeader className={RESULTS_CARD_HEADER}>
               <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -1421,7 +1501,7 @@ export default function Results() {
                     Interview results
                   </CardTitle>
                   {results.interview?.durationSeconds && (
-                    <div className="mt-1 flex items-center gap-2 text-sm font-medium text-muted-foreground">
+                    <div className="mt-1 hidden items-center gap-2 text-sm font-medium text-muted-foreground sm:flex">
                       <Clock className="h-4 w-4 shrink-0" aria-hidden />
                       <span>
                         {Math.floor((results.interview.durationSeconds || 0) / 60)}m{" "}
@@ -1434,7 +1514,7 @@ export default function Results() {
                   <Button
                     variant="outline"
                     size="sm"
-                    className="shrink-0 font-medium"
+                    className="w-full shrink-0 font-medium sm:w-auto"
                     onClick={() => setTranscriptSheetOpen(true)}
                     aria-label="View full interview transcript"
                   >
@@ -1469,7 +1549,7 @@ export default function Results() {
                       "mb-6 border-amber-500/25 bg-amber-50/40 dark:bg-amber-950/20"
                     )}
                   >
-                    <CardContent className="pt-6">
+                    <CardContent className={cn(RESULTS_CARD_CONTENT, "pt-4 sm:pt-6")}>
                       <div className="flex flex-col items-center gap-3 text-center">
                         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/15">
                           <Clock className="h-6 w-6 text-amber-800 dark:text-amber-200" />
@@ -1510,7 +1590,7 @@ export default function Results() {
                       "mb-6 border-destructive/20 bg-destructive/[0.06]"
                     )}
                   >
-                    <CardContent className="pt-6">
+                    <CardContent className={cn(RESULTS_CARD_CONTENT, "pt-4 sm:pt-6")}>
                       <div className="flex flex-col items-center gap-4">
                         <div className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive/10">
                           <AlertCircle className="h-7 w-7 text-destructive" />
@@ -1545,7 +1625,7 @@ export default function Results() {
                   {(results.evaluation.evaluation.overall_strengths?.length || results.evaluation.evaluation.overall_improvements?.length) && (
                     <div>
                       <Card className={cn(RESULTS_CARD, "relative mb-6 overflow-hidden")}>
-                        <CardHeader>
+                        <CardHeader className={RESULTS_CARD_HEADER}>
                           <div className="flex items-center gap-3">
                             <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                               <Sparkles className="h-5 w-5" aria-hidden />
@@ -1558,7 +1638,7 @@ export default function Results() {
                             </div>
                           </div>
                         </CardHeader>
-                        <CardContent>
+                        <CardContent className={RESULTS_CARD_CONTENT}>
                           <div className="space-y-4">
                             {results.evaluation.evaluation.overall_strengths && results.evaluation.evaluation.overall_strengths.length > 0 && (
                               <div
@@ -1569,17 +1649,11 @@ export default function Results() {
                                   <CheckCircle2 className="h-5 w-5 shrink-0 text-primary" aria-hidden />
                                   Strengths
                                 </h4>
-                                <ul className="list-none space-y-2">
+                                <ul className="list-none space-y-2.5">
                                   {results.evaluation.evaluation.overall_strengths.map((strength, i) => (
-                                    <li
-                                      key={i}
-                                      className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
-                                    >
-                                      <span className="pt-0.5 text-primary" aria-hidden>
-                                        ·
-                                      </span>
-                                      <span>{strength}</span>
-                                    </li>
+                                    <FeedbackListItem key={i} dotClassName="bg-primary">
+                                      {strength}
+                                    </FeedbackListItem>
                                   ))}
                                 </ul>
                               </div>
@@ -1593,17 +1667,11 @@ export default function Results() {
                                   <TrendingUp className="h-5 w-5 shrink-0 text-amber-600" aria-hidden />
                                   Focus next
                                 </h4>
-                                <ul className="list-none space-y-2">
+                                <ul className="list-none space-y-2.5">
                                   {results.evaluation.evaluation.overall_improvements.map((improvement, i) => (
-                                    <li
-                                      key={i}
-                                      className="flex items-start gap-2 text-sm leading-relaxed text-foreground/95"
-                                    >
-                                      <span className="pt-0.5 text-amber-600" aria-hidden>
-                                        ·
-                                      </span>
-                                      <span>{improvement}</span>
-                                    </li>
+                                    <FeedbackListItem key={i} dotClassName="bg-amber-600 dark:bg-amber-500">
+                                      {improvement}
+                                    </FeedbackListItem>
                                   ))}
                                 </ul>
                               </div>
@@ -1617,7 +1685,7 @@ export default function Results() {
                   {/* Score Comparison Card - Optimized */}
                   <div>
                     <Card className={cn(RESULTS_CARD, "mb-6")}>
-                      <CardHeader>
+                      <CardHeader className={RESULTS_CARD_HEADER}>
                         <div className="flex items-center gap-3">
                           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-secondary/10 text-secondary">
                             <TrendingUp className="h-5 w-5" aria-hidden />
@@ -1630,7 +1698,7 @@ export default function Results() {
                           </div>
                         </div>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className={RESULTS_CARD_CONTENT}>
                         <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
                           <div className="space-y-2">
                             <div className="flex items-center justify-between">
@@ -1707,7 +1775,7 @@ export default function Results() {
                       {/* Skills Breakdown Chart - Optimized */}
                       <div>
                         <Card className={cn(RESULTS_CARD, "mb-6")}>
-                          <CardHeader>
+                          <CardHeader className={RESULTS_CARD_HEADER}>
                             <div className="flex items-center gap-3">
                               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                                 <Award className="h-5 w-5" aria-hidden />
@@ -1720,7 +1788,7 @@ export default function Results() {
                               </div>
                             </div>
                           </CardHeader>
-                          <CardContent>
+                          <CardContent className={RESULTS_CARD_CONTENT}>
                             <div className="space-y-4">
                               {results.evaluation.evaluation.questions.map((qa, index) => (
                                 <div key={index} className="space-y-2">
@@ -1776,7 +1844,7 @@ export default function Results() {
                     {betterAnswerQuestion && (
                       <div>
                         <Card className={cn(RESULTS_CARD, "mb-6")}>
-                          <CardHeader>
+                          <CardHeader className={RESULTS_CARD_HEADER}>
                             <div className="flex items-center gap-3">
                               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
                                 <Sparkles className="h-5 w-5" aria-hidden />
@@ -1789,7 +1857,7 @@ export default function Results() {
                               </div>
                             </div>
                           </CardHeader>
-                          <CardContent>
+                          <CardContent className={RESULTS_CARD_CONTENT}>
                             <div className="space-y-3">
                               <div className={cn(RESULTS_INSET, "p-4")}>
                                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question</p>
@@ -1829,7 +1897,7 @@ export default function Results() {
                   onClick={handleReturnToDashboard}
                   variant="outline"
                   size="lg"
-                  className="min-w-[220px] font-medium"
+                  className="w-full max-w-sm font-medium sm:min-w-[220px] sm:w-auto"
                   aria-label="Return to dashboard"
                 >
                   <ArrowLeft className="mr-2 h-5 w-5" />
@@ -1843,20 +1911,20 @@ export default function Results() {
         <Sheet open={transcriptSheetOpen} onOpenChange={setTranscriptSheetOpen}>
           <SheetContent
             side="right"
-            className="flex h-full w-full flex-col gap-0 p-0 sm:max-w-xl"
+            className="flex h-full w-full flex-col gap-0 p-0 pt-[env(safe-area-inset-top)] sm:max-w-xl [&>button]:top-[max(1rem,env(safe-area-inset-top))]"
             aria-describedby="transcript-sheet-description"
           >
-            <SheetHeader className="space-y-1 border-b border-border/80 px-6 py-5 text-left">
+            <SheetHeader className="space-y-1 border-b border-border/80 px-4 py-4 text-left sm:px-6 sm:py-5">
               <SheetTitle className="text-xl font-semibold tracking-tight">Interview transcript</SheetTitle>
               <SheetDescription id="transcript-sheet-description">
                 Speaker-labeled conversation
                 {questionCount > 0 && ` · ${questionCountLabel}`}
               </SheetDescription>
             </SheetHeader>
-            <ScrollArea className="min-h-0 flex-1 px-6 py-4">
+            <ScrollArea className="min-h-0 flex-1 px-4 py-4 sm:px-6">
               <InterviewTranscriptContent paragraphs={transcriptParagraphs} />
             </ScrollArea>
-            <div className="border-t border-border/80 px-6 py-4">
+            <div className="border-t border-border/80 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-6">
               <Button
                 variant="outline"
                 className="w-full font-medium"
@@ -1878,23 +1946,23 @@ export default function Results() {
     : "Fetching your interview data…";
 
   return (
-    <AnimatedBackground fixedDecor className="flex items-center justify-center py-4 px-4">
+    <AnimatedBackground fixedDecor className={LOADING_SCREEN_SHELL}>
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.33, 1, 0.68, 1] }}
-        className="relative z-10 w-full"
+        className={LOADING_SCREEN_FRAME}
       >
         <Card className={LOADING_CARD}>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-center text-xl font-semibold tracking-tight sm:text-2xl">
+          <CardHeader className="p-4 pb-2 sm:p-6 sm:pb-2">
+            <CardTitle className="text-center text-lg font-semibold tracking-tight sm:text-xl md:text-2xl">
               Loading results
             </CardTitle>
-            <p className="mt-1 text-center text-sm text-muted-foreground">
+            <p className="mt-1 text-balance text-center text-sm text-muted-foreground">
               Please wait while we retrieve your interview
             </p>
           </CardHeader>
-          <CardContent className="overflow-visible pt-4">
+          <CardContent className="overflow-visible p-4 pt-4 sm:p-6 sm:pt-4">
             <ResultsLoadingWordmark
               progress={Math.min(100, (loadingProgress / 95) * 100)}
               statusLine={initialStatusLine}
