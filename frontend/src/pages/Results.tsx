@@ -420,6 +420,16 @@ function QuestionFeedbackCard({ qa, index }: { qa: EvaluatedQuestion; index: num
                   </ul>
                 </div>
               )}
+
+              {qa.sample_better_answer && qa.sample_better_answer.trim() && (
+                <div className={cn(RESULTS_INSET, "border-l-2 border-l-primary/50 p-4")}>
+                  <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-foreground">
+                    <Sparkles className="h-4 w-4 shrink-0 text-primary" aria-hidden />
+                    Example answer
+                  </h4>
+                  <p className="leading-relaxed text-foreground/95">{qa.sample_better_answer}</p>
+                </div>
+              )}
             </div>
           </CardContent>
         </CollapsibleContent>
@@ -966,15 +976,6 @@ export default function Results() {
       results.evaluation.evaluation.questions.reduce((sum, q) => sum + q.score, 0) / 
       results.evaluation.evaluation.questions.length
     );
-  }, [results?.evaluation?.evaluation?.questions]);
-
-  // Lowest-scoring question that has sample_better_answer (for Better Answer Example card)
-  const betterAnswerQuestion = useMemo(() => {
-    const questions = results?.evaluation?.evaluation?.questions;
-    if (!questions?.length) return null;
-    const withSample = questions.filter((q) => q.sample_better_answer && q.sample_better_answer.trim());
-    if (withSample.length === 0) return null;
-    return withSample.reduce((lowest, q) => (q.score < lowest.score ? q : lowest));
   }, [results?.evaluation?.evaluation?.questions]);
 
   // Reveal main results content only after the browser has painted (avoids half-rendered flash).
@@ -1840,50 +1841,6 @@ export default function Results() {
 
                       <DetailedFeedbackSection questions={results.evaluation.evaluation.questions} />
 
-                    {/* Better Answer Example card - lowest-scoring question with sample_better_answer */}
-                    {betterAnswerQuestion && (
-                      <div>
-                        <Card className={cn(RESULTS_CARD, "mb-6")}>
-                          <CardHeader className={RESULTS_CARD_HEADER}>
-                            <div className="flex items-center gap-3">
-                              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-                                <Sparkles className="h-5 w-5" aria-hidden />
-                              </div>
-                              <div>
-                                <CardTitle className="text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
-                                  Example answer
-                                </CardTitle>
-                                <p className="mt-1 text-sm text-muted-foreground">A stronger structure for this prompt</p>
-                              </div>
-                            </div>
-                          </CardHeader>
-                          <CardContent className={RESULTS_CARD_CONTENT}>
-                            <div className="space-y-3">
-                              <div className={cn(RESULTS_INSET, "p-4")}>
-                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Question</p>
-                                <p className="font-medium leading-relaxed text-foreground">{betterAnswerQuestion.question}</p>
-                              </div>
-                              {betterAnswerQuestion.answer && (
-                                <div className={cn(RESULTS_INSET, "p-4")}>
-                                  <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                                    Your answer (excerpt)
-                                  </p>
-                                  <p className="line-clamp-3 text-sm leading-relaxed text-foreground/90">
-                                    {betterAnswerQuestion.answer.length > 200
-                                      ? `${betterAnswerQuestion.answer.slice(0, 200)}...`
-                                      : betterAnswerQuestion.answer}
-                                  </p>
-                                </div>
-                              )}
-                              <div className={cn(RESULTS_INSET, "border-l-2 border-l-primary/50 p-4")}>
-                                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-primary">Stronger example</p>
-                                <p className="leading-relaxed text-foreground/95">{betterAnswerQuestion.sample_better_answer}</p>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </div>
-                    )}
                   </>
                 )}
                 </>
