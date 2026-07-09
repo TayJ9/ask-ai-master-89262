@@ -398,6 +398,36 @@ describe("live transcript streaming", () => {
     assert.equal(getLiveTranscriptHistory(messages).length, 4);
   });
 
+  it("keeps the completed Q+A visible while the next AI question is still streaming", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "First question", isFinal: true, timestamp: 1 },
+      { type: "student", text: "First answer", isFinal: true, timestamp: 2 },
+      { type: "ai", text: "Follow-up in progress", isFinal: false, timestamp: 3 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:First question", "student:First answer"],
+    );
+  });
+
+  it("switches to the next AI question once that question is final", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "First question", isFinal: true, timestamp: 1 },
+      { type: "student", text: "First answer", isFinal: true, timestamp: 2 },
+      { type: "ai", text: "Second question", isFinal: true, timestamp: 3 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:Second question"],
+    );
+  });
+
   it("shows the latest AI turn only while waiting for the current answer", () => {
     const messages: TranscriptMessage[] = [
       { type: "ai", text: "First question", isFinal: true, timestamp: 1 },
@@ -406,11 +436,13 @@ describe("live transcript streaming", () => {
       { type: "ai", text: "Follow-up question", isFinal: false, timestamp: 4 },
     ];
 
+    // Empty final AI bubble is filtered from live history; non-final follow-up
+    // should not hide the completed Q+A until that follow-up is final.
     const currentPair = getCurrentLiveTranscriptPair(messages);
 
     assert.deepEqual(
       currentPair.map((message) => `${message.type}:${message.text}`),
-      ["ai:Follow-up question"],
+      ["ai:First question", "student:First answer"],
     );
   });
 
@@ -426,7 +458,10 @@ describe("live transcript streaming", () => {
 
     assert.deepEqual(
       currentPair.map((message) => `${message.type}:${message.text}`),
-      ["ai:What project are you proud of?"],
+      [
+        "ai:Tell me a little about your background.",
+        "student:I studied computer science.",
+      ],
     );
     assert.equal(
       getLiveTranscriptHistory(messages).filter((message) => message.type === "ai").length,

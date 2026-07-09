@@ -152,37 +152,69 @@ export function getLiveTranscriptHistory(messages: TranscriptMessage[]): Transcr
 }
 
 /**
- * Live interview display should stay focused on the current exchange:
- * latest AI question plus the current/latest student answer after it.
+ * Live interview display should stay focused on one exchange at a time:
+ * the AI question plus the student's answer for that question.
+ *
+ * When the next AI turn starts streaming, keep the completed Q+A visible
+ * until that next question is final — otherwise the answer disappears as
+ * soon as the interviewer starts speaking again.
  * Full history remains in state for saving/results.
  */
 export function getCurrentLiveTranscriptPair(messages: TranscriptMessage[]): TranscriptMessage[] {
   const history = getLiveTranscriptHistory(messages);
+  if (history.length === 0) return [];
+
   let latestAiIndex = -1;
+  let latestStudentIndex = -1;
   for (let i = history.length - 1; i >= 0; i--) {
-    if (history[i].type === 'ai') {
-      latestAiIndex = i;
-      break;
-    }
+    if (latestAiIndex < 0 && history[i].type === 'ai') latestAiIndex = i;
+    if (latestStudentIndex < 0 && history[i].type === 'student') latestStudentIndex = i;
+    if (latestAiIndex >= 0 && latestStudentIndex >= 0) break;
   }
 
-  if (latestAiIndex < 0) {
-    for (let i = history.length - 1; i >= 0; i--) {
-      if (history[i].type === 'student') return [history[i]];
+  if (latestStudentIndex >= 0) {
+    let questionIndex = -1;
+    for (let i = latestStudentIndex - 1; i >= 0; i--) {
+      if (history[i].type === 'ai') {
+        questionIndex = i;
+        break;
+      }
     }
-    return [];
+
+    const student = history[latestStudentIndex];
+    const hasNewerAi = latestAiIndex > latestStudentIndex;
+    const newerAi = hasNewerAi ? history[latestAiIndex] : undefined;
+
+    // Still on this exchange (answering, or waiting before next AI starts).
+    if (questionIndex >= 0 && !hasNewerAi) {
+      return [history[questionIndex], student];
+    }
+
+    // Next AI turn has started but isn't final yet — keep Q+A readable.
+    if (questionIndex >= 0 && newerAi && !newerAi.isFinal) {
+      return [history[questionIndex], student];
+    }
+
+    // Next AI question is final: switch to that question (+ its answer if any).
+    if (newerAi?.isFinal) {
+      let answerAfterNewerAi: TranscriptMessage | undefined;
+      for (let i = history.length - 1; i > latestAiIndex; i--) {
+        if (history[i].type === 'student') {
+          answerAfterNewerAi = history[i];
+          break;
+        }
+      }
+      return answerAfterNewerAi ? [newerAi, answerAfterNewerAi] : [newerAi];
+    }
+
+    if (questionIndex >= 0) {
+      return [history[questionIndex], student];
+    }
+    return [student];
   }
 
-  const latestAi = history[latestAiIndex];
-  let latestStudent: TranscriptMessage | undefined;
-  for (let i = history.length - 1; i > latestAiIndex; i--) {
-    if (history[i].type === 'student') {
-      latestStudent = history[i];
-      break;
-    }
-  }
-
-  return latestStudent ? [latestAi, latestStudent] : [latestAi];
+  if (latestAiIndex >= 0) return [history[latestAiIndex]];
+  return [];
 }
 
 export function mergeStreamText(
