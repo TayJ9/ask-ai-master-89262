@@ -25,6 +25,18 @@ import { getYearToDifficulty } from "@/lib/yearToDifficulty";
 import { debugLog, initElevenWsDebug, shouldDebugEleven } from "@/lib/wsDebug";
 import { motion } from "framer-motion";
 import { useAmbientSound } from "@/hooks/useAmbientSound";
+import {
+  type TranscriptMessage,
+  type TranscriptUpdate,
+  getLiveTranscriptHistory,
+  upsertTranscriptMessage,
+  extractTranscriptUpdate,
+  extractAgentChatResponsePartUpdate,
+  extractTentativeAgentDebugUpdate,
+  extractAudioAlignmentUpdate,
+  shouldApplyAiStreamUpdate,
+  shouldIgnoreEmptyAiFinal,
+} from "@/lib/transcriptStreaming";
 
 const BUILD_ID = "eleven-resume-logging-v1";
 
@@ -88,14 +100,6 @@ interface VoiceInterviewWebSocketProps {
   isActive?: boolean;
 }
 
-interface TranscriptMessage {
-  type: 'ai' | 'student';
-  text: string;
-  isFinal: boolean;
-  timestamp: number;
-}
-
-/** Plain text for /api/save-interview when ElevenLabs API/webhook has not stored a transcript yet (common in local dev). */
 function buildTranscriptForSave(messages: TranscriptMessage[]): string | undefined {
   const lines: string[] = [];
   for (const m of messages) {
@@ -129,7 +133,7 @@ function computeConversationMode(params: {
   return 'listening';
 }
 
-// PERF: Memoized row to avoid re-rendering unchanged transcript items when list grows.
+// Re-renders when streaming text changes on the same bubble.
 const TranscriptRow = memo(function TranscriptRow({ transcript }: { transcript: TranscriptMessage }) {
   return (
     <div
@@ -144,13 +148,17 @@ const TranscriptRow = memo(function TranscriptRow({ transcript }: { transcript: 
           {transcript.type === 'ai' ? 'AI Interviewer' : 'You'}
         </span>
         {!transcript.isFinal && (
-          <span className="text-xs text-muted-foreground">Typing...</span>
+          <span className="text-xs text-muted-foreground animate-pulse">Speaking...</span>
         )}
       </div>
-      <p className="text-sm">{transcript.text}</p>
+      <p className="text-sm whitespace-pre-wrap">{transcript.text}</p>
     </div>
   );
-});
+}, (prev, next) =>
+  prev.transcript.text === next.transcript.text &&
+  prev.transcript.isFinal === next.transcript.isFinal &&
+  prev.transcript.type === next.transcript.type,
+);
 
 export default function VoiceInterviewWebSocket({
   sessionId,
@@ -218,7 +226,6 @@ export default function VoiceInterviewWebSocket({
   const isAudioBufferingRef = useRef(true);
   const audioBufferStartTimeRef = useRef<number | null>(null);
   const micAudioContextRef = useRef<AudioContext | null>(null);
-  const tokenCacheRef = useRef<string | null>(null);
   
   // Latency monitoring refs
   const lastUserSpeechEndTimeRef = useRef<number | null>(null);
@@ -235,7 +242,16 @@ export default function VoiceInterviewWebSocket({
 
   const conversationModeRef = useRef<ConversationMode>('listening');
   const [conversationMode, setConversationMode] = useState<ConversationMode>('listening');
+  const transcriptEndRef = useRef<HTMLDivElement>(null);
   const micSpeechLatchedRef = useRef(false);
+  const receivedLiveStreamRef = useRef(false);
+  const alignmentActiveThisTurnRef = useRef(false);
+  const chatPartActiveThisTurnRef = useRef(false);
+
+  const liveTranscriptMessages = useMemo(
+    () => getLiveTranscriptHistory(transcripts),
+    [transcripts],
+  );
 
   const { toast } = useToast();
 
@@ -694,6 +710,100 @@ export default function VoiceInterviewWebSocket({
     }
   }, [onComplete, saveInterview, sessionId, cleanupAudioContext]);
 
+  const applyTranscriptUpdate = useCallback((update: TranscriptUpdate) => {
+    if (!isMountedRef.current) return;
+
+    const isAiSpeaking = conversationModeRef.current === 'ai_speaking';
+    if (
+      shouldIgnoreEmptyAiFinal({
+        update,
+        isAiSpeaking,
+        alignmentActive: alignmentActiveThisTurnRef.current,
+        chatPartActive: chatPartActiveThisTurnRef.current,
+      })
+    ) {
+      if (import.meta.env.DEV) {
+        console.log('[TRANSCRIPT] ignored empty AI final during active stream', {
+          alignmentActive: alignmentActiveThisTurnRef.current,
+          chatPartActive: chatPartActiveThisTurnRef.current,
+          receivedLiveStream: receivedLiveStreamRef.current,
+        });
+      }
+      return;
+    }
+
+    if (update.type === 'ai' && update.isFinal) {
+      alignmentActiveThisTurnRef.current = false;
+      chatPartActiveThisTurnRef.current = false;
+    }
+
+    if (
+      !shouldApplyAiStreamUpdate({
+        update,
+        isAiSpeaking,
+        alignmentActive: alignmentActiveThisTurnRef.current,
+        chatPartActive: chatPartActiveThisTurnRef.current,
+      })
+    ) {
+      if (import.meta.env.DEV) {
+        console.log('[TRANSCRIPT] skipped competing stream', {
+          streamKind: update.streamKind,
+          chars: update.text.length,
+          alignmentActive: alignmentActiveThisTurnRef.current,
+          chatPartActive: chatPartActiveThisTurnRef.current,
+        });
+      }
+      return;
+    }
+
+    if (update.type === 'ai' && update.streamKind === 'alignment' && !update.isFinal) {
+      alignmentActiveThisTurnRef.current = true;
+    }
+    if (
+      update.type === 'ai' &&
+      update.streamKind === 'chat_part' &&
+      !update.isFinal &&
+      update.text.trim()
+    ) {
+      chatPartActiveThisTurnRef.current = true;
+    }
+
+    if (update.type === 'ai' && !update.isFinal && update.text.trim()) {
+      receivedLiveStreamRef.current = true;
+    }
+
+    // SDK onMessage delivers the full AI turn as one final dump. If tentative/alignment
+    // already streamed text, prefer finalize-only when the dump has no new content so the
+    // bubble does not flash/re-animate. upsertTranscriptMessage also idempotently merges.
+    let nextUpdate = update;
+    if (
+      update.type === 'ai' &&
+      update.isFinal &&
+      update.streamKind === 'final' &&
+      receivedLiveStreamRef.current &&
+      !update.text.trim()
+    ) {
+      nextUpdate = { ...update, finalizeOnly: true };
+    }
+    if (update.type === 'ai' && update.isFinal) {
+      receivedLiveStreamRef.current = false;
+    }
+
+    if (import.meta.env.DEV) {
+      console.log('[TRANSCRIPT]', {
+        speaker: nextUpdate.type,
+        isFinal: nextUpdate.isFinal,
+        mergeMode: nextUpdate.mergeMode,
+        streamKind: nextUpdate.streamKind,
+        finalizeOnly: !!nextUpdate.finalizeOnly,
+        chars: nextUpdate.text.length,
+        preview: nextUpdate.text.slice(0, 80),
+      });
+    }
+
+    setTranscripts((prev) => upsertTranscriptMessage(prev, nextUpdate));
+  }, []);
+
   const handleMessage = useCallback((message: any) => {
     if (!isMountedRef.current) return;
     console.log('SDK Message:', message);
@@ -903,38 +1013,12 @@ export default function VoiceInterviewWebSocket({
       return; // Don't process tool calls as regular messages
     }
     
-    // Extract text from SDK IncomingSocketEvent (per asyncapi-types.ts)
-    let text = '';
-    let isAI = false;
-    let isFinal = true;
-    if (message.type === 'user_transcript' && message.user_transcription_event) {
-      text = message.user_transcription_event.user_transcript || '';
-      isAI = false;
-      isFinal = true;
-    } else if (message.type === 'tentative_user_transcript' && message.tentative_user_transcription_event) {
-      text = message.tentative_user_transcription_event.user_transcript || '';
-      isAI = false;
-      isFinal = false;
-    } else if (message.type === 'agent_response' && message.agent_response_event) {
-      text = message.agent_response_event.agent_response || '';
-      isAI = true;
-      isFinal = true;
-    } else if (message.type === 'agent_chat_response_part' && message.text_response_part) {
-      text = message.text_response_part.text || '';
-      isAI = true;
-      isFinal = message.text_response_part.type === 'stop';
-    } else if (message.type === 'agent_response_correction' && message.agent_response_correction_event) {
-      text = message.agent_response_correction_event.corrected_agent_response || '';
-      isAI = true;
-      isFinal = true;
-    } else {
-      text = message.message || '';
-      isAI = message.source === 'ai';
-      isFinal = message?.isFinal ?? message?.final ?? true;
-    }
+    // Extract streaming transcript updates from SDK / WebSocket events
+    const transcriptUpdate = extractTranscriptUpdate(message);
+    const isAI = transcriptUpdate?.type === 'ai';
 
-    if (shouldDebugEleven() && isAI && text && !firstAiFinalizedRef.current) {
-      firstAiMessageRef.current += text;
+    if (shouldDebugEleven() && isAI && transcriptUpdate?.text && !firstAiFinalizedRef.current) {
+      firstAiMessageRef.current += transcriptUpdate.text;
       if (firstAiDebounceTimerRef.current) {
         clearTimeout(firstAiDebounceTimerRef.current);
       }
@@ -957,7 +1041,7 @@ export default function VoiceInterviewWebSocket({
       };
 
       const explicitFinal =
-        isFinal ||
+        transcriptUpdate?.isFinal ||
         message?.type === 'agent_response' ||
         message?.type === 'agent_response_correction' ||
         (message?.text_response_part?.type === 'stop');
@@ -969,27 +1053,50 @@ export default function VoiceInterviewWebSocket({
       }
     }
     
-    if (text) {
-      setTranscripts(prev => {
-        const lastMessage = prev[prev.length - 1];
-        if (lastMessage && lastMessage.type === (isAI ? 'ai' : 'student') && !lastMessage.isFinal) {
-          return [
-            ...prev.slice(0, -1),
-            { ...lastMessage, text, isFinal }
-          ];
-        }
-        return [
-          ...prev,
-          {
-            type: isAI ? 'ai' : 'student',
-            text,
-            isFinal,
-            timestamp: Date.now(),
-          }
-        ];
-      });
+    if (transcriptUpdate) {
+      applyTranscriptUpdate(transcriptUpdate);
     }
-  }, [onInterviewEnd, saveInterview, sessionId]);
+  }, [onInterviewEnd, saveInterview, sessionId, applyTranscriptUpdate]);
+
+  const handleAgentChatResponsePart = useCallback((part: {
+    text?: string;
+    type: 'start' | 'delta' | 'stop';
+  }) => {
+    const update = extractAgentChatResponsePartUpdate(part);
+    if (update) {
+      applyTranscriptUpdate(update);
+    }
+  }, [applyTranscriptUpdate]);
+
+  // Tentative AI arrives only via onDebug (SDK does not call onMessage for it).
+  // User tentative_user_transcript can also land here, sometimes wrapped in a debug envelope.
+  const handleDebug = useCallback((debug: any) => {
+    const tentativeUpdate = extractTentativeAgentDebugUpdate(debug);
+    if (tentativeUpdate) {
+      applyTranscriptUpdate(tentativeUpdate);
+      return;
+    }
+
+    const update = extractTranscriptUpdate(debug);
+    if (update) {
+      applyTranscriptUpdate(update);
+    }
+  }, [applyTranscriptUpdate]);
+
+  // Prefer this path during AI speech: alignment fires per audio chunk when present.
+  // If the agent/session omits audio_event.alignment, SDK never calls this — fall back to tentatives.
+  const handleAudioAlignment = useCallback((alignment: { chars?: string[] }) => {
+    const update = extractAudioAlignmentUpdate(alignment);
+    if (update) {
+      applyTranscriptUpdate(update);
+    }
+  }, [applyTranscriptUpdate]);
+
+  const handleInterruption = useCallback(() => {
+    alignmentActiveThisTurnRef.current = false;
+    chatPartActiveThisTurnRef.current = false;
+    receivedLiveStreamRef.current = false;
+  }, []);
 
   const handleError = useCallback((error: any) => {
     console.error("🔥🔥🔥 CRITICAL: SDK ERROR 🔥🔥🔥", error);
@@ -1019,8 +1126,12 @@ export default function VoiceInterviewWebSocket({
     onConnect: handleConnect,
     onDisconnect: handleDisconnect,
     onMessage: handleMessage,
+    onAgentChatResponsePart: handleAgentChatResponsePart,
+    onDebug: handleDebug,
+    onAudioAlignment: handleAudioAlignment,
+    onInterruption: handleInterruption,
     onError: handleError,
-  });
+  } as Parameters<typeof useConversation>[0]);
 
   conversationRef.current = conversation;
 
@@ -1110,6 +1221,10 @@ export default function VoiceInterviewWebSocket({
         break;
     }
   }, [conversationMode, hasStarted, conversation.status, serverProcessing, conversation.isSpeaking]);
+
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }, [liveTranscriptMessages]);
 
   // PERF: Volume state only updates when crossing threshold (0.1) to limit re-renders; refs always updated for AudioVisualizer.
   useEffect(() => {
@@ -1289,36 +1404,6 @@ export default function VoiceInterviewWebSocket({
     }
   }, [hasStarted, isStarting]);
 
-  // Pre-warm connection token for faster start
-  useEffect(() => {
-    if (hasStarted || isStarting) return;
-    
-    // Pre-fetch token after component mounts (with delay to not block render)
-    const timer = setTimeout(async () => {
-      try {
-        const authToken = localStorage.getItem('auth_token');
-        if (!authToken) return; // Can't pre-warm without auth
-        
-        const response = await fetch(getApiUrl('/api/conversation-token'), {
-          headers: {
-            'Authorization': `Bearer ${authToken}`,
-          },
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          tokenCacheRef.current = data.signed_url || data.signedUrl;
-          console.log('[PRE-WARM] Connection token cached for faster start');
-        }
-      } catch (error) {
-        // Ignore - will fetch on Start click
-        console.log('[PRE-WARM] Token pre-warm failed (will fetch on Start)');
-      }
-    }, 2000); // Wait 2 seconds after mount
-    
-    return () => clearTimeout(timer);
-  }, [hasStarted, isStarting]);
-
   // Start interview with signed token - with robust unmount handling
   const startInterview = useCallback(async () => {
     // Guard 1: Check ref to prevent race conditions (Strict Mode, double-clicks)
@@ -1350,7 +1435,8 @@ export default function VoiceInterviewWebSocket({
     const resumeSourceForSession = candidateContext?.resumeSource || 'not_provided';
     const resumeChars = resumeTextForSession?.length || 0;
     const candidateContextPresent = !!candidateContext;
-    const resumeExpected = !!candidateContext?.resumeSource || !!candidateContext?.resumeText;
+    const resumeExpected =
+      resumeSourceForSession === 'pdf_upload' || resumeSourceForSession === 'text_resume';
 
     if (!normalizedFirstName || !normalizedMajor) {
       console.warn('Missing first name or major; using safe defaults for ElevenLabs', { normalizedFirstName, normalizedMajor });
@@ -1507,65 +1593,57 @@ export default function VoiceInterviewWebSocket({
       setStatusMessage("Connecting to interview service...");
       console.log('Step 2: Fetching conversation token...', { requestId });
       
-      // Check for cached token first
-      let cachedSignedUrl = tokenCacheRef.current;
-      let tokenData: any = null;
+      const authToken = localStorage.getItem('auth_token');
+      const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
+          'X-Request-Id': requestId,
+        },
+      });
       
-      if (cachedSignedUrl) {
-        console.log('[TOKEN] Using pre-warmed token');
-        tokenData = { signed_url: cachedSignedUrl, signedUrl: cachedSignedUrl };
-        tokenCacheRef.current = null; // Clear cache after use
-      } else {
-        // Fetch token if not cached
-        const authToken = localStorage.getItem('auth_token');
-        const tokenResponse = await fetch(getApiUrl('/api/conversation-token'), {
-          method: 'GET',
-          credentials: 'include',
-          headers: {
-            ...(authToken ? { 'Authorization': `Bearer ${authToken}` } : {}),
-            'X-Request-Id': requestId,
-          },
+      // Check mount state after fetch
+      if (!isMountedRef.current) {
+        console.log('Component unmounted during token fetch - aborting');
+        return;
+      }
+
+      const tokenData = await tokenResponse.json();
+      
+      if (!tokenResponse.ok) {
+        // Handle structured error response
+        if (tokenData.error) {
+        const errorCode = tokenData.error.code || 'UNKNOWN';
+        const errorMessage = tokenData.error.message || tokenResponse.statusText || 'Failed to get conversation token';
+        const upstreamStatus = tokenData.error.upstreamStatus;
+        
+        console.error('[TOKEN REQUEST] Error response:', { 
+          status: tokenResponse.status, 
+          code: errorCode, 
+          message: errorMessage,
+          upstreamStatus,
+          requestId 
         });
         
-        // Check mount state after fetch
-        if (!isMountedRef.current) {
-          console.log('Component unmounted during token fetch - aborting');
-          return;
+        // Provide user-friendly messages based on error code
+        if (tokenResponse.status === 429) {
+          if (errorCode === 'RATE_LIMIT_EXCEEDED') {
+            throw new Error(errorMessage);
+          }
+          if (errorCode === 'TOO_MANY_CONCURRENT' || errorMessage.includes('concurrent')) {
+            throw new Error('Too many concurrent sessions. Close other sessions and wait 10–30s.');
+          } else if (errorCode === 'SYSTEM_BUSY' || errorMessage.includes('busy')) {
+            throw new Error('Service busy. Try again in a few seconds.');
+          } else {
+            throw new Error('Rate limit exceeded. Please wait a moment and try again.');
+          }
         }
-
-        tokenData = await tokenResponse.json();
         
-        if (!tokenResponse.ok) {
-          // Handle structured error response
-          if (tokenData.error) {
-          const errorCode = tokenData.error.code || 'UNKNOWN';
-          const errorMessage = tokenData.error.message || tokenResponse.statusText || 'Failed to get conversation token';
-          const upstreamStatus = tokenData.error.upstreamStatus;
-          
-          console.error('[TOKEN REQUEST] Error response:', { 
-            status: tokenResponse.status, 
-            code: errorCode, 
-            message: errorMessage,
-            upstreamStatus,
-            requestId 
-          });
-          
-          // Provide user-friendly messages based on error code
-          if (tokenResponse.status === 429) {
-            if (errorCode === 'TOO_MANY_CONCURRENT' || errorMessage.includes('concurrent')) {
-              throw new Error('Too many concurrent sessions. Close other sessions and wait 10–30s.');
-            } else if (errorCode === 'SYSTEM_BUSY' || errorMessage.includes('busy')) {
-              throw new Error('Service busy. Try again in a few seconds.');
-            } else {
-              throw new Error('Rate limit exceeded. Please wait a moment and try again.');
-            }
-          }
-          
-          throw new Error(errorMessage);
-          }
-          const failureMessage = tokenResponse.statusText || 'Failed to get conversation token';
-          throw new Error(failureMessage);
+        throw new Error(errorMessage);
         }
+        const failureMessage = tokenResponse.statusText || 'Failed to get conversation token';
+        throw new Error(failureMessage);
       }
       const successPayload = tokenData.success || tokenData;
       const downstreamRequestId = successPayload.requestId || tokenData.requestId || requestId;
@@ -1672,6 +1750,21 @@ export default function VoiceInterviewWebSocket({
       const startOptions: any = {
         signedUrl: signedUrl, // Pass signedUrl - SDK handles WebRTC upgrade automatically
         dynamicVariables,
+        overrides: {
+          conversation: {
+            client_events: [
+              'agent_response',
+              'agent_response_correction',
+              'agent_chat_response_part',
+              'interruption',
+              'user_transcript',
+              'tentative_user_transcript',
+              'conversation_initiation_metadata',
+              'client_tool_call',
+              'internal_tentative_agent_response',
+            ],
+          },
+        },
         // Voice settings optimized for expressiveness and naturalness
         voiceSettings: {
           stability: 0.5,      // Lower for more expressiveness (prioritizes naturalness over consistency)
@@ -2149,25 +2242,6 @@ export default function VoiceInterviewWebSocket({
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.5, delay: 0.2, ease: [0.33, 1, 0.68, 1] }}
             >
-              {/* Microphone Activity Indicator */}
-              {isConnected && (
-                <div className="flex items-center gap-2 mb-2">
-                  <div className={`flex items-center gap-2 ${
-                    inputVolume > 0.01 
-                      ? 'text-green-500' 
-                      : 'text-amber-500'
-                  }`}>
-                    <div className={`h-2 w-2 rounded-full ${
-                      inputVolume > 0.01 
-                        ? 'bg-green-500 animate-pulse' 
-                        : 'bg-amber-500'
-                    }`} />
-                    <span className="text-xs font-medium">
-                      {inputVolume > 0.01 ? 'Microphone active' : 'Microphone ready'}
-                    </span>
-                  </div>
-                </div>
-              )}
               <div className={`transition-all duration-500 w-full max-w-3xl mx-auto px-4 flex justify-center ${
                 orbVisualMode === 'user_speaking' 
                   ? 'scale-105 drop-shadow-lg' 
@@ -2188,23 +2262,25 @@ export default function VoiceInterviewWebSocket({
           </CardContent>
         </Card>
 
-        {/* PERF: Stable keys for reconciliation; consider virtualization (e.g. react-window) if transcript items exceed ~50. */}
         <Card className={interviewRoomCardClassName}>
           <CardContent className="p-6">
             <h3 className="text-lg font-semibold mb-4">Live Transcript</h3>
-            <div className="max-h-96 overflow-y-auto space-y-3">
-              {transcripts.length === 0 ? (
+            <div className="max-h-96 space-y-3 overflow-y-auto">
+              {liveTranscriptMessages.length === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-8">
-                  Transcript will appear here as the conversation progresses...
+                  {isConnected && conversation.isSpeaking
+                    ? 'Listening for live transcript events… If text never appears, enable client events on your ElevenLabs agent: internal_tentative_agent_response, tentative_user_transcript, user_transcript, and agent_response.'
+                    : 'Transcript will appear here as the conversation progresses...'}
                 </p>
               ) : (
-                transcripts.map((transcript, index) => (
+                liveTranscriptMessages.map((transcript, index) => (
                   <TranscriptRow
-                    key={`${transcript.timestamp ?? index}-${index}`}
+                    key={`${transcript.type}-${transcript.timestamp}-${index}`}
                     transcript={transcript}
                   />
                 ))
               )}
+              <div ref={transcriptEndRef} />
             </div>
           </CardContent>
         </Card>
