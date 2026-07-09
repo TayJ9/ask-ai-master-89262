@@ -163,7 +163,27 @@ async function testDirectPersist(): Promise<{
   });
   ok("resume_highlights generated");
 
-  const combined = `${persisted.resume_summary} ${persisted.resume_highlights} ${persisted.resumeText}`;
+  assert(
+    persisted.briefSource === "structured",
+    "interview brief should be structured for labeled resumes",
+    { briefSource: persisted.briefSource, preview: persisted.resume_summary.slice(0, 300) },
+  );
+  ok(`briefSource=${persisted.briefSource}`);
+
+  // Markers must appear in the dynamic-var brief itself (not only fulltext),
+  // so the interviewer can ask about them without calling server tools.
+  const briefText = `${persisted.resume_summary} ${persisted.resume_highlights}`;
+  const briefMarkerHits = [COMPANY_MARKER, PROJECT_MARKER, SKILL_MARKER].filter((m) =>
+    containsMarker(briefText, m),
+  );
+  assert(
+    briefMarkerHits.length >= 2,
+    "structured brief retains distinctive markers for tailored questions",
+    { briefMarkerHits, briefPreview: briefText.slice(0, 400) },
+  );
+  ok(`structured brief retains markers: ${briefMarkerHits.join(", ")}`);
+
+  const combined = `${briefText} ${persisted.resumeText}`;
   const markerHits = [COMPANY_MARKER, PROJECT_MARKER, SKILL_MARKER].filter((m) =>
     containsMarker(combined, m),
   );

@@ -1,0 +1,72 @@
+{
+  "capturedAt": "2026-07-09T16:46:45.895Z",
+  "baseUrl": "http://127.0.0.1:5173",
+  "viewport": "1440x900",
+  "screens": [
+    {
+      "file": "01-auth-login.png",
+      "label": "Auth — Sign in",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\01-auth-login.png"
+    },
+    {
+      "file": "02-auth-signup.png",
+      "label": "Auth — Sign up",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\02-auth-signup.png"
+    },
+    {
+      "file": "03-role-selection.png",
+      "label": "Home — Role selection",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\03-role-selection.png"
+    },
+    {
+      "file": "04-resume-upload.png",
+      "label": "Home — Resume upload",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\04-resume-upload.png"
+    },
+    {
+      "file": "05-session-history.png",
+      "label": "Home — Session history",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\05-session-history.png"
+    },
+    {
+      "file": "06-results-tech-demo.png",
+      "label": "Results — Tech demo",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\06-results-tech-demo.png"
+    },
+    {
+      "file": "07-results-business-demo.png",
+      "label": "Results — Business demo",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\07-results-business-demo.png"
+    },
+    {
+      "file": "08-interview-preview-idle.png",
+      "label": "Interview preview — Idle",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\08-interview-preview-idle.png"
+    },
+    {
+      "file": "09-interview-preview-listening.png",
+      "label": "Interview preview — Listening",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\09-interview-preview-listening.png"
+    },
+    {
+      "file": "10-interview-preview-user-speaking.png",
+      "label": "Interview preview — User speaking",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\10-interview-preview-user-speaking.png"
+    },
+    {
+      "file": "11-interview-preview-ai-speaking.png",
+      "label": "Interview preview — AI speaking",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\11-interview-preview-ai-speaking.png"
+    },
+    {
+      "file": "12-interview-preview-processing.png",
+      "label": "Interview preview — Processing",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\12-interview-preview-processing.png"
+    },
+    {
+      "file": "13-not-found.png",
+      "label": "404 — Page not found",
+      "path": "C:\\Users\\tayjs\\OneDrive - College of Charleston\\Documents\\ask-ai-master-89262\\ui-screenshots\\before-2026-07-09\\13-not-found.png"
+    }
+  ]
+}

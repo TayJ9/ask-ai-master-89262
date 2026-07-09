@@ -356,10 +356,10 @@ function createElevenLabsConnection(apiKey, candidateContext) {
     // Map candidate context to ElevenLabs format
     const elevenLabsContext = mapCandidateContextToElevenLabs(candidateContext);
     console.log('📋 ElevenLabs Context Variables:');
-    console.log('   Resume:', elevenLabsContext.resume.substring(0, 100) + '...');
-    console.log('   Major:', elevenLabsContext.major);
-    console.log('   Grade Level:', elevenLabsContext.grade_level);
-    console.log('   Target Role:', elevenLabsContext.target_role);
+    console.log('   Resume length:', elevenLabsContext.resume.length);
+    console.log('   Has Major:', !!elevenLabsContext.major);
+    console.log('   Has Grade Level:', !!elevenLabsContext.grade_level);
+    console.log('   Has Target Role:', !!elevenLabsContext.target_role);
     
     // Add connection timeout
     const connectionTimeout = setTimeout(() => {
@@ -425,7 +425,6 @@ function createElevenLabsConnection(apiKey, candidateContext) {
         }
       };
       
-      // Log the exact message being sent for verification
       const initMessageJson = JSON.stringify(initMessage, null, 2);
       console.log('✓ Conversation initialization message prepared');
       console.log('📋 ElevenLabs Configuration:');
@@ -436,8 +435,12 @@ function createElevenLabsConnection(apiKey, candidateContext) {
       console.log('   Input Audio Format: 16kHz PCM16 mono');
       console.log('   Output Format (string): pcm_16000');
       console.log('   Output Audio Format (object): 16kHz PCM16 mono');
-      console.log('   Full conversation_init message:');
-      console.log(initMessageJson);
+      console.log('   Context metadata:', {
+        resumeLength: elevenLabsContext.resume.length,
+        hasMajor: !!elevenLabsContext.major,
+        hasGradeLevel: !!elevenLabsContext.grade_level,
+        hasTargetRole: !!elevenLabsContext.target_role,
+      });
       
       ws.send(initMessageJson);
       console.log('✅ Conversation initialization sent to ElevenLabs');
@@ -610,11 +613,21 @@ function handleFrontendConnection(frontendWs, httpServer) {
       
       console.log('✅ Successfully parsed JSON message');
       
-      // Log full message details
+      // Log metadata only; frontend messages can contain transcripts or resume-derived context.
       console.log('📥 ========================================');
       console.log('📥 RECEIVED MESSAGE FROM FRONTEND');
       console.log('📥 Message Type:', message.type);
-      console.log('📥 Full Message:', JSON.stringify(message, null, 2));
+      console.log('📥 Message Metadata:', {
+        type: message.type,
+        keys: Object.keys(message || {}),
+        hasAudio: typeof message.audio === 'string' && message.audio.length > 0,
+        audioLength: typeof message.audio === 'string' ? message.audio.length : 0,
+        hasText: typeof message.text === 'string' && message.text.length > 0,
+        textLength: typeof message.text === 'string' ? message.text.length : 0,
+        hasTranscript: typeof message.transcript === 'string' && message.transcript.length > 0,
+        transcriptLength: typeof message.transcript === 'string' ? message.transcript.length : 0,
+        hasCandidateContext: !!message.candidateContext,
+      });
       console.log('📥 Timestamp:', new Date().toISOString());
       console.log('📥 WebSocket State:', frontendWs.readyState === WebSocket.OPEN ? 'OPEN' : 'NOT OPEN');
       console.log('📥 ========================================');
@@ -625,8 +638,10 @@ function handleFrontendConnection(frontendWs, httpServer) {
         console.log('🚀 ========================================');
         
         candidateContext = message.candidateContext || {};
-        console.log('🎤 Starting interview for:', candidateContext.name || 'Unknown');
-        console.log('📋 Candidate context:', JSON.stringify(candidateContext, null, 2));
+        console.log('🎤 Starting interview', {
+          hasCandidateName: !!candidateContext.name,
+          candidateContextKeys: Object.keys(candidateContext),
+        });
         
         // CRITICAL: Send immediate acknowledgment BEFORE any async operations
         console.log('📤 ========================================');
@@ -1155,8 +1170,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   break;
                   
                 case 'response.audio_transcript.done':
-                  // Keep this log as it's important
-                  console.log('✅ OpenAI transcript done:', openAIMessage.text);
+                  console.log('✅ OpenAI transcript done', {
+                    textLength: typeof openAIMessage.text === 'string' ? openAIMessage.text.length : 0,
+                  });
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     const transcriptMessage = {
                       type: 'ai_transcription',
@@ -1250,7 +1266,9 @@ function handleFrontendConnection(frontendWs, httpServer) {
                   break;
                   
                 case 'conversation.item.input_audio_transcript.completed':
-                  console.log('📝 Student transcript completed:', openAIMessage.transcript);
+                  console.log('📝 Student transcript completed', {
+                    transcriptLength: typeof openAIMessage.transcript === 'string' ? openAIMessage.transcript.length : 0,
+                  });
                   if (frontendWs.readyState === WebSocket.OPEN) {
                     frontendWs.send(JSON.stringify({
                       type: 'student_transcription',
@@ -1502,7 +1520,13 @@ function handleFrontendConnection(frontendWs, httpServer) {
         }
       } else {
         console.log('⚠️  UNKNOWN MESSAGE TYPE:', message.type);
-        console.log('⚠️  Full message:', JSON.stringify(message, null, 2));
+        console.log('⚠️  Message metadata:', {
+          keys: Object.keys(message || {}),
+          hasAudio: typeof message.audio === 'string' && message.audio.length > 0,
+          audioLength: typeof message.audio === 'string' ? message.audio.length : 0,
+          hasText: typeof message.text === 'string' && message.text.length > 0,
+          textLength: typeof message.text === 'string' ? message.text.length : 0,
+        });
         if (frontendWs.readyState === WebSocket.OPEN) {
           frontendWs.send(JSON.stringify({
             type: 'error',

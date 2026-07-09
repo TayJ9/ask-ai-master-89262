@@ -28,6 +28,7 @@ import { useAmbientSound } from "@/hooks/useAmbientSound";
 import {
   type TranscriptMessage,
   type TranscriptUpdate,
+  diagnoseTranscriptUpsert,
   getLiveTranscriptHistory,
   upsertTranscriptMessage,
   extractTranscriptUpdate,
@@ -37,6 +38,7 @@ import {
   shouldApplyAiStreamUpdate,
   shouldIgnoreEmptyAiFinal,
 } from "@/lib/transcriptStreaming";
+import type { CandidateContext } from "@/lib/candidateContext";
 
 const BUILD_ID = "eleven-resume-logging-v1";
 
@@ -80,19 +82,7 @@ interface VoiceInterviewWebSocketProps {
   sessionId: string;
   firstName: string;
   major: string;
-  candidateContext: {
-    name: string;
-    major: string;
-    year: string;
-    skills?: string[];
-    experience?: string;
-    education?: string;
-    summary?: string;
-    resumeText?: string;
-    resumeSource?: string;
-    resume_summary?: string;
-    resume_highlights?: string;
-  };
+  candidateContext: Omit<CandidateContext, "firstName" | "sessionId"> & { name: string };
   onComplete: (results?: any) => void;
   /** Callback when interview ends via tool call (e.g., MarkInterviewComplete) */
   onInterviewEnd?: (data: { status: string; timestamp: string; reason: string; sessionId?: string; conversationId?: string | null; interviewId?: string | null }) => void;
@@ -789,28 +779,64 @@ export default function VoiceInterviewWebSocket({
       receivedLiveStreamRef.current = false;
     }
 
-    if (import.meta.env.DEV) {
-      console.log('[TRANSCRIPT]', {
-        speaker: nextUpdate.type,
-        isFinal: nextUpdate.isFinal,
-        mergeMode: nextUpdate.mergeMode,
-        streamKind: nextUpdate.streamKind,
-        finalizeOnly: !!nextUpdate.finalizeOnly,
-        chars: nextUpdate.text.length,
-        preview: nextUpdate.text.slice(0, 80),
-      });
-    }
-
-    setTranscripts((prev) => upsertTranscriptMessage(prev, nextUpdate));
+    setTranscripts((prev) => {
+      const next = upsertTranscriptMessage(prev, nextUpdate);
+      if (import.meta.env.DEV) {
+        const diag = diagnoseTranscriptUpsert(prev, nextUpdate);
+        const afterCounts = {
+          ai: next.filter((m) => m.type === 'ai').length,
+          student: next.filter((m) => m.type === 'student').length,
+          total: next.length,
+        };
+        console.log('[TRANSCRIPT]', {
+          speaker: nextUpdate.type,
+          isFinal: nextUpdate.isFinal,
+          mergeMode: nextUpdate.mergeMode,
+          streamKind: nextUpdate.streamKind,
+          finalizeOnly: !!nextUpdate.finalizeOnly,
+          chars: nextUpdate.text.length,
+          preview: nextUpdate.text.slice(0, 80),
+          action: diag.action,
+          reason: diag.reason,
+          mergeIndex: diag.mergeIndex,
+          existingPreview: diag.existingPreview,
+          existingIsFinal: diag.existingIsFinal,
+          existingStreamKind: diag.existingStreamKind,
+          beforeCounts: diag.bubbleCounts,
+          afterCounts,
+          openedNewBubble: diag.action === 'append_new',
+          duplicatedAiRisk:
+            nextUpdate.type === 'ai' &&
+            diag.action === 'append_new' &&
+            diag.bubbleCounts.ai > 0,
+        });
+      }
+      return next;
+    });
   }, []);
 
   const handleMessage = useCallback((message: any) => {
     if (!isMountedRef.current) return;
-    console.log('SDK Message:', message);
+    console.log('SDK Message metadata:', {
+      type: message?.type,
+      source: message?.source,
+      role: message?.role,
+      hasAudio: Boolean(message?.audio_event),
+      hasTranscript: Boolean(
+        message?.message ||
+          message?.user_transcription_event ||
+          message?.agent_response_event,
+      ),
+      hasClientToolCall: Boolean(message?.client_tool_call),
+    });
+
+    // Extract before state transitions so tentative user messages can stream
+    // into the "You" bubble without being treated as speech-end finals.
+    const transcriptUpdate = extractTranscriptUpdate(message);
     
     // --- Server-event-driven processing state ---
     // SDK sends NORMALIZED format to onMessage: { message, role, source } (not raw WebSocket types)
-    // source: "user" = user spoke, source: "ai" = agent responded
+    // source: "user" can be tentative or final in current SDK docs.
     // Also support raw IncomingSocketEvent types (user_transcript, agent_response, etc.) when present
 
     // User speech finalized -> enter processing (waiting for agent)
@@ -818,7 +844,7 @@ export default function VoiceInterviewWebSocket({
       message.source === 'user' ||
       message.type === 'user_transcript' ||
       message.user_transcription_event;
-    if (isUserTranscript) {
+    if (isUserTranscript && (transcriptUpdate?.isFinal ?? true)) {
       const trigger = message.source === 'user' ? 'source:user' : message.type || 'user_transcription_event';
       console.log('[PROCESSING_STATE] ENTER processing (user spoke)', { trigger, source: message.source, type: message.type });
       setServerProcessing(true);
@@ -927,7 +953,11 @@ export default function VoiceInterviewWebSocket({
       const toolCall = message.client_tool_call || message;
       const toolName = toolCall.tool_name || message.tool_name;
       
-      console.log('Tool call received:', toolCall);
+      console.log('Tool call received:', {
+        toolName,
+        toolCallId: toolCall.tool_call_id || message.tool_call_id,
+        hasParameters: Boolean(toolCall.parameters || message.parameters),
+      });
       
       if (toolName === 'MarkInterviewComplete') {
         console.log('[FLIGHT_RECORDER] [INTERVIEW] MarkInterviewComplete tool call received');
@@ -1013,9 +1043,15 @@ export default function VoiceInterviewWebSocket({
       return; // Don't process tool calls as regular messages
     }
     
-    // Extract streaming transcript updates from SDK / WebSocket events
-    const transcriptUpdate = extractTranscriptUpdate(message);
     const isAI = transcriptUpdate?.type === 'ai';
+    if (import.meta.env.DEV && transcriptUpdate?.type === 'student') {
+      console.log('[TRANSCRIPT:MESSAGE] extracted user update', {
+        streamKind: transcriptUpdate.streamKind,
+        isFinal: transcriptUpdate.isFinal,
+        chars: transcriptUpdate.text.length,
+        preview: transcriptUpdate.text.slice(0, 80),
+      });
+    }
 
     if (shouldDebugEleven() && isAI && transcriptUpdate?.text && !firstAiFinalizedRef.current) {
       firstAiMessageRef.current += transcriptUpdate.text;
@@ -1071,15 +1107,55 @@ export default function VoiceInterviewWebSocket({
   // Tentative AI arrives only via onDebug (SDK does not call onMessage for it).
   // User tentative_user_transcript can also land here, sometimes wrapped in a debug envelope.
   const handleDebug = useCallback((debug: any) => {
+    if (import.meta.env.DEV) {
+      const debugType =
+        debug?.type ||
+        debug?.event ||
+        debug?.message?.type ||
+        (typeof debug === 'string' ? debug.slice(0, 40) : undefined);
+      console.log('[TRANSCRIPT:DEBUG]', {
+        debugType,
+        keys: debug && typeof debug === 'object' ? Object.keys(debug).slice(0, 12) : [],
+        preview:
+          typeof debug?.response === 'string'
+            ? debug.response.slice(0, 80)
+            : typeof debug?.message === 'string'
+              ? debug.message.slice(0, 80)
+              : typeof debug?.tentative_user_transcription_event?.user_transcript === 'string'
+                ? debug.tentative_user_transcription_event.user_transcript.slice(0, 80)
+                : undefined,
+      });
+    }
+
     const tentativeUpdate = extractTentativeAgentDebugUpdate(debug);
     if (tentativeUpdate) {
+      if (import.meta.env.DEV) {
+        console.log('[TRANSCRIPT:DEBUG] applied tentative AI', {
+          chars: tentativeUpdate.text.length,
+          preview: tentativeUpdate.text.slice(0, 80),
+        });
+      }
       applyTranscriptUpdate(tentativeUpdate);
       return;
     }
 
     const update = extractTranscriptUpdate(debug);
     if (update) {
+      if (import.meta.env.DEV) {
+        console.log('[TRANSCRIPT:DEBUG] applied extracted update', {
+          speaker: update.type,
+          streamKind: update.streamKind,
+          isFinal: update.isFinal,
+          chars: update.text.length,
+          preview: update.text.slice(0, 80),
+        });
+      }
       applyTranscriptUpdate(update);
+      return;
+    }
+
+    if (import.meta.env.DEV) {
+      console.log('[TRANSCRIPT:DEBUG] no transcript update extracted (tentative user may be missing)');
     }
   }, [applyTranscriptUpdate]);
 
@@ -1088,7 +1164,17 @@ export default function VoiceInterviewWebSocket({
   const handleAudioAlignment = useCallback((alignment: { chars?: string[] }) => {
     const update = extractAudioAlignmentUpdate(alignment);
     if (update) {
+      if (import.meta.env.DEV) {
+        console.log('[TRANSCRIPT:ALIGNMENT]', {
+          chars: update.text.length,
+          preview: update.text.slice(0, 80),
+        });
+      }
       applyTranscriptUpdate(update);
+    } else if (import.meta.env.DEV) {
+      console.log('[TRANSCRIPT:ALIGNMENT] empty/ignored alignment payload', {
+        charCount: Array.isArray(alignment?.chars) ? alignment.chars.length : 0,
+      });
     }
   }, [applyTranscriptUpdate]);
 
@@ -1431,7 +1517,12 @@ export default function VoiceInterviewWebSocket({
 
     const normalizedFirstName = firstName?.trim() || '';
     const normalizedMajor = major?.trim() || '';
-    const resumeTextForSession = candidateContext?.resumeText || candidateContext?.summary || '';
+    const resumeTextForSession =
+      candidateContext?.resumeText ||
+      candidateContext?.resume_summary ||
+      candidateContext?.summary ||
+      candidateContext?.resume_highlights ||
+      '';
     const resumeSourceForSession = candidateContext?.resumeSource || 'not_provided';
     const resumeChars = resumeTextForSession?.length || 0;
     const candidateContextPresent = !!candidateContext;

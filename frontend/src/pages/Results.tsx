@@ -1287,7 +1287,7 @@ export default function Results() {
 
           {/* Breadcrumb Navigation - Sticky - Optimized for scroll */}
           <nav
-            className="sticky top-[max(0px,env(safe-area-inset-top))] z-50 -mx-4 mb-4 flex max-w-full items-center gap-2 overflow-x-auto rounded-xl border border-border/70 bg-card/90 px-3 py-2.5 text-sm text-muted-foreground shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/75 sm:-mx-0 sm:px-4"
+            className="sticky top-[max(0px,env(safe-area-inset-top))] z-50 mx-auto mb-4 flex w-full items-center justify-center gap-2 overflow-x-auto rounded-xl border border-border/70 bg-card/90 px-3 py-2.5 text-sm text-muted-foreground shadow-sm backdrop-blur-md supports-[backdrop-filter]:bg-card/75 sm:justify-start sm:px-4"
             style={{ 
               willChange: 'transform',
               transform: 'translate3d(0, 0, 0)',

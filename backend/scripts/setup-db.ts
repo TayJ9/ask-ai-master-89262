@@ -59,7 +59,8 @@ async function setupDatabase() {
       'profiles',
       'interviews',
       'interview_evaluations',
-      'elevenlabs_interview_sessions'
+      'elevenlabs_interview_sessions',
+      'resumes'
     ];
     
     const tableExistence = await Promise.all(
@@ -208,6 +209,20 @@ async function setupDatabase() {
       `);
     console.log('✅ Created elevenlabs_interview_sessions table');
 
+    // Create resumes table (resume upload / ElevenLabs resume tools)
+    await executeQuery(`
+        CREATE TABLE IF NOT EXISTS resumes (
+          interview_id UUID PRIMARY KEY,
+          user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+          resume_fulltext TEXT,
+          resume_profile JSONB,
+          created_at TIMESTAMP DEFAULT NOW(),
+          updated_at TIMESTAMP DEFAULT NOW()
+        );
+      `);
+    await executeQuery(`ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES profiles(id) ON DELETE CASCADE;`);
+    console.log('✅ Created resumes table');
+
     // Dedupe before adding unique indexes. For duplicate interviews, keep rows but
     // clear duplicate conversation IDs to avoid cascading deletes.
     await executeQuery(`
@@ -268,6 +283,7 @@ async function setupDatabase() {
         CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_client_session_id ON elevenlabs_interview_sessions(client_session_id);
         CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_conversation_id ON elevenlabs_interview_sessions(conversation_id);
         CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_status ON elevenlabs_interview_sessions(status);
+        CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes(user_id);
       `);
     console.log('✅ Created indexes');
 

@@ -2,7 +2,11 @@
  * Hugging Face Resume Processing
  *
  * Priority 1: NER for resume profile extraction (skills, companies, education)
- * Priority 2: Summarization for resume_summary and resume_highlights
+ * Priority 2: Prose summarization — used only as a weak fallback when the
+ *             structured interview brief cannot be built from the profile.
+ *
+ * Interview dynamic vars prefer `buildInterviewResumeBrief` (structured).
+ * Full resume text remains available via GetResumeFullText server tools.
  *
  * Falls back to heuristic/slice when HUGGINGFACE_TOKEN is not set or on API errors.
  */

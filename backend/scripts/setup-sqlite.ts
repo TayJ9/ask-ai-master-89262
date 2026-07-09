@@ -164,6 +164,7 @@ try {
   db.exec(`
     CREATE TABLE IF NOT EXISTS resumes (
       interview_id TEXT PRIMARY KEY,
+      user_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
       resume_fulltext TEXT,
       resume_profile TEXT,
       created_at TEXT DEFAULT (datetime('now')),
@@ -171,6 +172,14 @@ try {
     );
   `);
   console.log('✅ Created resumes table');
+
+  // Add user_id if missing (migration for existing DBs)
+  try {
+    db.exec(`ALTER TABLE resumes ADD COLUMN user_id TEXT REFERENCES profiles(id) ON DELETE CASCADE`);
+    console.log('✅ Added resumes.user_id column');
+  } catch {
+    // Column exists, ignore
+  }
 
   // Dedupe before adding unique indexes. Preserve duplicate interview rows by
   // clearing duplicate conversation IDs instead of deleting interviews.
@@ -236,6 +245,7 @@ try {
     CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_client_session_id ON elevenlabs_interview_sessions(client_session_id);
     CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_conversation_id ON elevenlabs_interview_sessions(conversation_id);
     CREATE INDEX IF NOT EXISTS idx_elevenlabs_sessions_status ON elevenlabs_interview_sessions(status);
+    CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes(user_id);
   `);
   console.log('✅ Created indexes');
 

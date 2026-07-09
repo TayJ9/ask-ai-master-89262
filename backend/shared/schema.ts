@@ -165,6 +165,7 @@ export type ElevenLabsInterviewSession = typeof elevenLabsInterviewSessions.$inf
 // Resume storage keyed by interview/session id
 export const resumes = pgTable("resumes", {
   interviewId: uuid("interview_id").primaryKey(),
+  userId: uuid("user_id").references(() => profiles.id, { onDelete: "cascade" }),
   resumeFulltext: text("resume_fulltext"),
   resumeProfile: jsonb("resume_profile"),
   createdAt: timestamp("created_at").defaultNow(),

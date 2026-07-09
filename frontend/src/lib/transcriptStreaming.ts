@@ -24,15 +24,73 @@ export type TranscriptUpdate = {
   streamKind?: TranscriptStreamKind;
 };
 
+function normalizeForSimilarity(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function tokenOverlapRatio(existingText: string, incomingText: string): number {
+  const existingTokens = normalizeForSimilarity(existingText).split(' ').filter(Boolean);
+  const incomingTokens = normalizeForSimilarity(incomingText).split(' ').filter(Boolean);
+  if (!existingTokens.length || !incomingTokens.length) return 0;
+
+  const incomingCounts = new Map<string, number>();
+  for (const token of incomingTokens) {
+    incomingCounts.set(token, (incomingCounts.get(token) ?? 0) + 1);
+  }
+
+  let overlap = 0;
+  for (const token of existingTokens) {
+    const count = incomingCounts.get(token) ?? 0;
+    if (count > 0) {
+      overlap++;
+      if (count === 1) {
+        incomingCounts.delete(token);
+      } else {
+        incomingCounts.set(token, count - 1);
+      }
+    }
+  }
+
+  return overlap / Math.min(existingTokens.length, incomingTokens.length);
+}
+
+function areLikelySameTurn(existingText: string, incomingText: string): boolean {
+  const existingTrim = existingText.trim();
+  const incomingTrim = incomingText.trim();
+  if (!incomingTrim || !existingTrim) return true;
+  if (existingTrim === incomingTrim) return true;
+  if (incomingTrim.startsWith(existingTrim) || existingTrim.startsWith(incomingTrim)) return true;
+  if (existingTrim.includes(incomingTrim) || incomingTrim.includes(existingTrim)) return true;
+
+  const existingNorm = normalizeForSimilarity(existingTrim);
+  const incomingNorm = normalizeForSimilarity(incomingTrim);
+  if (!existingNorm || !incomingNorm) return false;
+  if (existingNorm.includes(incomingNorm) || incomingNorm.includes(existingNorm)) return true;
+
+  return tokenOverlapRatio(existingNorm, incomingNorm) >= 0.72;
+}
+
 /**
- * Same-turn finalize/correction may merge into an already-final bubble.
- * Unrelated finals (new turn) must open a new bubble so history is preserved.
+ * Same-turn stream/final/correction updates may merge into an already-final bubble.
+ * Unrelated new turns must open a new bubble so history is preserved.
  */
 export function canFinalizeMergeInto(
   existing: TranscriptMessage,
   update: TranscriptUpdate,
 ): boolean {
-  if (!update.isFinal) return false;
+  if (!update.isFinal) {
+    return (
+      update.type === 'ai' &&
+      (update.streamKind === 'alignment' ||
+        update.streamKind === 'chat_part' ||
+        update.streamKind === 'tentative') &&
+      areLikelySameTurn(existing.text, update.text)
+    );
+  }
   if (update.finalizeOnly) return true;
   if (update.streamKind === 'correction') return true;
 
@@ -45,7 +103,7 @@ export function canFinalizeMergeInto(
   if (incomingText.startsWith(existingText) || existingText.startsWith(incomingText)) {
     return true;
   }
-  return false;
+  return update.type === 'ai' && areLikelySameTurn(existingText, incomingText);
 }
 
 /**
@@ -169,13 +227,153 @@ export function findTranscriptMergeIndex(
   update: TranscriptUpdate,
 ): number {
   for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].type !== update.type) continue;
+    if (messages[i].type !== update.type) {
+      if (!update.isFinal) return -1;
+      continue;
+    }
     const existing = messages[i];
     if (!existing.isFinal) return i;
     if (canFinalizeMergeInto(existing, update)) return i;
     return -1;
   }
   return -1;
+}
+
+export type TranscriptUpsertAction =
+  | 'noop'
+  | 'finalize_only'
+  | 'merge'
+  | 'append_new'
+  | 'skip_empty';
+
+/**
+ * DEV diagnostics for why an update merges into an existing bubble vs opens a new one.
+ * Useful when live panel shows duplicate AI turns (streamed vs corrected final).
+ */
+export function diagnoseTranscriptUpsert(
+  messages: TranscriptMessage[],
+  update: TranscriptUpdate,
+): {
+  action: TranscriptUpsertAction;
+  mergeIndex: number;
+  reason: string;
+  existingPreview?: string;
+  existingIsFinal?: boolean;
+  existingStreamKind?: TranscriptStreamKind;
+  incomingPreview: string;
+  bubbleCounts: { ai: number; student: number; total: number };
+} {
+  const bubbleCounts = {
+    ai: messages.filter((m) => m.type === 'ai').length,
+    student: messages.filter((m) => m.type === 'student').length,
+    total: messages.length,
+  };
+  const incomingPreview = update.text.slice(0, 80);
+  const mergeIndex = findTranscriptMergeIndex(messages, update);
+
+  if (update.finalizeOnly) {
+    if (mergeIndex >= 0 && !messages[mergeIndex].isFinal) {
+      return {
+        action: 'finalize_only',
+        mergeIndex,
+        reason: 'finalizeOnly applied to in-progress bubble',
+        existingPreview: messages[mergeIndex].text.slice(0, 80),
+        existingIsFinal: messages[mergeIndex].isFinal,
+        existingStreamKind: messages[mergeIndex].streamKind,
+        incomingPreview,
+        bubbleCounts,
+      };
+    }
+    return {
+      action: 'noop',
+      mergeIndex,
+      reason: 'finalizeOnly with no matching in-progress bubble',
+      incomingPreview,
+      bubbleCounts,
+    };
+  }
+
+  if (!update.text.trim() && !update.isFinal) {
+    return {
+      action: 'skip_empty',
+      mergeIndex,
+      reason: 'empty non-final update ignored',
+      incomingPreview,
+      bubbleCounts,
+    };
+  }
+
+  if (mergeIndex >= 0) {
+    const existing = messages[mergeIndex];
+    return {
+      action: 'merge',
+      mergeIndex,
+      reason: existing.isFinal
+        ? 'merged into already-final same-turn bubble (canFinalizeMergeInto)'
+        : 'merged into in-progress bubble',
+      existingPreview: existing.text.slice(0, 80),
+      existingIsFinal: existing.isFinal,
+      existingStreamKind: existing.streamKind,
+      incomingPreview,
+      bubbleCounts,
+    };
+  }
+
+  if (!update.text.trim()) {
+    return {
+      action: 'skip_empty',
+      mergeIndex: -1,
+      reason: 'empty final/update with no merge target',
+      incomingPreview,
+      bubbleCounts,
+    };
+  }
+
+  // Explain why the latest same-speaker bubble was rejected as a merge target.
+  let reason = 'no same-speaker bubble found; opening new bubble';
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].type !== update.type) continue;
+    const existing = messages[i];
+    if (!existing.isFinal) {
+      reason = 'unexpected: in-progress bubble exists but mergeIndex was -1';
+      break;
+    }
+    const existingText = existing.text.trim();
+    const incomingText = update.text.trim();
+    const prefixOk =
+      !!incomingText &&
+      !!existingText &&
+      (incomingText.startsWith(existingText) || existingText.startsWith(incomingText));
+    const sameTurnLikely = areLikelySameTurn(existingText, incomingText);
+    reason = [
+      'latest same-speaker bubble is already final and failed canFinalizeMergeInto',
+      `existingKind=${existing.streamKind ?? 'unknown'}`,
+      `incomingKind=${update.streamKind ?? 'unknown'}`,
+      `prefixRelated=${prefixOk}`,
+      `sameTurnLikely=${sameTurnLikely}`,
+      `existingChars=${existingText.length}`,
+      `incomingChars=${incomingText.length}`,
+      '→ opening NEW bubble (likely duplicate AI turn)',
+    ].join('; ');
+    return {
+      action: 'append_new',
+      mergeIndex: -1,
+      reason,
+      existingPreview: existing.text.slice(0, 80),
+      existingIsFinal: existing.isFinal,
+      existingStreamKind: existing.streamKind,
+      incomingPreview,
+      bubbleCounts,
+    };
+  }
+
+  return {
+    action: 'append_new',
+    mergeIndex: -1,
+    reason,
+    incomingPreview,
+    bubbleCounts,
+  };
 }
 
 /**
@@ -312,20 +510,35 @@ export function extractTranscriptUpdate(message: any): TranscriptUpdate | null {
     if (nestedUpdate) return nestedUpdate;
   }
 
-  if (message.type === 'user_transcript' && message.user_transcription_event) {
+  if (message.type === 'user_transcript') {
+    const text =
+      message.user_transcription_event?.user_transcript ||
+      message.user_transcript ||
+      message.transcript ||
+      message.text ||
+      message.message ||
+      '';
     return {
       type: 'student',
-      text: message.user_transcription_event.user_transcript || '',
+      text,
       isFinal: true,
       mergeMode: 'replace',
       streamKind: 'final',
     };
   }
 
-  if (message.type === 'tentative_user_transcript' && message.tentative_user_transcription_event) {
+  if (message.type === 'tentative_user_transcript') {
+    const text =
+      message.tentative_user_transcription_event?.user_transcript ||
+      message.tentative_user_transcript ||
+      message.user_transcript ||
+      message.transcript ||
+      message.text ||
+      message.message ||
+      '';
     return {
       type: 'student',
-      text: message.tentative_user_transcription_event.user_transcript || '',
+      text,
       isFinal: false,
       mergeMode: 'replace',
       streamKind: 'tentative',
@@ -416,14 +629,15 @@ export function extractTranscriptUpdate(message: any): TranscriptUpdate | null {
   const fallbackText = message.message || message.text || '';
   if (!fallbackText) return null;
 
-  // SDK onMessage only delivers finalized user/agent turns (not streaming chunks).
+  // SDK onMessage may deliver tentative or final user/agent text depending on transport/version.
   if (isNormalizedSdkMessage) {
+    const isFinal = message?.isFinal ?? message?.final ?? true;
     return {
       type: isAI ? 'ai' : 'student',
       text: fallbackText,
-      isFinal: message?.isFinal ?? message?.final ?? true,
+      isFinal,
       mergeMode: 'replace',
-      streamKind: 'final',
+      streamKind: isFinal ? 'final' : 'tentative',
     };
   }
 

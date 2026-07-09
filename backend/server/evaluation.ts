@@ -12,6 +12,7 @@ import { scoreInterview } from "./llm/openaiEvaluator";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { randomUUID } from "crypto";
 import { parseTranscript } from "./transcriptParse";
+import { storage } from "./storage";
 
 export { parseTranscript } from "./transcriptParse";
 

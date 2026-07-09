@@ -234,6 +234,12 @@ All colors MUST be HSL.
     50% { opacity: 0.9; transform: translate3d(0, 0, 0) scale(1.02); }
   }
 
+  @media (prefers-reduced-motion: reduce) {
+    .btn-pulse-hero {
+      animation: none;
+    }
+  }
+
   @keyframes scaleIn {
     from {
       opacity: 0;

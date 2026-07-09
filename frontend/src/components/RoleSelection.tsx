@@ -47,8 +47,8 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
   ];
 
   return (
-    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
-      <div className="animate-scale-in flex w-full max-w-3xl flex-col items-center justify-center gap-8 py-10 sm:py-14">
+    <AnimatedBackground className="flex !min-h-full items-start justify-center p-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:items-center sm:p-6">
+      <div className="animate-scale-in flex w-full max-w-3xl flex-col items-center justify-center gap-5 py-6 sm:gap-8 sm:py-10">
         <motion.div
           className="w-full space-y-4 text-center"
           initial={{ opacity: 0, y: 8 }}
@@ -70,7 +70,7 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
         </motion.div>
 
         <motion.div
-          className="w-full max-w-lg space-y-5 rounded-2xl border border-white/70 bg-card/95 p-6 shadow-2xl shadow-slate-900/10 ring-1 ring-slate-200/70 backdrop-blur-sm sm:p-8"
+          className="w-full max-w-lg space-y-5 rounded-2xl border border-white/70 bg-card/95 p-5 shadow-2xl shadow-slate-900/10 ring-1 ring-slate-200/70 backdrop-blur-sm sm:p-8"
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.55, delay: 0.12, ease: [0.33, 1, 0.68, 1] }}
@@ -85,7 +85,7 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
             <Button
               onClick={handleBeginInterview}
               size="lg"
-              className="btn-pulse-hero !inline-flex w-full !gap-0 items-center justify-evenly bg-primary px-2 py-6 text-base font-semibold text-primary-foreground shadow-md transition-transform duration-500 ease-out hover:scale-[1.01] hover:bg-primary/90 sm:px-4"
+              className="btn-pulse-hero !inline-flex w-full items-center justify-center gap-2 bg-primary px-4 py-6 text-base font-semibold text-primary-foreground shadow-md transition-transform duration-500 ease-out hover:scale-[1.01] hover:bg-primary/90 sm:justify-evenly sm:gap-0 sm:px-4"
               data-testid="button-begin-interview"
             >
               <Mic className="h-5 w-5 shrink-0" aria-hidden />
@@ -148,7 +148,7 @@ function RoleSelection({ onSelectRole }: RoleSelectionProps) {
           {features.map((feature, index) => (
             <div
               key={index}
-              className="group flex items-start gap-3 rounded-xl border border-white/70 bg-card/90 px-4 py-3 shadow-md shadow-slate-900/5 ring-1 ring-slate-200/60 transition-all duration-500 ease-out hover:-translate-y-1 hover:scale-[1.02] hover:border-primary/25 hover:bg-card/95 hover:shadow-xl hover:shadow-slate-900/10"
+              className="group flex items-start gap-3 rounded-xl border border-white/70 bg-card/90 px-3 py-2.5 shadow-md shadow-slate-900/5 ring-1 ring-slate-200/60 transition-all duration-500 ease-out hover:-translate-y-1 hover:scale-[1.02] hover:border-primary/25 hover:bg-card/95 hover:shadow-xl hover:shadow-slate-900/10 sm:px-4 sm:py-3"
             >
               <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary ring-1 ring-primary/10">
                 <feature.icon className="h-4 w-4" aria-hidden />

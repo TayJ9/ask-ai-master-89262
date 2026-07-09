@@ -6,8 +6,8 @@ Ensure the ElevenLabs agent system prompt and first message use these exact plac
 {{first_name}}         — Candidate first name (default: "Candidate")
 {{major}}              — Major field (default: "General")
 {{year}}               — Academic year (default: "Unknown")
-{{resume_summary}}     — Resume summary, up to 1500 chars (default: "")
-{{resume_highlights}}  — Resume highlights, up to 500 chars (default: "")
+{{resume_summary}}     — Structured interview brief (Skills/Projects/Experience/Education), up to 1500 chars (default: "")
+{{resume_highlights}}  — Compact highlight line from that brief, up to 500 chars (default: "")
 {{technical_difficulty}} — Question difficulty level (default: "intermediate")
 {{technical_depth}}    — Technical depth (default: "standard")
 {{behavioral_ratio}}   — Behavioral vs technical ratio, string (default: "60")
@@ -21,17 +21,27 @@ Hi {{first_name}}! I see you're studying {{major}} as a {{year}}. Let's begin th
 
 Example system prompt context:
 ```
-Candidate resume summary: {{resume_summary}}
-Candidate highlights: {{resume_highlights}}
+Candidate resume brief (use for tailored questions about skills, projects, school, and experience):
+{{resume_summary}}
+
+Candidate highlights:
+{{resume_highlights}}
+
 Difficulty: {{technical_difficulty}}, depth: {{technical_depth}}, behavioral ratio: {{behavioral_ratio}}
 
 Sample questions to draw from (adapt to candidate's resume and major):
 {{question_bank}}
 ```
 
+## Hybrid resume strategy (recommended)
+
+1. **At session start:** use `{{resume_summary}}` / `{{resume_highlights}}` (structured brief). Do **not** expect the full resume in dynamic variables.
+2. **Before the first question:** call `GetResumeProfile` with `{{interviewid}}` to load structured skills/projects/education.
+3. **For deep follow-ups:** call `GetResumeFullText` only when you need more detail than the brief/profile provide.
+
 ## Server tools (GetResumeProfile / GetResumeFullText)
 
-The frontend also injects resume context at session start via **dynamic variables** (`resume_summary`, `resume_highlights`, `interviewid`, etc.). The agent can conduct a personalized interview without calling these tools — missing `[RESUME-PROFILE]` backend logs during a live session is **expected** when dynamic vars are populated.
+The frontend injects a **structured resume brief** at session start via dynamic variables (`resume_summary`, `resume_highlights`, `interviewid`, etc.). That is enough for solid first questions. Full resume text stays on the backend.
 
 Use server tools when the agent needs the **full structured profile** or **complete resume text** mid-conversation (e.g. deep follow-ups on a specific project).
 

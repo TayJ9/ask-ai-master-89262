@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   type TranscriptMessage,
   type TranscriptUpdate,
+  diagnoseTranscriptUpsert,
   extractAgentChatResponsePartUpdate,
   extractAudioAlignmentUpdate,
   extractTentativeAgentDebugUpdate,
@@ -322,6 +323,38 @@ describe("live transcript streaming", () => {
     assert.equal(update.isFinal, false);
     assert.equal(update.mergeMode, "replace");
     assert.equal(update.streamKind, "tentative");
+  });
+
+  it("extracts tentative user transcript from normalized onMessage payloads", () => {
+    const update = extractTranscriptUpdate({
+      source: "user",
+      role: "user",
+      message: "I can explain the architecture",
+      isFinal: false,
+    });
+
+    assert.ok(update);
+    assert.equal(update.type, "student");
+    assert.equal(update.text, "I can explain the architecture");
+    assert.equal(update.isFinal, false);
+    assert.equal(update.mergeMode, "replace");
+    assert.equal(update.streamKind, "tentative");
+  });
+
+  it("merges normalized tentative user text into the final user bubble", () => {
+    let messages: TranscriptMessage[] = [];
+
+    messages = applyEvents(messages, [
+      { source: "user", role: "user", message: "I built", isFinal: false },
+      { source: "user", role: "user", message: "I built the dashboard", isFinal: false },
+      { source: "user", role: "user", message: "I built the dashboard in React.", isFinal: true },
+    ]);
+
+    const student = messages.filter((m) => m.type === "student");
+    assert.equal(student.length, 1);
+    assert.equal(student[0].text, "I built the dashboard in React.");
+    assert.equal(student[0].isFinal, true);
+    assert.equal(student[0].streamKind, "final");
   });
 
   it("shows the full live transcript history in conversation order", () => {
@@ -1186,6 +1219,100 @@ describe("live transcript streaming", () => {
     assert.ok(!messages[0].text.startsWith("ally"));
   });
 
+  it("keeps one bubble when chat_part finalizes before same-turn alignment continues", () => {
+    const updates = [
+      extractAgentChatResponsePartUpdate({ type: "start", text: "" }),
+      extractAgentChatResponsePartUpdate({
+        type: "delta",
+        text: "Perfect. To get us started, can you tell me little bit about yourself",
+      }),
+      extractAgentChatResponsePartUpdate({
+        type: "delta",
+        text: " and background in tech?",
+      }),
+      extractAgentChatResponsePartUpdate({ type: "stop", text: "" }),
+      extractAudioAlignmentUpdate({
+        chars:
+          "Perfect. To get us started, can you tell me a little bit about yourself and your background in tech?".split(
+            "",
+          ),
+      }),
+    ].filter(Boolean) as TranscriptUpdate[];
+
+    const { messages, skipped } = runGatedAiSequence(updates);
+
+    assert.equal(skipped.length, 0);
+    assert.equal(countBubblesByType(messages, "ai"), 1);
+    assert.equal(
+      messages[0].text,
+      "Perfect. To get us started, can you tell me little bit about yourself and background in tech?",
+    );
+    assert.equal(messages[0].isFinal, true);
+  });
+
+  it("keeps one bubble when corrected final is not a strict prefix of chat_part", () => {
+    const streamed =
+      "Perfect. To get us started, can you tell me little bit about yourself and background in tech?";
+    const corrected =
+      "Perfect. To get us started, can you tell me a little bit about yourself and your background in tech?";
+
+    let messages = upsertTranscriptMessage([], {
+      type: "ai",
+      text: streamed,
+      isFinal: true,
+      timestamp: 1,
+      streamKind: "chat_part",
+    });
+
+    const finalUpdate: TranscriptUpdate = {
+      type: "ai",
+      text: corrected,
+      isFinal: true,
+      mergeMode: "replace",
+      streamKind: "final",
+    };
+
+    const diag = diagnoseTranscriptUpsert(messages, finalUpdate);
+    assert.equal(diag.action, "merge");
+    assert.match(diag.reason, /already-final same-turn/);
+
+    messages = upsertTranscriptMessage(messages, finalUpdate);
+    assert.equal(countBubblesByType(messages, "ai"), 1);
+    assert.equal(messages[0].text, corrected);
+    assert.equal(messages[0].isFinal, true);
+  });
+
+  it("opens a new AI bubble for the next turn after the user answers", () => {
+    let messages: TranscriptMessage[] = [
+      {
+        type: "ai",
+        text: "Tell me about your background.",
+        isFinal: true,
+        timestamp: 1,
+        streamKind: "final",
+      },
+      {
+        type: "student",
+        text: "I studied computer science.",
+        isFinal: true,
+        timestamp: 2,
+        streamKind: "final",
+      },
+    ];
+
+    messages = upsertTranscriptMessage(
+      messages,
+      extractAudioAlignmentUpdate({
+        chars: "What is a project you are proud of?".split(""),
+      })!,
+    );
+
+    assert.equal(countBubblesByType(messages, "ai"), 2);
+    assert.equal(messages[0].text, "Tell me about your background.");
+    assert.equal(messages[2].text, "What is a project you are proud of?");
+    assert.equal(messages[2].isFinal, false);
+  });
+
   it("extractAudioAlignmentUpdate uses replace merge for cumulative SDK chars", () => {
     const update = extractAudioAlignmentUpdate({ chars: ["H", "i"] });
     assert.ok(update);
@@ -1308,5 +1435,37 @@ describe("live transcript streaming", () => {
       messages.filter((m) => m.type === "student")[0].text,
       words.join(" "),
     );
+  });
+
+  it("diagnoses same-turn AI final merge when streamed text is not a prefix of corrected final", () => {
+    const streamed =
+      "Perfect. To get us started, can you tell me little bit about yourself and background in tech?";
+    const corrected =
+      "Perfect. To get us started, can you tell me a little bit about yourself and your background in tech?";
+
+    let messages = upsertTranscriptMessage([], {
+      type: "ai",
+      text: streamed,
+      isFinal: true,
+      mergeMode: "replace",
+      streamKind: "chat_part",
+    });
+
+    const finalUpdate: TranscriptUpdate = {
+      type: "ai",
+      text: corrected,
+      isFinal: true,
+      mergeMode: "replace",
+      streamKind: "final",
+    };
+
+    const diag = diagnoseTranscriptUpsert(messages, finalUpdate);
+    assert.equal(diag.action, "merge");
+    assert.match(diag.reason, /already-final same-turn/);
+    assert.equal(diag.bubbleCounts.ai, 1);
+
+    messages = upsertTranscriptMessage(messages, finalUpdate);
+    assert.equal(countBubblesByType(messages, "ai"), 1);
+    assert.equal(messages[0].text, corrected);
   });
 });

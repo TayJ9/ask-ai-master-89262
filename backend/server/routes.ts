@@ -278,6 +278,13 @@ async function mergeCandidateContextOnSession(
     });
 
     if (existingSession) {
+      if (existingSession.userId !== userId) {
+        console.warn("[CANDIDATE-CONTEXT] Session ownership mismatch; skipping context merge", {
+          clientSessionId,
+          hasUserId: !!userId,
+        });
+        return;
+      }
       const existingContext = (existingSession.candidateContext as Record<string, unknown>) || {};
       const merged = mergeCandidateContextRecords(existingContext, incoming);
       await db
@@ -324,31 +331,43 @@ async function mergeCandidateContextOnSession(
 async function linkResumeFromSessionToInterview(
   clientSessionId: string,
   interviewId: string,
-  options?: { resumeTextFromBody?: string },
+  options?: { resumeTextFromBody?: string; userId?: string | null; source?: string },
 ): Promise<{ linked: boolean; profile?: Record<string, unknown> }> {
-  try {
-    if (options?.resumeTextFromBody?.trim()) {
-      const safeResumeText = stripResumeContactInfo(options.resumeTextFromBody.trim());
-      const profile = buildResumeProfile(safeResumeText);
-      await storage.upsertResume(interviewId, safeResumeText, profile);
-      console.log(`[SAVE-INTERVIEW] Stored resume_text from request body for interview ${interviewId}`);
-      return { linked: true, profile };
-    }
+  const logPrefix = options?.source || "[RESUME-LINK]";
+  if (options?.resumeTextFromBody?.trim()) {
+    const persisted = await persistResumeForSession(
+      interviewId,
+      options.resumeTextFromBody,
+      logPrefix,
+      options.userId,
+    );
+    console.log(`${logPrefix} Stored request resume text for interview`, {
+      interviewId,
+      hasUserId: !!options.userId,
+      resumeTextLength: persisted.resumeText.length,
+      hasProfile: !!persisted.resumeProfile,
+    });
+    return { linked: true, profile: persisted.resumeProfile };
+  }
 
-    const resumeForSession = await storage.getResume(clientSessionId);
+  try {
+    const resumeForSession = await storage.getResume(clientSessionId, options?.userId);
     if (resumeForSession?.resumeFulltext) {
       const profile =
         (resumeForSession.resumeProfile as Record<string, unknown> | null) ??
         buildResumeProfile(resumeForSession.resumeFulltext);
-      await storage.upsertResume(interviewId, resumeForSession.resumeFulltext, profile);
-      console.log(
-        `[SAVE-INTERVIEW] Linked resume from session ${clientSessionId} to interview ${interviewId}`,
-      );
+      await storage.upsertResume(interviewId, resumeForSession.resumeFulltext, profile, options?.userId);
+      console.log(`${logPrefix} Linked resume from session to interview`, {
+        clientSessionId,
+        interviewId,
+        hasUserId: !!options?.userId,
+        resumeTextLength: resumeForSession.resumeFulltext.length,
+      });
       return { linked: true, profile };
     }
   } catch (resumeLinkError: unknown) {
     const msg = resumeLinkError instanceof Error ? resumeLinkError.message : String(resumeLinkError);
-    console.warn("[SAVE-INTERVIEW] Resume session→interview link skipped:", msg);
+    console.warn(`${logPrefix} Resume session-to-interview link skipped:`, msg);
   }
   return { linked: false };
 }
@@ -1112,17 +1131,18 @@ export function registerRoutes(app: Express) {
 
       let persisted;
       try {
-        persisted = await persistResumeForSession(sessionId, resumeText, "[RESUME-UPLOAD]");
+        persisted = await persistResumeForSession(sessionId, resumeText, "[RESUME-UPLOAD]", req.userId);
       } catch (persistError) {
-        console.error("[RESUME-UPLOAD] Failed to persist resume text/profile:", persistError);
-        const resumeFulltext = stripResumeContactInfo(resumeText.trim());
-        persisted = {
+        console.error("[RESUME-UPLOAD] Failed to persist resume text/profile:", {
+          error: persistError instanceof Error ? persistError.message : String(persistError),
           sessionId,
-          resumeText: resumeFulltext,
-          resumeProfile: buildResumeProfile(resumeFulltext),
-          resume_summary: resumeFulltext.slice(0, 1500),
-          resume_highlights: resumeFulltext.slice(0, 500),
-        };
+          hasUserId: !!req.userId,
+          resumeTextLength: resumeText.length,
+        });
+        return res.status(500).json({
+          error: "Failed to persist resume",
+          message: "Your resume could not be saved. Please try again.",
+        });
       }
 
       if (formCandidateContext) {
@@ -1131,7 +1151,7 @@ export function registerRoutes(app: Express) {
           formCandidateContext,
         );
         try {
-          await storage.upsertResume(sessionId, persisted.resumeText, mergedProfile);
+          await storage.upsertResume(sessionId, persisted.resumeText, mergedProfile, req.userId);
           persisted = { ...persisted, resumeProfile: mergedProfile };
         } catch (profileMergeError: unknown) {
           const msg =
@@ -2019,7 +2039,6 @@ export function registerRoutes(app: Express) {
         console.error('[WEBHOOK] ❌ Failed to parse JSON body:', {
           error: parseError.message,
           bodyLength: rawBody.length,
-          bodyPreview: rawBody.toString('utf8').substring(0, 200),
         });
         return res.status(400).json({ error: 'Invalid JSON body' });
       }
@@ -2039,8 +2058,8 @@ export function registerRoutes(app: Express) {
         hasStartedAt: !!body.started_at,
         hasEndedAt: !!body.ended_at,
         hasYear: !!body.year,
+        bodyKeys: Object.keys(body),
       });
-      console.log('[WEBHOOK] 📄 Full body:', JSON.stringify(body, null, 2));
 
       const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status, year } = body;
 
@@ -2070,6 +2089,14 @@ export function registerRoutes(app: Express) {
       });
 
       if (existingInterview) {
+        if (existingInterview.userId !== user_id) {
+          console.warn("[WEBHOOK] Existing interview ownership mismatch", {
+            conversationId: conversation_id,
+            interviewId: existingInterview.id,
+            webhookUserId: user_id,
+          });
+          return res.status(403).json({ error: "Unauthorized interview" });
+        }
         console.log(`[WEBHOOK] Interview with conversation_id ${conversation_id} already exists (id: ${existingInterview.id})`);
         
         if (transcript && existingInterview.transcript && existingInterview.transcript !== transcript) {
@@ -2081,10 +2108,12 @@ export function registerRoutes(app: Express) {
         }
         
         // Link to session if not already linked (idempotent)
+        let matchedSessionForResume: any = null;
         try {
           const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
             where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
           });
+          matchedSessionForResume = sessionByConversationId || null;
           
           if (sessionByConversationId && !sessionByConversationId.interviewId) {
             const updatePayload: Record<string, unknown> = {
@@ -2116,6 +2145,17 @@ export function registerRoutes(app: Express) {
           if (!linkError.message?.includes('duplicate')) {
             console.error(`[WEBHOOK] Error linking existing interview (non-critical):`, linkError);
           }
+        }
+
+        if (matchedSessionForResume?.clientSessionId) {
+          await linkResumeFromSessionToInterview(
+            matchedSessionForResume.clientSessionId,
+            existingInterview.id,
+            {
+              userId: existingInterview.userId || user_id,
+              source: "[WEBHOOK]",
+            },
+          );
         }
         
         await finalizeInterviewTranscript({
@@ -2176,12 +2216,14 @@ export function registerRoutes(app: Express) {
 
       // Link this interview to any existing elevenlabs_interview_sessions record (non-critical)
       // Try by conversation_id first (most reliable)
+      let matchedSessionForResume: any = null;
       try {
         const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
           where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
         });
 
         if (sessionByConversationId) {
+          matchedSessionForResume = sessionByConversationId;
           // Only update if status is not already completed (idempotency)
           if (sessionByConversationId.status !== 'completed' || !sessionByConversationId.interviewId) {
             const updatePayload: Record<string, unknown> = {
@@ -2216,6 +2258,7 @@ export function registerRoutes(app: Express) {
             const mostRecentSession = recentSessions.sort((a: any, b: any) => 
               new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime()
             )[0];
+            matchedSessionForResume = mostRecentSession;
             
             const updatePayload: Record<string, unknown> = {
               conversationId: conversation_id,
@@ -2234,10 +2277,11 @@ export function registerRoutes(app: Express) {
           } else {
             // Create a new session record for this webhook (fallback)
             const agentId = agent_id || getAgentId();
+            const fallbackClientSessionId = `webhook-${conversation_id}`;
             const sessionData = insertElevenLabsInterviewSessionSchema.parse({
               userId: user_id,
               agentId,
-              clientSessionId: `webhook-${conversation_id}`, // Fallback ID
+              clientSessionId: fallbackClientSessionId, // Fallback ID
               conversationId: conversation_id,
               interviewId: interview.id,
               status: 'completed',
@@ -2255,11 +2299,23 @@ export function registerRoutes(app: Express) {
               }
             });
             console.log(`[WEBHOOK] Created session record for interview ${interview.id}`);
+            matchedSessionForResume = { clientSessionId: fallbackClientSessionId, userId: user_id };
           }
         }
       } catch (linkError: any) {
         // Log but don't fail - interview is saved, linking can be retried
         console.error(`[WEBHOOK] Failed to link interview to session (non-critical):`, linkError);
+      }
+
+      if (matchedSessionForResume?.clientSessionId) {
+        await linkResumeFromSessionToInterview(
+          matchedSessionForResume.clientSessionId,
+          interview.id,
+          {
+            userId: matchedSessionForResume.userId || user_id,
+            source: "[WEBHOOK]",
+          },
+        );
       }
 
       await finalizeInterviewTranscript({
@@ -2480,8 +2536,15 @@ export function registerRoutes(app: Express) {
     let interviewId: string | null = null;
     let client_session_id: string | undefined;
     try {
-      console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - incoming request body:', {
-        body: req.body,
+      console.log('[FLIGHT_RECORDER] [BACKEND] /api/save-interview - incoming request metadata:', {
+        bodyKeys: Object.keys(req.body || {}),
+        hasClientSessionId: !!req.body?.client_session_id,
+        hasConversationId: !!req.body?.conversation_id,
+        hasResumeText: typeof req.body?.resume_text === "string" && req.body.resume_text.length > 0,
+        resumeTextLength: typeof req.body?.resume_text === "string" ? req.body.resume_text.length : 0,
+        hasTranscript: typeof req.body?.transcript === "string" && req.body.transcript.length > 0,
+        transcriptLength: typeof req.body?.transcript === "string" ? req.body.transcript.length : 0,
+        hasCandidateContext: !!req.body?.candidate_context,
         userId: req.userId,
         timestamp: new Date().toISOString()
       });
@@ -2561,6 +2624,14 @@ export function registerRoutes(app: Express) {
             where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
           });
           if (existingInterview) {
+            if (existingInterview.userId !== userId) {
+              console.warn("[SAVE-INTERVIEW] Interview ownership mismatch", {
+                conversationId: conversation_id,
+                interviewId: existingInterview.id,
+                requestUserId: userId,
+              });
+              return res.status(403).json({ error: "Unauthorized interview" });
+            }
             interviewId = existingInterview.id;
             console.log(`[SAVE-INTERVIEW] Found existing interview ${interviewId} by conversation_id: ${conversation_id}`);
             
@@ -2668,6 +2739,14 @@ export function registerRoutes(app: Express) {
                   where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
                 });
                 if (conflictInterview) {
+                  if (conflictInterview.userId !== userId) {
+                    console.warn("[SAVE-INTERVIEW] Conflict interview ownership mismatch", {
+                      conversationId: conversation_id,
+                      interviewId: conflictInterview.id,
+                      requestUserId: userId,
+                    });
+                    return res.status(403).json({ error: "Unauthorized interview" });
+                  }
                   interviewId = conflictInterview.id;
                   console.log(`[SAVE-INTERVIEW] Found interview ${interviewId} after conflict - returning existing ID`);
                 }
@@ -2689,9 +2768,28 @@ export function registerRoutes(app: Express) {
       }
 
       // Link resume BEFORE finalizeInterviewTranscript enqueues evaluation
-      const linkResult = await linkResumeFromSessionToInterview(client_session_id, interviewId, {
-        resumeTextFromBody: resume_text,
-      });
+      let linkResult: { linked: boolean; profile?: Record<string, unknown> };
+      try {
+        linkResult = await linkResumeFromSessionToInterview(client_session_id, interviewId, {
+          resumeTextFromBody: resume_text,
+          userId,
+          source: "[SAVE-INTERVIEW]",
+        });
+      } catch (resumePersistError: unknown) {
+        console.error("[SAVE-INTERVIEW] Failed to persist request resume text:", {
+          error: resumePersistError instanceof Error ? resumePersistError.message : String(resumePersistError),
+          interviewId,
+          clientSessionId: client_session_id,
+          hasUserId: !!userId,
+          resumeTextLength: resume_text?.length || 0,
+        });
+        return res.status(500).json({
+          success: false,
+          error: "Failed to persist resume",
+          interviewId,
+          sessionId: client_session_id,
+        });
+      }
 
       // Find or create elevenlabs_interview_sessions record
       // Wrap in try/catch to handle database errors gracefully
@@ -2701,6 +2799,14 @@ export function registerRoutes(app: Express) {
         });
 
         if (existingSession) {
+          if (existingSession.userId !== userId) {
+            console.warn("[SAVE-INTERVIEW] Session ownership mismatch", {
+              clientSessionId: client_session_id,
+              sessionId: existingSession.id,
+              requestUserId: userId,
+            });
+            return res.status(403).json({ error: "Unauthorized session" });
+          }
           // Update existing session
           try {
             const existingContext = (existingSession.candidateContext as Record<string, unknown>) || {};
@@ -2808,6 +2914,8 @@ export function registerRoutes(app: Express) {
             if (transcript) {
               await linkResumeFromSessionToInterview(client_session_id, asyncInterviewId, {
                 resumeTextFromBody: resume_text,
+                userId,
+                source: "[SAVE-INTERVIEW]",
               });
               await finalizeInterviewTranscript({
                 interviewId: asyncInterviewId,
@@ -2896,8 +3004,51 @@ export function registerRoutes(app: Express) {
     console.log(
       '[RESUME-PROFILE] Dev note: ElevenLabs server tools call this backend from the cloud. ' +
       'Use ngrok or a deployed URL for live tool calls; missing [RESUME-PROFILE] logs during ' +
-      'interviews is normal when resume_summary/resume_highlights dynamic vars are set.'
+      'interviews is normal when structured resume_summary/resume_highlights dynamic vars are set.'
     );
+  }
+
+  async function resolveResumeLookupIds(requestedId: string): Promise<{
+    lookupIds: string[];
+    verified: boolean;
+    kind: "interview" | "session" | "legacy-direct";
+  }> {
+    const interview = await (db.query as any).interviews?.findFirst({
+      where: (interviews: any, { eq }: any) => eq(interviews.id, requestedId),
+    });
+    if (interview) {
+      return { lookupIds: [requestedId], verified: true, kind: "interview" };
+    }
+
+    const sessionByClientId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+      where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, requestedId),
+    });
+    const session =
+      sessionByClientId ||
+      (await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+        where: (sessions: any, { eq }: any) => eq(sessions.id, requestedId),
+      }));
+
+    if (session) {
+      const lookupIds = session.interviewId
+        ? [session.interviewId, session.clientSessionId].filter(Boolean)
+        : [session.clientSessionId];
+      return { lookupIds, verified: true, kind: "session" };
+    }
+
+    // Backward compatible for resume uploads that predate session creation.
+    return { lookupIds: [requestedId], verified: false, kind: "legacy-direct" };
+  }
+
+  async function getVerifiedResumeForServerTool(requestedId: string) {
+    const context = await resolveResumeLookupIds(requestedId);
+    for (const lookupId of context.lookupIds) {
+      const resume = await storage.getResume(lookupId);
+      if (resume) {
+        return { resume, lookupId, context };
+      }
+    }
+    return { resume: undefined, lookupId: context.lookupIds[0] || requestedId, context };
   }
 
   app.post("/api/get-resume-profile", async (req, res) => {
@@ -2912,8 +3063,14 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'Missing interviewid in body' });
       }
 
-      const resume = await storage.getResume(interviewId);
-      console.log('[RESUME-PROFILE] interviewid', interviewId, 'found', !!resume?.resumeProfile);
+      const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
+      console.log('[RESUME-PROFILE] lookup result', {
+        interviewId,
+        lookupId,
+        verified: context.verified,
+        kind: context.kind,
+        found: !!resume?.resumeProfile,
+      });
 
       if (!resume || !resume.resumeProfile) {
         return res.status(404).json({ error: 'Resume profile not found' });
@@ -2941,8 +3098,15 @@ export function registerRoutes(app: Express) {
         return res.status(400).json({ error: 'Missing interviewid in body' });
       }
 
-      const resume = await storage.getResume(interviewId);
-      console.log('[RESUME-FULLTEXT] interviewid', interviewId, 'found', !!resume?.resumeFulltext);
+      const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
+      console.log('[RESUME-FULLTEXT] lookup result', {
+        interviewId,
+        lookupId,
+        verified: context.verified,
+        kind: context.kind,
+        found: !!resume?.resumeFulltext,
+        resumeTextLength: resume?.resumeFulltext?.length || 0,
+      });
 
       if (!resume || !resume.resumeFulltext) {
         return res.status(404).json({ error: 'Resume full text not found' });

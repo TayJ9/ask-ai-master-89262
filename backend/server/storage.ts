@@ -44,8 +44,8 @@ export interface IStorage {
   getTurnsBySessionId(sessionId: string): Promise<InterviewTurn[]>;
 
   // Resumes
-  upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any): Promise<void>;
-  getResume(interviewId: string): Promise<Resume | undefined>;
+  upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any, userId?: string | null): Promise<void>;
+  getResume(interviewId: string, userId?: string | null): Promise<Resume | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -58,22 +58,32 @@ export class DatabaseStorage implements IStorage {
         await pool.query(`
           CREATE TABLE IF NOT EXISTS resumes (
             interview_id uuid PRIMARY KEY,
+            user_id uuid REFERENCES profiles(id) ON DELETE CASCADE,
             resume_fulltext text,
             resume_profile jsonb,
             created_at timestamptz DEFAULT NOW(),
             updated_at timestamptz DEFAULT NOW()
           );
         `);
+        await pool.query(`ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id uuid REFERENCES profiles(id) ON DELETE CASCADE;`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes(user_id);`);
       } else if (sqlite) {
         sqlite.exec(`
           CREATE TABLE IF NOT EXISTS resumes (
             interview_id TEXT PRIMARY KEY,
+            user_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
             resume_fulltext TEXT,
             resume_profile TEXT,
             created_at TEXT DEFAULT (datetime('now')),
             updated_at TEXT DEFAULT (datetime('now'))
           );
         `);
+        try {
+          sqlite.exec(`ALTER TABLE resumes ADD COLUMN user_id TEXT REFERENCES profiles(id) ON DELETE CASCADE`);
+        } catch {
+          // Column already exists.
+        }
+        sqlite.exec(`CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes(user_id);`);
       }
       this.resumeTableReady = true;
     } catch (error) {
@@ -161,20 +171,32 @@ export class DatabaseStorage implements IStorage {
     });
   }
 
-  async upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any): Promise<void> {
+  async upsertResume(interviewId: string, resumeFulltext: string, resumeProfile: any, userId?: string | null): Promise<void> {
     await this.ensureResumeTable();
     try {
+      if (userId) {
+        const existingResume = await (db.query as any).resumes?.findFirst({
+          where: eq(resumes.interviewId, interviewId),
+        });
+        if (existingResume?.userId && existingResume.userId !== userId) {
+          throw new Error("Resume is owned by a different user");
+        }
+      }
       const now = new Date();
       const values = pool
-        ? { interviewId, resumeFulltext, resumeProfile }
-        : { interviewId, resumeFulltext, resumeProfile, createdAt: now, updatedAt: now };
+        ? { interviewId, userId: userId ?? null, resumeFulltext, resumeProfile }
+        : { interviewId, userId: userId ?? null, resumeFulltext, resumeProfile, createdAt: now, updatedAt: now };
+      const updateSet: Record<string, unknown> = {
+        resumeFulltext,
+        resumeProfile,
+        updatedAt: pool ? sql`NOW()` : sql`datetime('now')`,
+      };
+      if (userId) {
+        updateSet.userId = userId;
+      }
       await db.insert(resumes).values(values).onConflictDoUpdate({
         target: resumes.interviewId,
-        set: {
-          resumeFulltext,
-          resumeProfile,
-          updatedAt: pool ? sql`NOW()` : sql`datetime('now')`,
-        },
+        set: updateSet,
       });
     } catch (error) {
       console.error("Failed to upsert resume:", error);
@@ -182,10 +204,13 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
-  async getResume(interviewId: string): Promise<Resume | undefined> {
+  async getResume(interviewId: string, userId?: string | null): Promise<Resume | undefined> {
     await this.ensureResumeTable();
-    return await db.query.resumes.findFirst({
-      where: eq(resumes.interviewId, interviewId),
+    const whereClause = userId
+      ? and(eq(resumes.interviewId, interviewId), eq(resumes.userId, userId))
+      : eq(resumes.interviewId, interviewId);
+    return await (db.query as any).resumes?.findFirst({
+      where: whereClause,
     });
   }
 

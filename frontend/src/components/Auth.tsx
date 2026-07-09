@@ -9,7 +9,7 @@ import { Eye, EyeOff, Zap } from "lucide-react";
 import { z } from "zod";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { useLocation } from "wouter";
-import { devLog } from "@/lib/utils";
+import { devLog, cn } from "@/lib/utils";
 
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
@@ -152,10 +152,13 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
     }
   };
 
+  const sampleButtonClass =
+    "flex h-auto min-h-11 w-full flex-col items-center justify-center gap-2 whitespace-normal px-3 py-3 text-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4";
+
   return (
-    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+    <AnimatedBackground className="flex min-h-[100dvh] items-center justify-center px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
       <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
-        <CardHeader className="space-y-4 text-center">
+        <CardHeader className="space-y-4 p-4 pb-2 text-center sm:p-6 sm:pb-2">
           <div className="space-y-2 overflow-visible">
             <h1
               className="text-5xl font-bold leading-[1.5] tracking-tight sm:text-6xl sm:leading-[1.5]"
@@ -171,7 +174,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             </CardDescription>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="p-4 pt-0 sm:p-6 sm:pt-0">
           <form onSubmit={handleAuth} className="space-y-4">
             {!isLogin && (
               <div className="space-y-2">
@@ -262,7 +265,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             <Button
               type="button"
               variant="ghost"
-              className="w-full"
+              className="h-auto min-h-10 w-full whitespace-normal py-2.5 text-balance leading-snug"
               onClick={() => setIsLogin(!isLogin)}
               data-testid="button-toggle-mode"
             >
@@ -284,19 +287,16 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
                 type="button"
                 variant="outline"
                 onClick={() => setLocation("/results?mock=true&interviewId=demo&demo=true")}
-                className="!grid w-full grid-cols-[auto_1fr_auto] items-center !gap-0 gap-x-2 border-primary/25 bg-primary/[0.03] px-2 py-2.5 text-foreground transition-all duration-500 ease-out hover:bg-primary/10 hover:text-foreground sm:gap-x-3 sm:px-3"
+                className={cn(
+                  sampleButtonClass,
+                  "border-primary/25 bg-primary/[0.03] transition-all duration-500 ease-out hover:bg-primary/10 hover:text-foreground",
+                )}
               >
-                <span
-                  className="invisible w-max select-none rounded-full border border-transparent px-2 py-0.5 text-xs font-medium"
-                  aria-hidden
-                >
-                  Instant
-                </span>
-                <span className="!flex min-w-0 w-full items-center justify-center gap-2 text-center text-balance text-sm">
+                <span className="flex min-w-0 items-center justify-center gap-2 text-center text-sm leading-snug sm:justify-start sm:text-left">
                   <Zap className="h-4 w-4 shrink-0 text-primary" aria-hidden />
-                  <span className="min-w-0 text-center">Technical (engineering)</span>
+                  <span className="min-w-0 text-balance">Technical (engineering)</span>
                 </span>
-                <span className="w-max justify-self-end rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                <span className="shrink-0 rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   Instant
                 </span>
               </Button>
@@ -304,24 +304,21 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
                 type="button"
                 variant="outline"
                 onClick={() => setLocation("/results?mock=true&interviewId=demo&demo=business")}
-                className="!grid w-full grid-cols-[auto_1fr_auto] items-center !gap-0 gap-x-2 border-secondary/25 bg-secondary/[0.06] px-2 py-2.5 text-foreground transition-all duration-500 ease-out hover:bg-secondary/12 hover:text-foreground sm:gap-x-3 sm:px-3"
+                className={cn(
+                  sampleButtonClass,
+                  "border-secondary/25 bg-secondary/[0.06] transition-all duration-500 ease-out hover:bg-secondary/12 hover:text-foreground",
+                )}
               >
-                <span
-                  className="invisible w-max select-none rounded-full border border-transparent px-2 py-0.5 text-xs font-medium"
-                  aria-hidden
-                >
-                  Instant
-                </span>
-                <span className="!flex min-w-0 w-full items-center justify-center gap-2 text-center text-balance text-sm">
+                <span className="flex min-w-0 items-center justify-center gap-2 text-center text-sm leading-snug sm:justify-start sm:text-left">
                   <Zap className="h-4 w-4 shrink-0 text-secondary" aria-hidden />
-                  <span className="min-w-0 text-center">Non-technical (business, comms)</span>
+                  <span className="min-w-0 text-balance">Non-technical (business, comms)</span>
                 </span>
-                <span className="w-max justify-self-end rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                <span className="shrink-0 rounded-full border border-border bg-muted/80 px-2 py-0.5 text-xs font-medium text-muted-foreground">
                   Instant
                 </span>
               </Button>
             </div>
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="text-balance text-center text-xs leading-relaxed text-muted-foreground">
               Opens a full sample results view—useful for demos and stakeholders.
             </p>
           </form>

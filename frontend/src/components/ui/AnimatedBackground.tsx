@@ -278,7 +278,7 @@ export default function AnimatedBackground({ className = "", children, fixedDeco
       {fixedDecor ? (
         <div
           className="fixed inset-0 w-full pointer-events-none z-0"
-          style={{ height: '100vh' }}
+          style={{ height: '100dvh' }}
           aria-hidden
         >
           {decorLayers}

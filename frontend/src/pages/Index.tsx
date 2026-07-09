@@ -1,6 +1,6 @@
 /**
  * PERF SUMMARY:
- * - useCallback for handlers passed to children (onSelectRole, onResumeUploaded, onSkip, onComplete, onInterviewEnd, onBack) to avoid unnecessary re-renders of memoized RoleSelection, ResumeUpload, VoiceInterviewWebSocket.
+ * - useCallback for handlers passed to children (onSelectRole, onResumeUploaded, onComplete, onInterviewEnd, onBack) to avoid unnecessary re-renders of memoized RoleSelection, ResumeUpload, VoiceInterviewWebSocket.
  */
 import { useState, useEffect, useCallback, startTransition } from "react";
 import { useLocation } from "wouter";
@@ -19,10 +19,19 @@ import { useToast } from "@/hooks/use-toast";
 import { debugLog, shouldDebugEleven } from "@/lib/wsDebug";
 import { devLog } from "@/lib/utils";
 import { generateClientSessionId } from "@/lib/sessionId";
+import {
+  type CandidateContext,
+  type ResumeUploadCandidateInfo,
+  parseStoredCandidateContext,
+  sanitizeCandidateContextForStorage,
+} from "@/lib/candidateContext";
 
 // Smooth internal view transitions - using shared animation config
 const viewTransition = defaultFadeTransition;
 const viewVariants = fadeInVariants;
+
+const authenticatedViewShell =
+  "absolute inset-x-0 bottom-0 top-[calc(3.25rem+env(safe-area-inset-top))] min-h-0 w-full sm:top-[calc(3.5rem+env(safe-area-inset-top))]";
 
 export default function Index() {
   const [location, setLocation] = useLocation();
@@ -34,7 +43,7 @@ export default function Index() {
   const [firstQuestion, setFirstQuestion] = useState<string>("");
   const [interviewMode, setInterviewMode] = useState<"text" | "voice">("voice");
   const [voiceInterviewData, setVoiceInterviewData] = useState<{sessionId: string, audioResponse?: string, agentResponseText?: string} | null>(null);
-  const [candidateContext, setCandidateContext] = useState<{firstName: string; name?: string; major: string; year: string; sessionId?: string; skills?: string[]; experience?: string; education?: string; summary?: string; resumeText?: string; resumeSource?: string; resume_summary?: string; resume_highlights?: string} | null>(null);
+  const [candidateContext, setCandidateContext] = useState<CandidateContext | null>(null);
   const [previousLocation, setPreviousLocation] = useState<string>("");
   const { toast } = useToast();
   
@@ -98,11 +107,15 @@ export default function Index() {
       try {
         const storedContext = localStorage.getItem('candidate_context');
         if (storedContext && !candidateContext) {
-          const parsed = JSON.parse(storedContext);
-          setCandidateContext(parsed);
+          const parsed = parseStoredCandidateContext(storedContext);
+          if (parsed) {
+            setCandidateContext(parsed);
+            localStorage.setItem('candidate_context', JSON.stringify(parsed));
+          }
         }
       } catch (e) {
         console.warn('Failed to hydrate candidate_context', e);
+        localStorage.removeItem('candidate_context');
       }
     }
   }, []);
@@ -150,7 +163,7 @@ export default function Index() {
     });
   }, []);
 
-  const handleResumeUploaded = useCallback(async (resume: string, candidateInfo?: { firstName: string; major: string; year: string; sessionId?: string; resumeSource?: string }) => {
+  const handleResumeUploaded = useCallback(async (resume: string, candidateInfo?: ResumeUploadCandidateInfo) => {
     setResumeText(resume);
     
     // Store candidate info for voice interview
@@ -161,7 +174,7 @@ export default function Index() {
     const interviewRole = (candidateInfo?.major?.trim() || selectedRole?.trim() || "General Interview");
     
     if (candidateInfo) {
-      const newCandidateContext = {
+      const newCandidateContext: CandidateContext = {
         firstName: candidateInfo.firstName,
         name: candidateInfo.firstName,
         major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
@@ -185,21 +198,10 @@ export default function Index() {
       setCandidateContext(newCandidateContext);
       // Persist to localStorage to survive view changes/reloads
       try {
-        const contextToStore = {
-          firstName: candidateInfo.firstName,
-          name: candidateInfo.firstName,
-          major: interviewRole, // Use calculated role (ResumeUpload major takes priority, typed role as fallback)
-          year: candidateInfo.year,
-          sessionId: candidateInfo.sessionId,
-          resumeText: resume,
-          resumeSource: candidateInfo.resumeSource || "unknown",
-          resume_summary: candidateInfo.resume_summary,
-          resume_highlights: candidateInfo.resume_highlights,
-          skills: candidateInfo.skills,
-        };
+        const contextToStore = sanitizeCandidateContextForStorage(newCandidateContext);
         localStorage.setItem('candidate_context', JSON.stringify(contextToStore));
         devLog.log('[FLIGHT_RECORDER] [SETUP] candidateContext persisted to localStorage:', {
-          sessionId: contextToStore.sessionId,
+          sessionId: contextToStore?.sessionId,
           timestamp: new Date().toISOString()
         });
       } catch (e) {
@@ -293,56 +295,6 @@ export default function Index() {
     }
   }, [selectedRole, user, toast]);
 
-  const handleSkipResume = useCallback(async () => {
-    // Check authentication before starting interview
-    const token = localStorage.getItem('auth_token');
-    if (!token) {
-      toast({
-        title: "Authentication Required",
-        description: "Please log in to start an interview.",
-        variant: "destructive",
-      });
-      startTransition(() => setCurrentView("roles"));
-      return;
-    }
-    
-    // Start voice interview session without resume
-    try {
-      devLog.log("Starting voice interview without resume:", { role: selectedRole });
-      
-      // For voice interviews without resume, we still need candidate info
-      toast({
-        title: "Information Required",
-        description: "Please provide your name, major, and year for voice interviews.",
-        variant: "destructive",
-      });
-      return;
-    } catch (error: any) {
-      devLog.error("Error starting interview:", error);
-      const errorMessage = error.message || error.error || "Failed to start interview.";
-      
-      // Check if it's an authentication error
-      if (errorMessage.includes('token') || errorMessage.includes('No token') || errorMessage.includes('401') || errorMessage.includes('403')) {
-        toast({
-          title: "Authentication Error",
-          description: "Your session has expired. Please log in again.",
-          variant: "destructive",
-        });
-        // Clear auth data and redirect
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('user');
-        setUser(null);
-        startTransition(() => setCurrentView("roles"));
-      } else {
-        toast({
-          title: "Failed to Start Interview",
-          description: errorMessage + " Please try again.",
-          variant: "destructive",
-        });
-      }
-    }
-  }, [toast]);
-
   const handleCompleteInterview = useCallback((results?: any) => {
     // Navigate to results page with interviewId in state (preferred) or sessionId as fallback
     const sessionId = voiceSessionId || results?.sessionId;
@@ -433,7 +385,7 @@ export default function Index() {
 
   return (
     <>
-      <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/90 shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-background/85">
+      <header className="fixed inset-x-0 top-0 z-50 border-b border-border/60 bg-background/90 pt-[max(0.625rem,env(safe-area-inset-top))] shadow-sm backdrop-blur-sm supports-[backdrop-filter]:bg-background/85">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
           <p className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground">
             AI Interview Coach
@@ -479,7 +431,7 @@ export default function Index() {
         </div>
       </header>
 
-      <div className="relative min-h-screen">
+      <div className="relative min-h-[100dvh]">
         <AnimatePresence mode="sync" initial={false}>
           {currentView === "roles" && (
             <motion.div
@@ -489,7 +441,7 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
+              className={authenticatedViewShell}
             >
               <RoleSelection onSelectRole={handleSelectRole} />
             </motion.div>
@@ -503,11 +455,10 @@ export default function Index() {
               exit="exit"
               variants={viewVariants}
               transition={viewTransition}
-              className="absolute inset-x-0 top-[3.25rem] min-h-[calc(100vh-3.25rem)] w-full sm:top-14 sm:min-h-[calc(100vh-3.5rem)]"
+              className={authenticatedViewShell}
             >
               <ResumeUpload
                 onResumeUploaded={handleResumeUploaded}
-                onSkip={handleSkipResume}
                 onBack={handleBackToRoles}
               />
             </motion.div>

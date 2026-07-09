@@ -23,8 +23,10 @@ This document serves two audiences: **investors and partners** who need clear, v
 
 ### Context Injection
 
-- The AI reads the user's **Resume** (parsed text), **Major**, and **Academic Year** to tailor questions.
-- Resume text is injected as `resume_summary` and `resume_highlights`; year as `year`, `technical_difficulty`, `technical_depth`, and `behavioral_ratio` via ElevenLabs dynamic variables.
+- The AI reads the user's **Resume brief**, **Major**, and **Academic Year** to tailor questions.
+- At session start, ElevenLabs gets a **structured resume brief** (`resume_summary` / `resume_highlights`: skills, projects, experience, education) — not the full resume.
+- Full resume text stays server-side for optional `GetResumeProfile` / `GetResumeFullText` tools during deep follow-ups.
+- Year maps to `year`, `technical_difficulty`, `technical_depth`, and `behavioral_ratio` via dynamic variables.
 
 ### The Grading Engine
 

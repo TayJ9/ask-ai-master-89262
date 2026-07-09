@@ -252,8 +252,9 @@ export async function apiFetch(
 /**
  * Makes a POST request
  */
-export async function apiPost(path: string, body?: any): Promise<any> {
+export async function apiPost(path: string, body?: any, options: RequestInit = {}): Promise<any> {
   return apiFetch(path, {
+    ...options,
     method: 'POST',
     body: body ? JSON.stringify(body) : undefined,
   });
@@ -291,7 +292,7 @@ export async function apiDelete(path: string): Promise<any> {
 /**
  * Makes a multipart/form-data POST request (for file uploads)
  */
-export async function apiPostFormData(path: string, formData: FormData): Promise<any> {
+export async function apiPostFormData(path: string, formData: FormData, options: RequestInit = {}): Promise<any> {
   const url = getApiUrl(path);
   const rawToken = localStorage.getItem('auth_token');
   
@@ -340,10 +341,28 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
   }
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 seconds for file uploads
+  let abortReason: 'timeout' | 'external' | null = null;
+  const timeoutId = setTimeout(() => {
+    abortReason = 'timeout';
+    controller.abort();
+  }, 60000); // 60 seconds for file uploads
+  const externalSignal = options.signal;
+  const onExternalAbort = () => {
+    abortReason = 'external';
+    controller.abort();
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      onExternalAbort();
+    } else {
+      externalSignal.addEventListener('abort', onExternalAbort, { once: true });
+    }
+  }
   
   try {
     const response = await fetch(url, {
+      ...options,
       method: 'POST',
       headers,
       body: formData,
@@ -379,6 +398,9 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
     clearTimeout(timeoutId);
     
     if (error.name === 'AbortError') {
+      if (abortReason === 'external') {
+        throw new ApiError('Upload cancelled.', 499, error);
+      }
       throw new ApiError('Upload timed out. Please try again.', 408);
     }
     
@@ -391,6 +413,10 @@ export async function apiPostFormData(path: string, formData: FormData): Promise
       undefined,
       error
     );
+  } finally {
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', onExternalAbort);
+    }
   }
 }
 

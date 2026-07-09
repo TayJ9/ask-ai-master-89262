@@ -12,6 +12,7 @@ import { pool } from './db';
  * 2. Fixes elevenlabs_interview_sessions.id column DEFAULT value
  * 3. Creates missing interviews table
  * 4. Creates missing interview_evaluations table
+ * 5. Creates/repairs resumes ownership metadata
  */
 export async function repairSchema(): Promise<void> {
   try {
@@ -100,7 +101,22 @@ export async function repairSchema(): Promise<void> {
     `);
     console.log('✅ Created/verified interview_evaluations table');
 
-    // 5. Dedupe rows before adding unique indexes. Preserve interview rows by
+    // 5. Create/repair resumes table and ownership metadata
+    await executeQuery(`
+      CREATE TABLE IF NOT EXISTS resumes (
+        interview_id UUID PRIMARY KEY,
+        user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+        resume_fulltext TEXT,
+        resume_profile JSONB,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+    `);
+    await executeQuery(`ALTER TABLE resumes ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES profiles(id) ON DELETE CASCADE;`);
+    await executeQuery(`CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes(user_id);`);
+    console.log('✅ Created/verified resumes table ownership metadata');
+
+    // 6. Dedupe rows before adding unique indexes. Preserve interview rows by
     // clearing duplicate conversation IDs instead of deleting interviews.
     await executeQuery(`
       WITH ranked AS (
@@ -144,13 +160,13 @@ export async function repairSchema(): Promise<void> {
     `);
     console.log('✅ Deduped interviews/evaluations before unique indexes');
 
-    // 6. Create indexes for interviews table
+    // 7. Create indexes for interviews table
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_interviews_user_id ON interviews(user_id);`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_interviews_conversation_id ON interviews(conversation_id);`);
     await executeQuery(`CREATE UNIQUE INDEX IF NOT EXISTS idx_interviews_conversation_id_unique ON interviews(conversation_id) WHERE conversation_id IS NOT NULL;`);
     console.log('✅ Created/verified indexes for interviews table');
 
-    // 7. Create indexes for interview_evaluations table
+    // 8. Create indexes for interview_evaluations table
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_evaluations_interview_id ON interview_evaluations(interview_id);`);
     await executeQuery(`CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_interview_id_unique ON interview_evaluations(interview_id);`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);`);
