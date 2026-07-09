@@ -8,6 +8,7 @@ import {
   extractAudioAlignmentUpdate,
   extractTentativeAgentDebugUpdate,
   extractTranscriptUpdate,
+  getCurrentLiveTranscriptPair,
   getLiveTranscriptHistory,
   shouldApplyAiStreamUpdate,
   shouldIgnoreEmptyAiFinal,
@@ -378,6 +379,73 @@ describe("live transcript streaming", () => {
       ],
     );
     assert.equal(live.length, 4);
+  });
+
+  it("shows only the current live question-answer pair", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "First question", isFinal: true, timestamp: 1 },
+      { type: "student", text: "First answer", isFinal: true, timestamp: 2 },
+      { type: "ai", text: "Second question", isFinal: true, timestamp: 3 },
+      { type: "student", text: "Second answer draft", isFinal: false, timestamp: 4 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:Second question", "student:Second answer draft"],
+    );
+    assert.equal(getLiveTranscriptHistory(messages).length, 4);
+  });
+
+  it("shows the latest AI turn only while waiting for the current answer", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "First question", isFinal: true, timestamp: 1 },
+      { type: "student", text: "First answer", isFinal: true, timestamp: 2 },
+      { type: "ai", text: "", isFinal: true, timestamp: 3 },
+      { type: "ai", text: "Follow-up question", isFinal: false, timestamp: 4 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:Follow-up question"],
+    );
+  });
+
+  it("does not render duplicate previous AI turns in the current live pair", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "Tell me about your background.", isFinal: true, timestamp: 1 },
+      { type: "ai", text: "Tell me a little about your background.", isFinal: true, timestamp: 2 },
+      { type: "student", text: "I studied computer science.", isFinal: true, timestamp: 3 },
+      { type: "ai", text: "What project are you proud of?", isFinal: false, timestamp: 4 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:What project are you proud of?"],
+    );
+    assert.equal(
+      getLiveTranscriptHistory(messages).filter((message) => message.type === "ai").length,
+      3,
+    );
+  });
+
+  it("does not render stacked duplicate AI bubbles for the current turn", () => {
+    const messages: TranscriptMessage[] = [
+      { type: "ai", text: "Tell me about your background.", isFinal: true, timestamp: 1 },
+      { type: "ai", text: "Tell me a little about your background.", isFinal: true, timestamp: 2 },
+    ];
+
+    const currentPair = getCurrentLiveTranscriptPair(messages);
+
+    assert.deepEqual(
+      currentPair.map((message) => `${message.type}:${message.text}`),
+      ["ai:Tell me a little about your background."],
+    );
   });
 
   it("does not create a duplicate AI bubble when final agent_response arrives", () => {

@@ -146,9 +146,43 @@ export function shouldIgnoreEmptyAiFinal(params: {
   return isAiSpeaking || alignmentActive || chatPartActive;
 }
 
-/** Full live transcript history, excluding empty final noise bubbles. */
+/** Full transcript history, excluding empty final noise bubbles. */
 export function getLiveTranscriptHistory(messages: TranscriptMessage[]): TranscriptMessage[] {
   return messages.filter((message) => message.text.trim() || !message.isFinal);
+}
+
+/**
+ * Live interview display should stay focused on the current exchange:
+ * latest AI question plus the current/latest student answer after it.
+ * Full history remains in state for saving/results.
+ */
+export function getCurrentLiveTranscriptPair(messages: TranscriptMessage[]): TranscriptMessage[] {
+  const history = getLiveTranscriptHistory(messages);
+  let latestAiIndex = -1;
+  for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i].type === 'ai') {
+      latestAiIndex = i;
+      break;
+    }
+  }
+
+  if (latestAiIndex < 0) {
+    for (let i = history.length - 1; i >= 0; i--) {
+      if (history[i].type === 'student') return [history[i]];
+    }
+    return [];
+  }
+
+  const latestAi = history[latestAiIndex];
+  let latestStudent: TranscriptMessage | undefined;
+  for (let i = history.length - 1; i > latestAiIndex; i--) {
+    if (history[i].type === 'student') {
+      latestStudent = history[i];
+      break;
+    }
+  }
+
+  return latestStudent ? [latestAi, latestStudent] : [latestAi];
 }
 
 export function mergeStreamText(

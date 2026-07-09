@@ -29,7 +29,7 @@ import {
   type TranscriptMessage,
   type TranscriptUpdate,
   diagnoseTranscriptUpsert,
-  getLiveTranscriptHistory,
+  getCurrentLiveTranscriptPair,
   upsertTranscriptMessage,
   extractTranscriptUpdate,
   extractAgentChatResponsePartUpdate,
@@ -239,7 +239,7 @@ export default function VoiceInterviewWebSocket({
   const chatPartActiveThisTurnRef = useRef(false);
 
   const liveTranscriptMessages = useMemo(
-    () => getLiveTranscriptHistory(transcripts),
+    () => getCurrentLiveTranscriptPair(transcripts),
     [transcripts],
   );
 
