@@ -32,6 +32,8 @@ process.on("uncaughtException", (error) => {
     message: error.message,
     stack: error.stack,
   });
+  process.exitCode = 1;
+  setImmediate(() => process.exit(1));
 });
 
 const app = express();
