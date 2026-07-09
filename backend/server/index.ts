@@ -23,6 +23,17 @@ const __dirname = dirname(__filename);
 const require = createRequire(import.meta.url);
 const { createVoiceServer } = require("../voiceServer");
 
+process.on("unhandledRejection", (reason) => {
+  console.error("[ProcessUnhandledRejection]", reason);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("[ProcessUncaughtException]", {
+    message: error.message,
+    stack: error.stack,
+  });
+});
+
 const app = express();
 
 /** Railway / Vercel / other reverse proxies — required for accurate req.ip and rate limiting */

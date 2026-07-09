@@ -42,16 +42,13 @@ function getAgentId(): string {
   return process.env.ELEVENLABS_AGENT_ID || "agent_8601kavsezrheczradx9qmz8qp3e";
 }
 
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || (() => {
-  if (process.env.NODE_ENV === 'production') {
-    throw new Error('ELEVENLABS_API_KEY environment variable must be set in production');
-  }
-  return 'dev-secret-key-change-before-production';
-})();
+const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
 const RESUME_FULLTEXT_MAX_CHARS = 12000;
 const TOKEN_CACHE_TTL_MS = 10 * 1000;
 const MAX_TOKEN_RETRIES = 3;
 const BASE_RETRY_DELAY_MS = 250;
+const TOKEN_FETCH_TIMEOUT_MS = Number(process.env.CONVERSATION_TOKEN_FETCH_TIMEOUT_MS ?? 10_000);
+const MAX_TOKEN_RETRY_DELAY_MS = Number(process.env.CONVERSATION_TOKEN_MAX_RETRY_DELAY_MS ?? 2_000);
 
 const tokenResponseCache = new Map<string, { timestamp: number; status: number; body: any }>();
 
@@ -424,6 +421,29 @@ const parseRetryAfter = (value: string | null): number | null => {
     return delay > 0 ? delay : 0;
   }
   return null;
+};
+
+const clampTokenRetryDelay = (delayMs: number): number =>
+  Math.max(0, Math.min(delayMs, MAX_TOKEN_RETRY_DELAY_MS));
+
+const describeTokenFetchError = (error: any) => {
+  const cause = error?.cause as { code?: string } | undefined;
+  return {
+    name: error?.name || 'Unknown',
+    message: error?.message || String(error),
+    code: error?.code || cause?.code,
+  };
+};
+
+const isRetryableTokenFetchError = (error: any): boolean => {
+  const details = describeTokenFetchError(error);
+  const message = details.message.toLowerCase();
+  return (
+    details.name === 'AbortError' ||
+    message.includes('fetch failed') ||
+    message.includes('network') ||
+    ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT', 'UND_ERR_SOCKET'].includes(details.code || '')
+  );
 };
 
 const sanitizeLogPayload = (payload: unknown) => {
@@ -1419,10 +1439,14 @@ export function registerRoutes(app: Express) {
   // All OpenAI endpoints have been removed as part of the migration.
   // ============================================================================
 
-  // Rate limiter for ElevenLabs token endpoint: 5 requests per hour per user
-const tokenRateLimiter = rateLimit({
+  // Rate limiter for ElevenLabs token endpoint (per user; higher default in development)
+  const conversationTokenRateLimitMax = Number(
+    process.env.CONVERSATION_TOKEN_RATE_LIMIT_MAX ??
+      (process.env.NODE_ENV === "production" ? "5" : "100"),
+  );
+  const tokenRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: 5, // 5 requests per hour
+  max: conversationTokenRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
   // Use userId from request if available (after auth middleware)
@@ -1438,7 +1462,7 @@ const tokenRateLimiter = rateLimit({
     console.warn(`[CONVERSATION-TOKEN] Rate limit exceeded for requestId=${requestId}`);
     const errorBody = {
       code: 'RATE_LIMIT_EXCEEDED',
-      message: 'Rate limit exceeded. Maximum 5 tokens per hour.',
+      message: `Rate limit exceeded. Maximum ${conversationTokenRateLimitMax} interview starts per hour.`,
       requestId,
     };
     return res.status(429).json({ error: errorBody });
@@ -1517,14 +1541,56 @@ const tokenRateLimiter = rateLimit({
       console.log(`[CONVERSATION-TOKEN] Fetching signed URL for WebRTC... (requestId=${requestId}, agentId=${agentId})`);
       console.log(`[CONVERSATION-TOKEN] Calling ElevenLabs API: ${elevenLabsUrl}`);
 
-      const fetchResult = await (async function fetchSignedUrl(attempt = 0): Promise<{ success: boolean; signedUrl?: string; status?: number; body?: any; special?: 'concurrent' | 'system_busy'; retryAfterSeconds?: number }> {
-        const response = await fetch(elevenLabsUrl, fetchOptions);
-        const responseText = await response.text();
+      const fetchResult = await (async function fetchSignedUrl(attempt = 0): Promise<{ success: boolean; signedUrl?: string; status?: number; body?: any; special?: 'concurrent' | 'system_busy' | 'timeout' | 'network'; retryAfterSeconds?: number }> {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), TOKEN_FETCH_TIMEOUT_MS);
+
+        let response: globalThis.Response;
+        let responseText = '';
         let parsedBody: any = null;
+
         try {
-          parsedBody = JSON.parse(responseText);
-        } catch {
-          parsedBody = null;
+          response = await fetch(elevenLabsUrl, { ...fetchOptions, signal: controller.signal });
+          responseText = await response.text();
+          try {
+            parsedBody = JSON.parse(responseText);
+          } catch {
+            parsedBody = null;
+          }
+        } catch (error: any) {
+          const details = describeTokenFetchError(error);
+          const timedOut = details.name === 'AbortError';
+          console.warn(`[CONVERSATION-TOKEN] ElevenLabs fetch failed (attempt ${attempt + 1})`, {
+            requestId,
+            timestamp: new Date().toISOString(),
+            timeoutMs: TOKEN_FETCH_TIMEOUT_MS,
+            ...details,
+          });
+
+          if (attempt < MAX_TOKEN_RETRIES && isRetryableTokenFetchError(error)) {
+            const delay = clampTokenRetryDelay(
+              Math.round(BASE_RETRY_DELAY_MS * Math.pow(2, attempt) * (0.75 + Math.random() * 0.5)),
+            );
+            console.log(`[CONVERSATION-TOKEN] Retrying fetch failure after ${delay}ms for requestId=${requestId} (attempt ${attempt + 1})`);
+            await sleep(delay);
+            return fetchSignedUrl(attempt + 1);
+          }
+
+          return {
+            success: false,
+            status: 504,
+            special: timedOut ? 'timeout' : 'network',
+            body: {
+              error: {
+                code: timedOut ? 'UPSTREAM_TIMEOUT' : 'UPSTREAM_NETWORK_ERROR',
+                message: timedOut
+                  ? `ElevenLabs token request timed out after ${TOKEN_FETCH_TIMEOUT_MS}ms`
+                  : `ElevenLabs token request failed: ${details.message}`,
+              },
+            },
+          };
+        } finally {
+          clearTimeout(timeout);
         }
 
         if (response.ok) {
@@ -1615,7 +1681,10 @@ const tokenRateLimiter = rateLimit({
 
         if (response.status === 429 && attempt < MAX_TOKEN_RETRIES) {
           const retryAfterValue = response.headers.get('retry-after');
-          const delay = parseRetryAfter(retryAfterValue) ?? Math.round(BASE_RETRY_DELAY_MS * Math.pow(2, attempt) * (0.75 + Math.random() * 0.5));
+          const delay = clampTokenRetryDelay(
+            parseRetryAfter(retryAfterValue) ??
+              Math.round(BASE_RETRY_DELAY_MS * Math.pow(2, attempt) * (0.75 + Math.random() * 0.5)),
+          );
           console.log(`[CONVERSATION-TOKEN] Retrying after ${delay}ms for requestId=${requestId} (attempt ${attempt + 1})`);
           await sleep(delay);
           return fetchSignedUrl(attempt + 1);
@@ -1653,6 +1722,8 @@ const tokenRateLimiter = rateLimit({
       const upstreamStatus = fetchResult.status || 500;
       const isConcurrent = fetchResult.special === 'concurrent';
       const isBusy = fetchResult.special === 'system_busy';
+      const isTimeout = fetchResult.special === 'timeout';
+      const isNetwork = fetchResult.special === 'network';
       const retryAfterSeconds = fetchResult.retryAfterSeconds;
       
       // Log full error details from ElevenLabs response
@@ -1662,16 +1733,22 @@ const tokenRateLimiter = rateLimit({
         upstreamBody: fetchResult.body,
         isConcurrent,
         isBusy,
+        isTimeout,
+        isNetwork,
         retryAfterSeconds: retryAfterSeconds || null,
         timestamp: new Date().toISOString(),
       });
       
       // Determine error code based on error type
-      let errorCode: 'SYSTEM_BUSY' | 'TOO_MANY_CONCURRENT' | 'RATE_LIMIT' | 'UPSTREAM_ERROR';
+      let errorCode: 'SYSTEM_BUSY' | 'TOO_MANY_CONCURRENT' | 'RATE_LIMIT' | 'UPSTREAM_TIMEOUT' | 'UPSTREAM_NETWORK_ERROR' | 'UPSTREAM_ERROR';
       if (isConcurrent) {
         errorCode = 'TOO_MANY_CONCURRENT';
       } else if (isBusy) {
         errorCode = 'SYSTEM_BUSY';
+      } else if (isTimeout) {
+        errorCode = 'UPSTREAM_TIMEOUT';
+      } else if (isNetwork) {
+        errorCode = 'UPSTREAM_NETWORK_ERROR';
       } else if (upstreamStatus === 429) {
         errorCode = 'RATE_LIMIT';
       } else {
@@ -1697,6 +1774,10 @@ const tokenRateLimiter = rateLimit({
         errorMessage = 'Too many concurrent sessions. Close other sessions and wait 10–30s.';
       } else if (isBusy) {
         errorMessage = 'Service busy. Try again in a few seconds.';
+      } else if (isTimeout) {
+        errorMessage = 'Timed out contacting ElevenLabs. Please try again.';
+      } else if (isNetwork) {
+        errorMessage = 'Could not reach ElevenLabs. Please try again.';
       } else if (upstreamStatus === 429) {
         errorMessage = 'Rate limit exceeded. Please wait and try again.';
       }
