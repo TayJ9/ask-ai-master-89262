@@ -149,7 +149,7 @@ export default defineConfig({
             if (id.includes('recharts') || id.includes('chart') || id.includes('d3')) {
               return 'chart-vendor';
             }
-            // Animation libraries (not framer-motion - that's in entry)
+            // Animation libraries (framer-motion is motion-vendor)
             if (id.includes('embla-carousel') || id.includes('carousel')) {
               return 'animation-vendor';
             }

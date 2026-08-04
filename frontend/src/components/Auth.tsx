@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
@@ -29,8 +29,28 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [nameError, setNameError] = useState("");
+  const [signupEnabled, setSignupEnabled] = useState(true);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { apiGet } = await import("@/lib/api");
+        const config = await apiGet("/api/auth/config");
+        if (!cancelled && config && typeof config.signupEnabled === "boolean") {
+          setSignupEnabled(config.signupEnabled);
+          if (!config.signupEnabled) setIsLogin(true);
+        }
+      } catch {
+        // Keep signup visible when config is unavailable (local dev without gate)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const validateEmail = useCallback((value: string) => {
     const result = emailSchema.safeParse(value);
@@ -262,15 +282,17 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             >
               {isLogin ? "Sign In" : "Create Account"}
             </LoadingButton>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-auto min-h-10 w-full whitespace-normal py-2.5 text-balance leading-snug"
-              onClick={() => setIsLogin(!isLogin)}
-              data-testid="button-toggle-mode"
-            >
-              {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
-            </Button>
+            {signupEnabled && (
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-auto min-h-10 w-full whitespace-normal py-2.5 text-balance leading-snug"
+                onClick={() => setIsLogin(!isLogin)}
+                data-testid="button-toggle-mode"
+              >
+                {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
+              </Button>
+            )}
 
             {/* Sample results (no account) */}
             <div className="relative my-6">

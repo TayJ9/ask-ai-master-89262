@@ -5,10 +5,13 @@
  * Runs asynchronously via job queue to avoid blocking webhook responses.
  */
 
+import { context, trace, SpanStatusCode } from "@opentelemetry/api";
 import { db } from "./db";
 import { interviews, interviewEvaluations, insertInterviewEvaluationSchema } from "../shared/schema";
 import { eq } from "drizzle-orm";
 import { scoreInterview } from "./llm/openaiEvaluator";
+import { SCORING_RUBRIC_VERSION } from "./llm/scoringRubric";
+import { getScoringTracer, isScoringTracingEnabled } from "./instrumentation";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { randomUUID } from "crypto";
 import { parseTranscript } from "./transcriptParse";
@@ -463,6 +466,7 @@ export const evaluationQueue = new EvaluationQueue();
  * Evaluate an interview transcript and generate scores
  */
 export async function evaluateInterview(interviewId: string): Promise<void> {
+  const runEvaluation = async (): Promise<void> => {
   console.log(`[EVALUATION] 📊 Starting evaluation process for interview ${interviewId}`);
 
   // Load interview from database
@@ -628,6 +632,7 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     technicalDifficulty,
     technicalDepth,
     behavioralRatio,
+    interviewId,
   });
 
   console.log(`[EVALUATION] ✅ Evaluation generated`, {
@@ -652,6 +657,30 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     overallScore: evaluation.overall_score,
     status: 'complete',
     timestamp: new Date().toISOString(),
+  });
+  };
+
+  if (!isScoringTracingEnabled()) {
+    return runEvaluation();
+  }
+
+  const tracer = getScoringTracer();
+  return tracer.startActiveSpan("mockly.evaluate_interview", async (span) => {
+    span.setAttributes({
+      "interview.id": interviewId,
+      "scoring.pipeline": "mockly",
+      "scoring.rubric.version": SCORING_RUBRIC_VERSION,
+    });
+
+    try {
+      await context.with(trace.setSpan(context.active(), span), runEvaluation);
+    } catch (error) {
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: (error as Error).message });
+      throw error;
+    } finally {
+      span.end();
+    }
   });
 }
 

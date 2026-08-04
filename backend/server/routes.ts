@@ -25,6 +25,15 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice");
 
 import { getJwtSecretForSigning, isJwtSecretConfigured } from "./jwtSecret";
+import {
+  ACCESS_GATE_TIMEZONE,
+  getCurrentAccessCode,
+  hasValidAccessCookie,
+  isAccessGateEnabled,
+  signAccessCookie,
+  verifyAccessCode,
+} from "./accessGate";
+import { requireAccessCookieForAuth, setAccessCookie } from "./requireAccessGate";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -688,6 +697,100 @@ export function registerRoutes(app: Express) {
   app.get('/health', healthCheck);
   app.get('/api/health', healthCheck);
 
+  const accessVerifyRateLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: isProd ? 20 : 100,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => rateLimitIpKey(req),
+    handler: (req, res) => {
+      const requestId = (req as { requestId?: string }).requestId || randomUUID();
+      res.status(429).json({
+        error: {
+          code: "ACCESS_VERIFY_RATE_LIMIT",
+          message: "Too many access code attempts. Please try again later.",
+          requestId,
+        },
+      });
+    },
+  });
+
+  const accessAdminRateLimiter = rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: isProd ? 60 : 200,
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => rateLimitIpKey(req),
+    handler: (req, res) => {
+      const requestId = (req as { requestId?: string }).requestId || randomUUID();
+      res.status(429).json({
+        error: {
+          code: "ACCESS_ADMIN_RATE_LIMIT",
+          message: "Too many requests. Please try again later.",
+          requestId,
+        },
+      });
+    },
+  });
+
+  app.get("/api/access/status", (_req, res) => {
+    const required = isAccessGateEnabled();
+    const granted = required ? hasValidAccessCookie(_req) : true;
+    res.json({
+      required,
+      granted,
+      signupEnabled: process.env.ALLOW_SIGNUP !== "false",
+      timezone: ACCESS_GATE_TIMEZONE,
+    });
+  });
+
+  app.get("/api/auth/config", (_req, res) => {
+    res.json({
+      signupEnabled: process.env.ALLOW_SIGNUP !== "false",
+    });
+  });
+
+  app.post("/api/access/verify", accessVerifyRateLimiter, (req, res) => {
+    if (!isAccessGateEnabled()) {
+      return res.json({ ok: true, granted: true });
+    }
+
+    const code = typeof req.body?.code === "string" ? req.body.code : "";
+    if (!code.trim()) {
+      return res.status(400).json({ error: "Access code is required" });
+    }
+
+    if (!verifyAccessCode(code)) {
+      return res.status(401).json({ error: "Invalid access code" });
+    }
+
+    setAccessCookie(res, signAccessCookie());
+    return res.json({ ok: true });
+  });
+
+  app.get("/api/access/current", accessAdminRateLimiter, (req, res) => {
+    if (!isAccessGateEnabled()) {
+      return res.status(404).json({ error: "Access gate is disabled" });
+    }
+
+    const adminKey = process.env.ACCESS_GATE_ADMIN_KEY?.trim();
+    if (!adminKey) {
+      return res.status(503).json({ error: "Admin endpoint is not configured" });
+    }
+
+    const provided = req.header("X-Admin-Key");
+    if (!provided || provided !== adminKey) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+
+    const { code, validUntilIso } = getCurrentAccessCode();
+    return res.json({
+      code,
+      validUntil: validUntilIso,
+      timezone: ACCESS_GATE_TIMEZONE,
+    });
+  });
+
   // Dev-only: Expected dynamicVariables shape for a given year (for test assertions)
   app.get("/api/dev/dynamic-variables-schema", (req, res) => {
     if (process.env.NODE_ENV === "production") {
@@ -788,8 +891,13 @@ export function registerRoutes(app: Express) {
   });
 
   // Auth endpoints
-  app.post("/api/auth/signup", authRateLimiter, async (req, res) => {
+  app.post("/api/auth/signup", authRateLimiter, requireAccessCookieForAuth, async (req, res) => {
     try {
+      const allowSignup = process.env.ALLOW_SIGNUP !== "false";
+      if (!allowSignup) {
+        return res.status(403).json({ error: "Sign up is disabled. Contact the administrator." });
+      }
+
       const { email, password, fullName } = req.body;
       
       if (!email || !password || !fullName) {
@@ -836,7 +944,7 @@ export function registerRoutes(app: Express) {
     }
   });
 
-  app.post("/api/auth/signin", authRateLimiter, async (req, res) => {
+  app.post("/api/auth/signin", authRateLimiter, requireAccessCookieForAuth, async (req, res) => {
     try {
       console.log(`[SIGNIN] Request received:`, {
         method: req.method,

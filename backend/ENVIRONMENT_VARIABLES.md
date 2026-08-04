@@ -69,7 +69,56 @@ These have default values but can be customized:
 - **Format**: `http://host:port` or `https://host:port`
 - **Used in**: `server/routes.ts` - Voice interview proxy endpoints
 
-## Railway Environment Variables Setup
+### 8. Arize tracing (Optional — scoring pipeline observability)
+
+Export GPT-4o-mini scoring traces to [Arize AX](https://arize.com) for prompt, rubric, response, latency, and token monitoring.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ARIZE_SPACE_ID` | Yes (with API key) | None | Space ID from Arize AX → Space Settings → API Keys |
+| `ARIZE_API_KEY` | Yes (with space ID) | None | API key from Arize AX → Space Settings → API Keys |
+| `ARIZE_PROJECT_NAME` | No | `mockly-scoring` | Project name in Arize (filter traces by project) |
+| `ARIZE_OTLP_URL` | No | `https://otlp.arize.com/v1/traces` | OTLP HTTP endpoint (EU spaces may differ) |
+
+- **Used in**: `server/instrumentation.ts`, `server/llm/openaiEvaluator.ts`, `server/evaluation.ts`
+- **When disabled**: If either `ARIZE_SPACE_ID` or `ARIZE_API_KEY` is unset, tracing is skipped with no impact on scoring.
+- **What is traced**: Every `gpt-4o-mini` call in the scoring pipeline — system/user prompts (rubric), model response, latency, token counts, interview ID, and final capped scores.
+
+Example (Railway Variables or `backend/.env`):
+
+```env
+ARIZE_SPACE_ID=your-space-id
+ARIZE_API_KEY=your-api-key
+ARIZE_PROJECT_NAME=mockly-scoring
+```
+
+For local evaluator scripts (`npm run test:evaluator`), call `initArizeTracing()` after loading `.env` if you want traces from test runs.
+
+### 9. Access gate (Production — Coolify unified deploy)
+
+Hourly rotating access codes (**US Eastern**, `America/New_York`) gate the app before login. See [docs/COOLIFY_DEPLOYMENT.md](../docs/COOLIFY_DEPLOYMENT.md).
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `ACCESS_GATE_SECRET` | ✅ Yes (Prod) | — | HMAC secret for hourly codes (32+ random bytes, hex or base32) |
+| `ACCESS_GATE_ADMIN_KEY` | Recommended | — | Protects `GET /api/access/current` (operator / n8n) |
+| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | No | `604800` (7 days) | Gate cookie lifetime after successful verify |
+| `ALLOW_SIGNUP` | No | `true` | Set `false` to disable registration (invite-only) |
+| `ALLOW_VERCEL_ORIGINS` | No | `false` | Set `true` to re-enable `*.vercel.app` CORS |
+| `FRONTEND_URL` | ✅ Yes (Prod) | — | Public app URL for CORS (e.g. `https://mockly.yourdomain.com`) |
+
+When `ACCESS_GATE_SECRET` is **unset**, the gate is disabled (local dev convenience). In production (`NODE_ENV=production`), startup **fails** if `ACCESS_GATE_SECRET` is missing.
+
+**Operator:** fetch current code (never exposes the secret):
+
+```http
+GET /api/access/current
+X-Admin-Key: <ACCESS_GATE_ADMIN_KEY>
+```
+
+Response includes `code`, `validUntil` (ISO timestamp), and `timezone: "America/New_York"`.
+
+## Railway / Coolify Environment Variables Setup
 
 ### Step-by-Step Instructions:
 
@@ -118,6 +167,15 @@ These have default values but can be customized:
 | `NODE_ENV` | ✅ Yes (Prod) | `development` | Environment mode |
 | `PORT` | ❌ No | `5000` | Server port (Railway sets automatically) |
 | `PYTHON_BACKEND_URL` | ❌ No | `http://127.0.0.1:5001` | Python backend URL (if used) |
+| `ARIZE_SPACE_ID` | ❌ No | None | Arize AX space ID (enables scoring traces) |
+| `ARIZE_API_KEY` | ❌ No | None | Arize AX API key (enables scoring traces) |
+| `ARIZE_PROJECT_NAME` | ❌ No | `mockly-scoring` | Arize project for scoring traces |
+| `ACCESS_GATE_SECRET` | ✅ Yes (Prod) | None | Hourly access code HMAC secret |
+| `ACCESS_GATE_ADMIN_KEY` | Recommended | None | Admin key for `/api/access/current` |
+| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | ❌ No | `604800` | Gate cookie max age (seconds) |
+| `ALLOW_SIGNUP` | ❌ No | `true` | Set `false` to disable registration |
+| `ALLOW_VERCEL_ORIGINS` | ❌ No | `false` | Allow `*.vercel.app` CORS origins |
+| `FRONTEND_URL` | ✅ Yes (Prod) | None | Frontend URL for CORS |
 
 ## Quick Setup Commands
 

@@ -1,7 +1,6 @@
 // Load environment variables FIRST before anything else
 import dotenv from 'dotenv';
-dotenv.config();
-
+import { initArizeTracing } from "./instrumentation";
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -10,6 +9,8 @@ import { isJwtSecretConfigured } from "./jwtSecret";
 import { assertRequiredProductionEnv } from "./assertProductionEnv";
 import { installErrorHandlers } from "./errorHandler";
 import { registerRoutes } from "./routes";
+import { requireAccessGate } from "./requireAccessGate";
+import { isAccessGateEnabled } from "./accessGate";
 import { setupVite, serveStatic, log } from "./vite";
 import { storage } from "./storage";
 import { repairSchema } from "./schema-repair";
@@ -22,6 +23,9 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const require = createRequire(import.meta.url);
 const { createVoiceServer } = require("../voiceServer");
+
+dotenv.config();
+initArizeTracing();
 
 process.on("unhandledRejection", (reason) => {
   console.error("[ProcessUnhandledRejection]", reason);
@@ -71,8 +75,8 @@ const isOriginAllowed = (origin: string | undefined): boolean => {
     return true;
   }
   
-  // Allow any Vercel deployment (*.vercel.app)
-  if (origin.includes('.vercel.app')) {
+  // Allow any Vercel deployment (*.vercel.app) when explicitly enabled
+  if (process.env.ALLOW_VERCEL_ORIGINS === "true" && origin.includes(".vercel.app")) {
     return true;
   }
   
@@ -204,25 +208,9 @@ app.use((req, res, next) => {
     log('[SERVER STARTUP] Schema repair completed');
     
     log('[SERVER STARTUP] Registering API routes...');
+    app.use(requireAccessGate);
     registerRoutes(app);
     log('[SERVER STARTUP] API routes registered successfully');
-    
-    // Root route - provide API information (frontend is deployed separately on Vercel)
-    app.get('/', (_req, res) => {
-      res.json({
-        message: "AI Interview Coach API",
-        version: "1.0.0",
-        status: "operational",
-        environment: process.env.NODE_ENV || "development",
-        endpoints: {
-          health: "GET /health",
-          api: "All /api/* endpoints available",
-          websocket: "WS /voice - Voice interview WebSocket endpoint"
-        },
-        frontend: "Deployed separately on Vercel",
-        documentation: "API endpoints are available at /api/*"
-      });
-    });
     
     // Use static file serving in production, Vite dev server in development
     if (process.env.NODE_ENV === "production") {
@@ -258,7 +246,9 @@ app.use((req, res, next) => {
       if (allowedOrigins.length > 0) {
         log(`CORS: Allowing origins: ${allowedOrigins.join(', ')}`);
       }
-      log(`CORS: Also allowing all *.vercel.app domains`);
+      if (process.env.ALLOW_VERCEL_ORIGINS === "true") {
+        log(`CORS: Also allowing all *.vercel.app domains`);
+      }
       
       // Log environment variable status
       log(`Environment Variables Status:`);
@@ -266,7 +256,9 @@ app.use((req, res, next) => {
       log(`  ELEVENLABS_AGENT_ID: ${process.env.ELEVENLABS_AGENT_ID ? '✅ Set' : '⚠️  Missing (will use default)'}`);
       log(`  JWT_SECRET: ${isJwtSecretConfigured() ? '✅ Set' : '❌ Missing (required in production)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
-      log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (optional - using *.vercel.app fallback)'}`);
+      log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (required for production CORS on Coolify)'}`);
+      log(`  ACCESS_GATE: ${isAccessGateEnabled() ? '✅ Enabled (hourly codes, US Eastern)' : 'ℹ️  Disabled (ACCESS_GATE_SECRET unset)'}`);
+      log(`  ARIZE_TRACING: ${process.env.ARIZE_SPACE_ID && process.env.ARIZE_API_KEY ? '✅ Enabled (scoring traces → Arize)' : 'ℹ️  Disabled (set ARIZE_SPACE_ID + ARIZE_API_KEY to enable)'}`);
       
       // Validate ElevenLabs configuration FIRST (before other initialization)
       // This ensures all validation checks are visible in Railway logs

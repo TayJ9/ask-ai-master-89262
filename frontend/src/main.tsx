@@ -3,6 +3,7 @@ import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.tsx";
 import { devLog } from "./lib/utils";
+import "./fonts.ts";
 import "./index.css";
 
 // Verify root element exists

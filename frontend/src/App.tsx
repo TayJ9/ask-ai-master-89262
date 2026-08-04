@@ -15,13 +15,16 @@ import { AnimatePresence, motion } from "framer-motion";
 import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
 import { devLog } from "@/lib/utils";
 import AppErrorBoundary from "@/components/AppErrorBoundary";
+import AccessGateGuard from "@/components/AccessGateGuard";
 import { isReactReady, waitForReact } from "@/lib/reactReady";
 
-import Index from "./pages/Index";
-import NotFound from "./pages/NotFound";
-import InterviewPreview from "./pages/InterviewPreview";
-
-// Code-split the heavy Results page (~700-node DOM, Framer Motion, mock fixtures)
+// Route-level code splitting — each page loads only when navigated to
+const Index = lazy(() => import("./pages/Index"));
+const NotFound = lazy(() => import("./pages/NotFound"));
+const InterviewPreview = lazy(() => import("./pages/InterviewPreview"));
+const LoginPreview = lazy(() => import("./pages/LoginPreview"));
+const AccessGate = lazy(() => import("./pages/AccessGate"));
+const Terms = lazy(() => import("./pages/Terms"));
 const Results = lazy(() => import("./pages/Results"));
 
 const RouteLoadingFallback = () => (
@@ -78,12 +81,17 @@ const AppContent = () => {
         >
           <div className="app-page-tint" aria-hidden="true" />
           <Suspense fallback={<RouteLoadingFallback />}>
-            <Switch>
-              <Route path="/" component={Index} />
-              <Route path="/results" component={Results} />
-              <Route path="/interview-preview" component={InterviewPreview} />
-              <Route component={NotFound} />
-            </Switch>
+            <AccessGateGuard>
+              <Switch>
+                <Route path="/gate" component={AccessGate} />
+                <Route path="/" component={Index} />
+                <Route path="/results" component={Results} />
+                <Route path="/interview-preview" component={InterviewPreview} />
+                <Route path="/login-preview" component={LoginPreview} />
+                <Route path="/terms" component={Terms} />
+                <Route component={NotFound} />
+              </Switch>
+            </AccessGateGuard>
           </Suspense>
         </motion.div>
       </AnimatePresence>

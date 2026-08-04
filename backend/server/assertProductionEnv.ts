@@ -12,6 +12,7 @@ export function assertRequiredProductionEnv(): void {
     missing.push(`JWT signing secret (${JWT_SECRET_ENV_KEYS.join(" | ")})`);
   }
   if (!process.env.DATABASE_URL?.trim()) missing.push("DATABASE_URL");
+  if (!process.env.ACCESS_GATE_SECRET?.trim()) missing.push("ACCESS_GATE_SECRET");
 
   if (missing.length > 0) {
     const jwtRelatedKeys = Object.keys(process.env).filter((key) =>

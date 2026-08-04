@@ -5,8 +5,11 @@
  * consistent, schema-validated evaluation results.
  */
 
+import { context, trace, SpanStatusCode } from "@opentelemetry/api";
 import { z } from "zod";
+import { getScoringTracer, isScoringTracingEnabled } from "../instrumentation";
 import { stripResumeContactInfo } from "../resumeSanitize";
+import { SCORING_RUBRIC_SUMMARY, SCORING_RUBRIC_VERSION } from "./scoringRubric";
 import {
   analyzeAnswerQuality,
   buildCoachingImprovements,
@@ -333,6 +336,8 @@ interface ScoreInterviewParams {
   technicalDepth?: string;
   /** Optional: behavioral question ratio 0-100 */
   behavioralRatio?: number | string;
+  /** Optional: interview ID for Arize trace correlation */
+  interviewId?: string;
 }
 
 /**
@@ -347,7 +352,9 @@ export async function scoreInterview({
   technicalDifficulty,
   technicalDepth,
   behavioralRatio,
+  interviewId,
 }: ScoreInterviewParams): Promise<EvaluationJson> {
+  const runScoring = async (): Promise<EvaluationJson> => {
   // Store questions for transformation if needed
   const inputQuestions = questions;
   const apiKey = process.env.OPENAI_API_KEY;
@@ -502,7 +509,8 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
     // We'll validate with Zod to ensure schema compliance
     // Add timeout: 60 seconds for OpenAI API call
     const OPENAI_TIMEOUT_MS = 60000;
-    
+    const llmStart = Date.now();
+
     const apiCall = openai.chat.completions.create({
       model: "gpt-4o-mini", // Cost-effective model suitable for evaluation
       messages: [
@@ -521,11 +529,31 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
     });
     
     const response = await Promise.race([apiCall, timeoutPromise]);
+    const llmLatencyMs = Date.now() - llmStart;
+
+    const activeSpan = trace.getActiveSpan();
+    activeSpan?.setAttributes({
+      "scoring.llm.latency_ms": llmLatencyMs,
+      "scoring.rubric.version": SCORING_RUBRIC_VERSION,
+      "scoring.rubric.summary": SCORING_RUBRIC_SUMMARY,
+      "scoring.prompt.system": systemPrompt,
+      "scoring.prompt.user": userPrompt,
+    });
+
+    if (response.usage) {
+      activeSpan?.setAttributes({
+        "llm.token_count.prompt": response.usage.prompt_tokens,
+        "llm.token_count.completion": response.usage.completion_tokens,
+        "llm.token_count.total": response.usage.total_tokens,
+      });
+    }
 
     const content = response.choices[0].message.content;
     if (!content) {
       throw new Error("OpenAI did not return content");
     }
+
+    activeSpan?.setAttribute("scoring.response.raw", content);
 
     let parsed: any;
     try {
@@ -537,7 +565,15 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
     try {
       const normalized = normalizeEvaluationJson(parsed, inputQuestions);
       const capped = applyStrictScoreCaps(normalized);
-      return EvaluationJsonSchema.parse(capped);
+      const validated = EvaluationJsonSchema.parse(capped);
+
+      activeSpan?.setAttributes({
+        "scoring.overall_score": validated.overall_score,
+        "scoring.questions_evaluated": validated.questions.length,
+        "scoring.response.final": JSON.stringify(validated),
+      });
+
+      return validated;
     } catch (normErr: any) {
       if (normErr instanceof z.ZodError) {
         const msgs = normErr.errors.map((e) => `${e.path.join(".")}: ${e.message}`);
@@ -546,6 +582,7 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
       throw normErr;
     }
   } catch (error: any) {
+    trace.getActiveSpan()?.recordException(error);
     if (error instanceof z.ZodError) {
       throw new Error(`Schema validation failed: ${error.errors.map(e => `${e.path}: ${e.message}`).join(", ")}`);
     }
@@ -557,5 +594,39 @@ Provide a strict JSON evaluation matching the schema. Score each answer individu
     }
     throw new Error(`OpenAI API error: ${error.message || "Unknown error"}`);
   }
+  };
+
+  if (!isScoringTracingEnabled()) {
+    return runScoring();
+  }
+
+  const tracer = getScoringTracer();
+  return tracer.startActiveSpan("mockly.score_interview", async (span) => {
+    span.setAttributes({
+      "scoring.pipeline": "mockly",
+      "scoring.model": "gpt-4o-mini",
+      "scoring.rubric.version": SCORING_RUBRIC_VERSION,
+      "scoring.rubric.summary": SCORING_RUBRIC_SUMMARY,
+      "scoring.qa_pair_count": questions.length,
+      ...(interviewId && { "interview.id": interviewId }),
+      ...(role && { "candidate.role": role }),
+      ...(major && { "candidate.major": major }),
+      ...(studentYear && { "candidate.student_year": studentYear }),
+      ...(technicalDifficulty && { "candidate.technical_difficulty": technicalDifficulty }),
+      ...(technicalDepth && { "candidate.technical_depth": technicalDepth }),
+      ...(behavioralRatio != null && { "candidate.behavioral_ratio": String(behavioralRatio) }),
+      ...(resumeText && { "candidate.has_resume": true }),
+    });
+
+    try {
+      return await context.with(trace.setSpan(context.active(), span), runScoring);
+    } catch (error) {
+      span.recordException(error as Error);
+      span.setStatus({ code: SpanStatusCode.ERROR, message: (error as Error).message });
+      throw error;
+    } finally {
+      span.end();
+    }
+  });
 }
 

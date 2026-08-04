@@ -194,6 +194,7 @@ export async function apiFetch(
     const response = await fetch(url, {
       ...options,
       headers,
+      credentials: "include",
       signal: controller.signal,
     });
     
@@ -366,6 +367,7 @@ export async function apiPostFormData(path: string, formData: FormData, options:
       method: 'POST',
       headers,
       body: formData,
+      credentials: "include",
       signal: controller.signal,
     });
     
