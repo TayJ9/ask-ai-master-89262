@@ -9,13 +9,15 @@ COPY frontend ./frontend
 RUN npm run build:frontend
 
 # Stage 2: runtime
+# COPY from frontend-build BEFORE npm ci so BuildKit runs stages sequentially
+# (default order runs both npm ci steps in parallel and OOMs small VPS hosts)
 FROM node:20-alpine
 WORKDIR /app
+COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 COPY package.json package-lock.json ./
 COPY backend/package.json ./backend/
 RUN npm ci --omit=dev
 COPY backend ./backend
-COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 ENV NODE_ENV=production
 WORKDIR /app/backend
 EXPOSE 5000
