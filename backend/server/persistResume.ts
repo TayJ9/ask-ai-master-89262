@@ -1,5 +1,5 @@
 import { storage } from "./storage";
-import { extractResumeProfileWithNER, summarizeResume } from "./llm/huggingfaceResume";
+import { extractResumeProfileWithOpenAI, type ParsedResumeProfile } from "./llm/openaiResumeExtractor";
 import { buildResumeProfile } from "./resumeProfileHeuristic";
 import { buildInterviewResumeBrief } from "./resumeInterviewBrief";
 import { stripResumeContactInfo } from "./resumeSanitize";
@@ -10,7 +10,7 @@ export { MAX_RESUME_TEXT_CHARS };
 export type PersistedResumePayload = {
   sessionId: string;
   resumeText: string;
-  resumeProfile: ReturnType<typeof buildResumeProfile>;
+  resumeProfile: ParsedResumeProfile;
   resume_summary: string;
   resume_highlights: string;
   briefSource: "structured" | "prose_fallback" | "slice_fallback";
@@ -35,34 +35,13 @@ export async function persistResumeForSession(
   }
 
   const resumeFulltext = stripResumeContactInfo(resumeText);
-  let resumeProfile = buildResumeProfile(resumeFulltext);
+  const heuristicProfile = buildResumeProfile(resumeFulltext);
+  const resumeProfile = await extractResumeProfileWithOpenAI(resumeFulltext, heuristicProfile);
 
-  try {
-    resumeProfile = await extractResumeProfileWithNER(resumeFulltext, resumeProfile);
-  } catch (hfErr: unknown) {
-    const msg = hfErr instanceof Error ? hfErr.message : String(hfErr);
-    console.warn(`${logPrefix} HF NER skipped:`, msg);
-  }
-
-  // Hybrid strategy (option D):
+  // Hybrid strategy:
   // 1) Structured brief from profile → ElevenLabs dynamic vars (primary)
   // 2) Full resume stays in DB for GetResumeProfile / GetResumeFullText
-  // 3) HF prose summarization only if structured signal is too weak
-  const preliminary = buildInterviewResumeBrief(resumeProfile, resumeFulltext);
-  let proseSummary: string | null = null;
-  if (preliminary.source !== "structured") {
-    try {
-      const hfSummary = await summarizeResume(resumeFulltext);
-      proseSummary = hfSummary?.summary ?? null;
-    } catch (hfErr: unknown) {
-      const msg = hfErr instanceof Error ? hfErr.message : String(hfErr);
-      console.warn(`${logPrefix} HF summarization skipped:`, msg);
-    }
-  }
-
-  const brief = buildInterviewResumeBrief(resumeProfile, resumeFulltext, {
-    proseSummary,
-  });
+  const brief = buildInterviewResumeBrief(resumeProfile, resumeFulltext);
 
   await storage.upsertResume(sessionId, resumeFulltext, resumeProfile, userId);
   console.log(`${logPrefix} Stored resume for session`, {
@@ -70,6 +49,7 @@ export async function persistResumeForSession(
     hasUserId: !!userId,
     resumeTextLength: resumeFulltext.length,
     hasProfile: !!resumeProfile,
+    parseSource: resumeProfile.parse_source ?? "heuristic",
     briefSource: brief.source,
     summaryLength: brief.resume_summary.length,
     highlightsLength: brief.resume_highlights.length,

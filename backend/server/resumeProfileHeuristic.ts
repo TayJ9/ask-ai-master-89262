@@ -3,6 +3,8 @@
  * Used by upload flow and as the baseline for HF NER comparison.
  */
 
+import { structuredProfileFromStored } from "./llm/openaiResumeExtractor.js";
+
 const SECTION_HEADERS: Record<string, "skills" | "projects" | "experience" | "education"> = {
   skills: "skills",
   skill: "skills",
@@ -242,19 +244,24 @@ export function overlayFormFieldsOnResumeProfile(
 }
 
 /**
- * Structured profile for GetResumeProfile — always includes parsed skills/projects/etc.
- * Re-parses fulltext so legacy rows that lost arrays during form merge still work.
+ * Structured profile for GetResumeProfile — prefers stored LLM/heuristic arrays;
+ * re-parses fulltext only for legacy rows missing structured sections.
  */
 export function buildToolResumeProfile(
   storedProfile: unknown,
   resumeFulltext: string | undefined,
 ): Record<string, unknown> {
-  const parsed = resumeFulltext
-    ? buildResumeProfile(resumeFulltext)
-    : { skills: [], projects: [], experience: [], education: [] };
   const stored =
     storedProfile && typeof storedProfile === "object"
       ? (storedProfile as Record<string, unknown>)
       : {};
+
+  const fromStored = structuredProfileFromStored(stored);
+  const parsed =
+    fromStored ??
+    (resumeFulltext
+      ? buildResumeProfile(resumeFulltext)
+      : { skills: [], projects: [], experience: [], education: [] });
+
   return overlayFormFieldsOnResumeProfile(parsed, stored);
 }

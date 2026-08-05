@@ -13,7 +13,7 @@
     "dev": "tsx scripts/setup-sqlite.ts && tsx server/index.ts",
     "dev:no-setup": "tsx server/index.ts",
     "build": "echo 'Build complete - no code execution' && exit 0",
-    "test": "tsx --test server/transcriptParse.test.ts server/resumeInterviewBrief.test.ts server/resumeSanitize.test.ts server/accessGate.test.ts server/requireAccessGate.test.ts",
+    "test": "tsx --test server/transcriptParse.test.ts server/resumeInterviewBrief.test.ts server/resumeSanitize.test.ts server/accessGate.test.ts server/requireAccessGate.test.ts server/llm/openaiResumeExtractor.test.ts",
     "test:parse-transcript": "tsx --test server/transcriptParse.test.ts",
     "test:resume-brief": "tsx --test server/resumeInterviewBrief.test.ts",
     "test:resume-sanitize": "tsx --test server/resumeSanitize.test.ts",

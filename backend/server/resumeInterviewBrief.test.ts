@@ -152,4 +152,22 @@ describe("buildToolResumeProfile", () => {
     assert.equal(toolProfile.first_name, "Taylor");
     assert.equal(toolProfile.major, "Computer Information Systems");
   });
+
+  it("uses stored structured arrays without re-parsing fulltext", () => {
+    const toolProfile = buildToolResumeProfile(
+      {
+        skills: ["Stored Skill"],
+        projects: ["Stored Project"],
+        experience: ["Stored Job"],
+        education: ["Stored School"],
+        parse_source: "llm",
+        first_name: "Taylor",
+        major: "Computer Science",
+      },
+      BLOCK_RESUME,
+    );
+    assert.ok(toolProfile.skills.includes("Stored Skill"));
+    assert.ok(toolProfile.projects.includes("Stored Project"));
+    assert.ok(!toolProfile.skills.some((s) => /kubernetes/i.test(String(s))));
+  });
 });
