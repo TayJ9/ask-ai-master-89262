@@ -65,6 +65,8 @@ x-api-secret: <ELEVENLABS_API_KEY>
 
 `Authorization: Bearer <ELEVENLABS_API_KEY>` is also accepted if your ElevenLabs tool uses Bearer auth instead of `x-api-secret`.
 
+**Critical:** The `x-api-secret` value in the ElevenLabs tool config must **exactly match** `ELEVENLABS_API_KEY` in Coolify/production. A placeholder like `my_secret_interview_key_123` will cause **401 Unauthorized** on every tool call (the agent will show the tool as failed; backend logs may show no `[RESUME-PROFILE]` line on older builds, or `[RESUME-PROFILE] unauthorized` after logging was added).
+
 **Body** (configure in tool `request_body_schema`; ElevenLabs sends values inside a `parameters` object)
 
 ```json
