@@ -7,6 +7,13 @@ export const ACCESS_GATE_TIMEZONE = "UTC";
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_COOKIE_MAX_AGE_SECONDS = 604800;
 
+/** Access granted after code entry lasts this long (rolling 1h from verify time). */
+export const ACCESS_SESSION_DURATION_MS = HOUR_MS;
+
+export function getAccessSessionExpiresMs(unixMs: number): number {
+  return unixMs + ACCESS_SESSION_DURATION_MS;
+}
+
 function getUtcHourKey(unixMs: number): string {
   const d = new Date(unixMs);
   const year = d.getUTCFullYear();
@@ -85,7 +92,7 @@ export function getCookieMaxAgeSeconds(): number {
 
 export function signAccessCookie(now = Date.now()): string {
   const secret = getSecret();
-  const expiresAt = getUtcHourEndMs(now);
+  const expiresAt = getAccessSessionExpiresMs(now);
   const nonce = randomBytes(16).toString("hex");
   const payload = `${expiresAt}.${nonce}`;
   const sig = createHmac("sha256", secret).update(payload).digest("base64url");

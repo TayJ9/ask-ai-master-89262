@@ -75,11 +75,11 @@ describe("accessGate cookie", () => {
     delete process.env.ACCESS_GATE_COOKIE_MAX_AGE_SECONDS;
   });
 
-  it("signs and verifies a cookie until the UTC hour ends", () => {
+  it("signs and verifies a cookie for one hour after entry", () => {
     const now = UTC_MID_HOUR;
     const token = signAccessCookie(now);
-    assert.equal(verifyAccessCookie(token, UTC_END_OF_HOUR), true);
-    assert.equal(verifyAccessCookie(token, UTC_START_OF_NEXT_HOUR), false);
+    assert.equal(verifyAccessCookie(token, now + 3599 * 1000), true);
+    assert.equal(verifyAccessCookie(token, now + 3600 * 1000), false);
   });
 
   it("rejects tampered cookies", () => {

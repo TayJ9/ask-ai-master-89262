@@ -53,7 +53,7 @@ export default function AccessGate() {
               </span>
             </h1>
             <CardDescription className="text-balance text-base leading-relaxed">
-              Enter the hourly access code to continue. Codes rotate on the UTC hour.
+              Enter the hourly access code to continue. Access lasts one hour from when you enter it; codes rotate on the UTC hour.
             </CardDescription>
           </div>
         </CardHeader>

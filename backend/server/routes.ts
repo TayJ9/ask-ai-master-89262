@@ -30,7 +30,7 @@ import {
   getAccessCookieExpiresAt,
   getAccessCookieFromRequest,
   getCurrentAccessCode,
-  getUtcHourEndMs,
+  getAccessSessionExpiresMs,
   hasValidAccessCookie,
   isAccessGateEnabled,
   signAccessCookie,
@@ -870,7 +870,7 @@ export function registerRoutes(app: Express) {
     setAccessCookie(res, token);
     return res.json({
       ok: true,
-      validUntil: new Date(getUtcHourEndMs(now)).toISOString(),
+      validUntil: new Date(getAccessSessionExpiresMs(now)).toISOString(),
     });
   });
 
