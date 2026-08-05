@@ -1,4 +1,5 @@
 import { memo, useEffect } from "react";
+import { useFormInputFocus } from "@/hooks/useFormInputFocus";
 
 interface AnimatedBackgroundProps {
   className?: string;
@@ -61,6 +62,11 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
           animation: none !important;
           will-change: auto;
         }
+      }
+      html.form-input-focused .wave-band,
+      html.form-input-focused .wave-edge,
+      html.form-input-focused .wave-haze {
+        animation-play-state: paused !important;
       }
       @media (max-width: 640px) {
         .wave-band-5, .wave-edge-5 {
@@ -279,6 +285,8 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
 });
 
 function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
+  useFormInputFocus();
+
   /*
    * CRITICAL: The root wrapper must NOT have `transform` or `will-change: transform`.
    * Either of those creates a new containing block, which breaks `position: fixed`
