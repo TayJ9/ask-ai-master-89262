@@ -27,6 +27,25 @@ function isExemptPath(req: Request): boolean {
   return false;
 }
 
+/** SPA routes that may load without an access cookie (gate page itself, terms, public demo). */
+const PUBLIC_APP_SHELL_PATHS = new Set(["/gate", "/terms"]);
+
+function isMockResultsRequest(req: Request): boolean {
+  return req.path === "/results" && req.query.mock === "true";
+}
+
+/** Built assets and media — required so /gate can load JS/CSS after redirect. */
+function isStaticAssetPath(path: string): boolean {
+  if (path.startsWith("/assets/") || path.startsWith("/demo/")) return true;
+  const base = path.split("/").pop() ?? "";
+  return base.includes(".") && !base.endsWith(".html");
+}
+
+function isPublicAppShellRequest(req: Request): boolean {
+  if (PUBLIC_APP_SHELL_PATHS.has(req.path)) return true;
+  return isMockResultsRequest(req);
+}
+
 export function requireAccessGate(req: Request, res: Response, next: NextFunction): void {
   if (!isAccessGateEnabled()) {
     next();
@@ -48,7 +67,22 @@ export function requireAccessGate(req: Request, res: Response, next: NextFunctio
     return;
   }
 
-  next();
+  if (req.method === "GET" && isStaticAssetPath(req.path)) {
+    next();
+    return;
+  }
+
+  if (req.method === "GET" && isPublicAppShellRequest(req)) {
+    next();
+    return;
+  }
+
+  if (req.method === "GET") {
+    res.redirect(302, "/gate");
+    return;
+  }
+
+  res.status(401).json({ error: "ACCESS_GATE_REQUIRED" });
 }
 
 export function requireAccessCookieForAuth(req: Request, res: Response, next: NextFunction): void {

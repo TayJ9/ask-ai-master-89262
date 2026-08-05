@@ -49,7 +49,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
   const [allowed, setAllowed] = useState(() => {
     if (isPublic) return true;
     if (cached) return canProceedWithStatus(cached);
-    return true;
+    return false;
   });
   const [accessValidUntil, setAccessValidUntil] = useState<string | undefined>(
     () => cached?.validUntil,
@@ -81,7 +81,8 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
         applyAccessStatus(status, location, setAllowed, setLocation);
       } catch {
         if (cancelled) return;
-        setAllowed(true);
+        setAllowed(false);
+        redirectToAccessGate(setLocation);
       } finally {
         if (!cancelled) setChecking(false);
       }
