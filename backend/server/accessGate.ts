@@ -88,8 +88,13 @@ export function getHourlyCode(secret: string, unixMs: number): string {
   return hmac.slice(0, 8).toUpperCase();
 }
 
+/** Strip display dashes and base64url `-`/`_` so comparison matches what users type. */
+export function normalizeAccessCode(input: string): string {
+  return input.replace(/[-_]/g, "").trim().toUpperCase();
+}
+
 export function formatAccessCode(code: string): string {
-  const normalized = code.replace(/-/g, "").trim().toUpperCase();
+  const normalized = normalizeAccessCode(code);
   if (normalized.length <= 4) return normalized;
   return `${normalized.slice(0, 4)}-${normalized.slice(4)}`;
 }
@@ -98,12 +103,12 @@ export function verifyAccessCode(input: string, now = Date.now()): boolean {
   if (!isAccessGateEnabled()) return true;
 
   const secret = getSecret();
-  const normalized = input.replace(/-/g, "").trim().toUpperCase();
+  const normalized = normalizeAccessCode(input);
   if (!normalized) return false;
 
   for (const offset of [0, -1]) {
     const t = now + offset * HOUR_MS;
-    if (getHourlyCode(secret, t) === normalized) return true;
+    if (normalizeAccessCode(getHourlyCode(secret, t)) === normalized) return true;
   }
   return false;
 }

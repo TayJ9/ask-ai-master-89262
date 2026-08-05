@@ -6,6 +6,7 @@ import {
   formatAccessCode,
   getCurrentAccessCode,
   getHourlyCode,
+  normalizeAccessCode,
   signAccessCookie,
   verifyAccessCode,
   verifyAccessCookie,
@@ -56,6 +57,25 @@ describe("accessGate hourly codes", () => {
     const raw = getHourlyCode(TEST_SECRET, ET_MID_HOUR);
     const dashed = `${raw.slice(0, 4)}-${raw.slice(4)}`.toLowerCase();
     assert.equal(verifyAccessCode(dashed, ET_MID_HOUR), true);
+  });
+
+  it("accepts input when base64url embeds a dash in the raw code", () => {
+    const now = ET_MID_HOUR;
+    for (let i = 0; i < 100_000; i++) {
+      const secret = `test-secret-dash-${i}-at-least-32-characters`;
+      const raw = getHourlyCode(secret, now);
+      if (!raw.includes("-")) continue;
+
+      process.env.ACCESS_GATE_SECRET = secret;
+      assert.equal(raw.length, 8);
+      assert.ok(normalizeAccessCode(raw).length < 8, "dash should shorten normalized form");
+
+      const formatted = formatAccessCode(raw);
+      assert.equal(verifyAccessCode(formatted, now), true);
+      assert.equal(verifyAccessCode(normalizeAccessCode(raw), now), true);
+      return;
+    }
+    assert.fail("could not find a dash-bearing code for test");
   });
 
   it("returns formatted current code and Eastern-hour expiry", () => {
