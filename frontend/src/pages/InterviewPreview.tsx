@@ -12,19 +12,16 @@ import InterviewRoomBackground, {
   interviewRoomInsetPanelClassName,
 } from "@/components/ui/InterviewRoomBackground";
 import ChatGPTVoiceOrb from "@/components/ui/ChatGPTVoiceOrb";
-import DemoBanner from "@/components/demo/DemoBanner";
 import { Badge } from "@/components/ui/badge";
 import { motion } from "framer-motion";
 import { useLocation } from "wouter";
 import { useAmbientSound } from "@/hooks/useAmbientSound";
 import { Slider } from "@/components/ui/slider";
-import { isPublicDemoMode } from "@/lib/demoMode";
 
 type ConversationMode = 'idle' | 'ai_speaking' | 'listening' | 'user_speaking' | 'processing';
 
 export default function InterviewPreview() {
   const [, setLocation] = useLocation();
-  const publicDemo = isPublicDemoMode();
   const [conversationMode, setConversationMode] = useState<ConversationMode>('idle');
   const [isConnected, setIsConnected] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
@@ -49,14 +46,7 @@ export default function InterviewPreview() {
   };
 
   return (
-    <InterviewRoomBackground
-      className={`flex min-h-screen flex-col items-center px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] sm:px-6 ${
-        publicDemo
-          ? "pt-[max(3.75rem,calc(env(safe-area-inset-top)+3.25rem))] sm:pt-[max(4rem,calc(env(safe-area-inset-top)+3.5rem))]"
-          : "pt-2 sm:pt-4"
-      }`}
-    >
-      {publicDemo && <DemoBanner className="fixed inset-x-0 top-0 z-[100]" />}
+    <InterviewRoomBackground className="flex min-h-screen flex-col items-center px-4 pb-[max(2.5rem,env(safe-area-inset-bottom))] pt-2 sm:px-6 sm:pt-4">
       <div className="w-full max-w-3xl">
         <Card className={interviewRoomCardClassName}>
           <CardContent className="p-5 sm:p-6">
@@ -64,7 +54,7 @@ export default function InterviewPreview() {
             <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0 space-y-1">
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                  {publicDemo ? "Portfolio demo" : "Preview"}
+                  Preview
                 </p>
                 <h2 className="text-xl font-bold tracking-tight sm:text-2xl">Voice Interview Preview</h2>
                 <p className="text-sm text-muted-foreground sm:text-base">
@@ -121,22 +111,18 @@ export default function InterviewPreview() {
                   />
                 </div>
 
-                {!publicDemo && (
-                  <Button
-                    onClick={() => setLocation("/")}
-                    variant="outline"
-                    size="sm"
-                    className="shrink-0"
-                  >
-                    <ArrowLeft className="mr-1.5 h-4 w-4" />
-                    Back
-                  </Button>
-                )}
+                <Button
+                  onClick={() => setLocation("/")}
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                >
+                  <ArrowLeft className="mr-1.5 h-4 w-4" />
+                  Back
+                </Button>
               </div>
             </div>
 
-            {/* Mode selector — hidden in public portfolio demo */}
-            {!publicDemo && (
             <div className={`mb-6 p-4 ${interviewRoomInsetPanelClassName}`}>
               <p className="text-sm font-medium text-neutral-800 mb-3">Preview mode</p>
               <div className="flex flex-wrap gap-2">
@@ -177,7 +163,6 @@ export default function InterviewPreview() {
                 </Button>
               </div>
             </div>
-            )}
 
             {/* Idle State - Show Start Interview Button */}
             {conversationMode === 'idle' ? (
@@ -273,8 +258,6 @@ export default function InterviewPreview() {
                   )}
                 </motion.div>
 
-                {/* Volume sliders — dev/testing only; hidden in public portfolio demo */}
-                {!publicDemo && (
                 <motion.div 
                   className={`mb-6 max-w-md mx-auto p-4 ${interviewRoomInsetPanelClassName}`}
                   initial={{ opacity: 0, y: -10 }}
@@ -327,7 +310,6 @@ export default function InterviewPreview() {
                     Adjust sliders to see how the orb reacts to different levels
                   </p>
                 </motion.div>
-                )}
 
                 {/* Voice Orb Visualizer */}
                 <motion.div 
@@ -356,14 +338,10 @@ export default function InterviewPreview() {
                     size="sm"
                     className="shrink-0"
                   >
-                    {publicDemo ? (
-                      <>Back to start</>
-                    ) : (
-                      <>
-                        <X className="mr-1.5 h-4 w-4" />
-                        Reset preview
-                      </>
-                    )}
+                    <>
+                      <X className="mr-1.5 h-4 w-4" />
+                      Reset preview
+                    </>
                   </Button>
                 </div>
               </>

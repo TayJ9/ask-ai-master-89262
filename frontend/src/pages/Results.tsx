@@ -25,9 +25,7 @@ import { useToast } from "@/hooks/use-toast";
 import { mockInterviewResults, mockInterviewResultsBusiness } from "@/mocks/resultsMockData";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import MocklyProgressWordmark from "@/components/MocklyProgressWordmark";
-import DemoBanner from "@/components/demo/DemoBanner";
 import { cn, devLog } from "@/lib/utils";
-import { isPublicDemoMode } from "@/lib/demoMode";
 // Dev-only fixtures for UI render verification (enhanced vs legacy evaluation shape)
 import fixtureEnhanced from "@/__fixtures__/evaluation_enhanced.json";
 import fixtureLegacy from "@/__fixtures__/evaluation_legacy.json";
@@ -570,7 +568,6 @@ function InterviewTranscriptContent({ paragraphs }: { paragraphs: string[] }) {
 export default function Results() {
   const [location, setLocation] = useLocation();
   const { toast } = useToast();
-  const publicDemo = isPublicDemoMode();
   
   // Navigate helper
   const goToDashboard = () => {
@@ -1217,9 +1214,6 @@ export default function Results() {
   if (results && (evalStatus === 'completed' || evalStatus === 'failed' || results.interview)) {
     return (
       <AnimatedBackground fixedDecor className={RESULTS_PAGE_SHELL}>
-        {publicDemo && isMockMode && (
-          <DemoBanner className="fixed inset-x-0 top-0 z-[100]" />
-        )}
         <AnimatePresence>
           {showWhiteTransition && (
             <motion.div
@@ -1238,7 +1232,6 @@ export default function Results() {
           className={cn(
             "relative z-10 min-h-full transition-opacity duration-300",
             contentReady ? "opacity-100" : "opacity-0 pointer-events-none",
-            publicDemo && isMockMode && "pt-12",
           )}
           aria-hidden={!contentReady}
         >
@@ -1272,16 +1265,6 @@ export default function Results() {
                   </div>
                 </div>
                 <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
-                  {publicDemo && (
-                    <Button
-                      onClick={() => setLocation("/demo")}
-                      variant="outline"
-                      size="sm"
-                      className="w-full font-medium sm:w-auto"
-                    >
-                      Back to demo hub
-                    </Button>
-                  )}
                   <Button
                     onClick={() =>
                       setLocation(
