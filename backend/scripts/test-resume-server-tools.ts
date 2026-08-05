@@ -148,6 +148,23 @@ async function main() {
   }
   ok("get-resume-profile returns resumeprofile for sessionId");
 
+  const profileSnakeRes = await fetch(`${API_BASE}/api/get-resume-profile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-secret": ELEVENLABS_API_KEY!,
+    },
+    body: JSON.stringify({ interview_id: sessionId, candidate_id: "test-candidate" }),
+  });
+  const profileSnakeBody = await profileSnakeRes.json().catch(() => ({}));
+  if (profileSnakeRes.status !== 200 || profileSnakeBody.interviewid !== sessionId) {
+    fail("get-resume-profile accepts ElevenLabs interview_id alias", {
+      status: profileSnakeRes.status,
+      profileSnakeBody,
+    });
+  }
+  ok("get-resume-profile accepts ElevenLabs interview_id body alias");
+
   const fullRes = await getResumeFulltext(sessionId, ELEVENLABS_API_KEY!);
   const fullBody = await fullRes.json().catch(() => ({}));
   if (fullRes.status !== 200) {

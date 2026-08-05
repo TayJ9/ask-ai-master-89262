@@ -9,6 +9,15 @@ import { Upload, FileText, X, CheckCircle2, ArrowLeft, AlertTriangle } from "luc
 import { useToast } from "@/hooks/use-toast";
 import { apiPostFormData, apiPost, ApiError } from "@/lib/api";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { motion } from "framer-motion";
 import { devLog } from "@/lib/utils";
 import { generateClientSessionId } from "@/lib/sessionId";
@@ -88,6 +97,7 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
   const [resumeText, setResumeText] = useState("");
   const [isUploading, setIsUploading] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [candidateFirstName, setCandidateFirstName] = useState(initialDraft?.firstName ?? "");
   const [candidateMajor, setCandidateMajor] = useState(initialDraft?.major ?? "");
   const [candidateYear, setCandidateYear] = useState(initialDraft?.year ?? "");
@@ -145,6 +155,22 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
       activeUploadAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pdfPreviewUrl) {
+        URL.revokeObjectURL(pdfPreviewUrl);
+      }
+    };
+  }, [pdfPreviewUrl]);
+
+  const clearUploadedPdf = () => {
+    setPdfPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
+    });
+    setUploadedFileName(null);
+  };
 
   useEffect(() => {
     if (resumeText.trim()) {
@@ -297,6 +323,10 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
     const { controller, generation } = beginUploadAttempt();
     setIsUploading(true);
     setUploadedFileName(file.name);
+    setPdfPreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return URL.createObjectURL(file);
+    });
 
     try {
       // Log FormData contents before sending (file details only, not file content)
@@ -416,8 +446,8 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
         description: errorMessage,
         variant: "destructive",
       });
-      setUploadedFileName(null);
-      
+      clearUploadedPdf();
+
       // Reset file input on error
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
@@ -618,11 +648,15 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
   };
 
   if (step === "confirm" && pendingCandidateInfo) {
-    const resumeStatus = pendingResumeText.trim()
-      ? uploadedFileName
-        ? `PDF uploaded: ${uploadedFileName}`
-        : "Resume text provided"
-      : "No resume provided";
+    const isPdfUpload =
+      pendingCandidateInfo.resumeSource === "pdf_upload" &&
+      Boolean(uploadedFileName) &&
+      Boolean(pdfPreviewUrl);
+    const isTextResume =
+      pendingCandidateInfo.resumeSource === "text_resume" && Boolean(pendingResumeText.trim());
+    const hasNoResume =
+      pendingCandidateInfo.resumeSource === "not_provided" ||
+      (!isPdfUpload && !pendingResumeText.trim());
 
     return (
       <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
@@ -657,9 +691,49 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
 
               <div className="rounded-lg border p-4">
                 <p className="text-sm font-medium">Resume</p>
-                <p className="mt-1 text-sm text-muted-foreground">{resumeStatus}</p>
-                {pendingResumeText.trim() && (
-                  <p className="mt-3 line-clamp-4 text-sm text-muted-foreground">{pendingResumeText}</p>
+                {hasNoResume ? (
+                  <p className="mt-1 text-sm text-muted-foreground">No resume provided</p>
+                ) : isPdfUpload ? (
+                  <div className="mt-2">
+                    <p className="text-sm text-muted-foreground">
+                      PDF uploaded — tap the file name to preview your document.
+                    </p>
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <button
+                          type="button"
+                          className="mt-3 inline-flex max-w-full items-center gap-2 rounded-md border border-border/80 bg-muted/40 px-3 py-2 text-left text-sm font-medium text-primary transition-colors hover:bg-muted"
+                        >
+                          <FileText className="h-4 w-4 shrink-0" aria-hidden />
+                          <span className="truncate">{uploadedFileName}</span>
+                        </button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-4xl gap-0 overflow-hidden p-0">
+                        <DialogHeader className="border-b px-4 py-3 text-left">
+                          <DialogTitle className="truncate pr-8">{uploadedFileName}</DialogTitle>
+                          <DialogDescription>Quick preview of your uploaded resume PDF.</DialogDescription>
+                        </DialogHeader>
+                        <iframe
+                          src={pdfPreviewUrl ?? undefined}
+                          title={uploadedFileName ?? "Resume preview"}
+                          className="h-[min(75vh,720px)] w-full bg-muted/20"
+                        />
+                      </DialogContent>
+                    </Dialog>
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <p className="text-sm text-muted-foreground">Resume text</p>
+                    {isTextResume ? (
+                      <ScrollArea className="mt-3 max-h-48 rounded-md border bg-muted/30">
+                        <pre className="whitespace-pre-wrap p-3 font-sans text-sm leading-relaxed text-foreground">
+                          {pendingResumeText}
+                        </pre>
+                      </ScrollArea>
+                    ) : (
+                      <p className="mt-1 text-sm text-muted-foreground">Resume provided</p>
+                    )}
+                  </div>
                 )}
               </div>
 
@@ -848,7 +922,7 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
                     variant="ghost"
                     size="sm"
                     onClick={() => {
-                      setUploadedFileName(null);
+                      clearUploadedPdf();
                       setResumeText("");
                       setResumeSessionId(null);
                       setResumeSummary(undefined);

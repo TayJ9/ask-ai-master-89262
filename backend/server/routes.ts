@@ -3463,6 +3463,22 @@ export function registerRoutes(app: Express) {
     return { resume: undefined, lookupId: context.lookupIds[0] || requestedId, context };
   }
 
+  /** ElevenLabs dashboard tools often send snake_case; backend docs use compact keys. */
+  function readElevenLabsToolInterviewId(body: Record<string, unknown> | undefined): string | undefined {
+    const raw = body?.interviewid ?? body?.interview_id;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+  }
+
+  function readElevenLabsToolCandidateId(body: Record<string, unknown> | undefined): string | undefined {
+    const raw = body?.candidateid ?? body?.candidate_id;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+  }
+
+  function readElevenLabsToolConversationId(body: Record<string, unknown> | undefined): string | undefined {
+    const raw = body?.conversationid ?? body?.conversation_id;
+    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+  }
+
   app.post("/api/get-resume-profile", async (req, res) => {
     try {
       const apiSecret = req.headers['x-api-secret'];
@@ -3470,9 +3486,9 @@ export function registerRoutes(app: Express) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      const interviewId = req.body?.interviewid as string | undefined;
+      const interviewId = readElevenLabsToolInterviewId(req.body);
       if (!interviewId) {
-        return res.status(400).json({ error: 'Missing interviewid in body' });
+        return res.status(400).json({ error: 'Missing interviewid (or interview_id) in body' });
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
@@ -3505,9 +3521,9 @@ export function registerRoutes(app: Express) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      const interviewId = req.body?.interviewid as string | undefined;
+      const interviewId = readElevenLabsToolInterviewId(req.body);
       if (!interviewId) {
-        return res.status(400).json({ error: 'Missing interviewid in body' });
+        return res.status(400).json({ error: 'Missing interviewid (or interview_id) in body' });
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
@@ -3554,14 +3570,14 @@ export function registerRoutes(app: Express) {
       }
 
       // Validate required body fields
-      const interviewId = req.body?.interviewid as string | undefined;
-      const conversationId = req.body?.conversationid as string | undefined;
-      const candidateId = req.body?.candidateid as string | undefined;
+      const interviewId = readElevenLabsToolInterviewId(req.body);
+      const conversationId = readElevenLabsToolConversationId(req.body);
+      const candidateId = readElevenLabsToolCandidateId(req.body);
 
-      if (!interviewId || !conversationId || !candidateId) {
+      if (!interviewId || !candidateId) {
         return res.status(400).json({ 
           error: 'Missing required fields',
-          required: ['interviewid', 'conversationid', 'candidateid']
+          required: ['interviewid (or interview_id)', 'candidateid (or candidate_id)'],
         });
       }
 
