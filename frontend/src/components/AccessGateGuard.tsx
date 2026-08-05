@@ -1,11 +1,11 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
-import { apiGet } from "@/lib/api";
-
-type AccessStatus = {
-  required: boolean;
-  granted: boolean;
-};
+import {
+  fetchAndCacheAccessStatus,
+  readAccessStatusCache,
+  type AccessStatus,
+} from "@/lib/accessStatusCache";
+import { preloadIndexRoute } from "@/lib/routePreload";
 
 function isMockResultsPath(pathname: string, search: string): boolean {
   if (pathname !== "/results") return false;
@@ -18,33 +18,60 @@ function isPublicPath(pathname: string, search: string): boolean {
   return isMockResultsPath(pathname, search);
 }
 
+function canProceedWithStatus(status: AccessStatus): boolean {
+  return !status.required || status.granted;
+}
+
+function applyAccessStatus(
+  status: AccessStatus,
+  pathname: string,
+  setAllowed: (value: boolean) => void,
+  setLocation: (path: string) => void,
+): void {
+  const allowed = canProceedWithStatus(status);
+  setAllowed(allowed);
+  if (!allowed && pathname !== "/gate") {
+    setLocation("/gate");
+  } else if (allowed) {
+    preloadIndexRoute();
+  }
+}
+
 export default function AccessGateGuard({ children }: { children: ReactNode }) {
   const [location, setLocation] = useLocation();
-  const [checking, setChecking] = useState(true);
-  const [allowed, setAllowed] = useState(true);
+  const search = window.location.search;
+  const isPublic = isPublicPath(location, search);
+  const cached = isPublic ? null : readAccessStatusCache();
+
+  const [checking, setChecking] = useState(() => !isPublic && !cached);
+  const [allowed, setAllowed] = useState(() => {
+    if (isPublic) return true;
+    if (cached) return canProceedWithStatus(cached);
+    return true;
+  });
 
   useEffect(() => {
-    let cancelled = false;
-
-    const pathname = window.location.pathname;
-    const search = window.location.search;
-
-    if (isPublicPath(pathname, search)) {
+    if (isPublicPath(location, search)) {
       setAllowed(true);
       setChecking(false);
       return;
     }
 
+    const sessionCached = readAccessStatusCache();
+    if (sessionCached) {
+      applyAccessStatus(sessionCached, location, setAllowed, setLocation);
+      setChecking(false);
+      return;
+    }
+
+    let cancelled = false;
+    setChecking(true);
+
     (async () => {
       try {
-        const status = (await apiGet("/api/access/status")) as AccessStatus;
+        const status = await fetchAndCacheAccessStatus();
         if (cancelled) return;
-
-        const canProceed = !status.required || status.granted;
-        setAllowed(canProceed);
-        if (!canProceed && pathname !== "/gate") {
-          setLocation("/gate");
-        }
+        applyAccessStatus(status, location, setAllowed, setLocation);
       } catch {
         if (cancelled) return;
         setAllowed(true);
@@ -56,7 +83,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [location, setLocation]);
+  }, [location, search, setLocation]);
 
   if (checking) {
     return (

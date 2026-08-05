@@ -67,6 +67,16 @@ function isAuthSignInOrSignUp(path: string): boolean {
   return path === '/api/auth/signin' || path === '/api/auth/signup';
 }
 
+/** Routes that do not require a JWT — skip missing-token warnings. */
+function isPublicApiPath(path: string): boolean {
+  return (
+    path === '/api/access/status' ||
+    path === '/api/access/verify' ||
+    path === '/api/auth/config' ||
+    isAuthSignInOrSignUp(path)
+  );
+}
+
 function isNonCriticalApiPath(path?: string): boolean {
   if (!path) return false;
   if (isAuthSignInOrSignUp(path)) return false;
@@ -164,8 +174,7 @@ export async function apiFetch(
     
     // Ensure proper format: "Bearer <token>" (no double Bearer, proper spacing)
     headers['Authorization'] = `Bearer ${cleanToken}`;
-  } else if (path !== '/api/auth/signin' && path !== '/api/auth/signup') {
-    // Log missing token for non-auth endpoints
+  } else if (!isPublicApiPath(path)) {
     console.warn('[API] No token found for authenticated endpoint:', path);
   }
   

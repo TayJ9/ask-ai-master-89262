@@ -7,6 +7,8 @@ import { Label } from "@/components/ui/label";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { useToast } from "@/hooks/use-toast";
 import { apiPost, ApiError } from "@/lib/api";
+import { markAccessGranted } from "@/lib/accessStatusCache";
+import { preloadIndexRoute } from "@/lib/routePreload";
 import { Link } from "wouter";
 
 export default function AccessGate() {
@@ -21,6 +23,8 @@ export default function AccessGate() {
 
     try {
       await apiPost("/api/access/verify", { code: code.trim() });
+      markAccessGranted();
+      preloadIndexRoute();
       toast({ title: "Access granted", description: "Welcome to Mockly." });
       setLocation("/");
     } catch (error) {
@@ -47,7 +51,7 @@ export default function AccessGate() {
               </span>
             </h1>
             <CardDescription className="text-balance text-base leading-relaxed">
-              Enter the hourly access code to continue. Codes rotate on the US Eastern hour.
+              Enter the hourly access code to continue. Codes rotate on the UTC hour.
             </CardDescription>
           </div>
         </CardHeader>
