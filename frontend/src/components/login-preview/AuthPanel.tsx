@@ -38,17 +38,17 @@ export default function AuthPanel({ onAuthSuccess }: AuthPanelProps) {
     "flex h-[52px] w-full items-center justify-between gap-3 rounded-lg border border-[#E5E7EB] bg-white px-3.5 py-2.5 text-left transition-colors hover:border-[#D1D5DB] hover:bg-[#F9FAFB]";
 
   return (
-    <div className="flex w-full flex-col bg-white p-8 md:w-1/2 md:p-10 lg:p-12">
-      <div className="mb-7 space-y-1 text-center">
+    <div className="flex w-full flex-1 flex-col justify-center bg-white p-8 md:w-1/2 md:p-10 lg:p-14">
+      <div className="mb-8 space-y-3 text-center md:mb-10 md:space-y-4 lg:mb-12">
         <h1
-          className="text-[1.875rem] font-bold tracking-tight"
+          className="text-5xl font-bold leading-[1.15] tracking-tight sm:text-6xl md:text-[3.5rem] md:leading-[1.12] lg:text-7xl"
           data-testid="text-app-title"
         >
           <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Mockly
           </span>
         </h1>
-        <p className="text-[0.8125rem] text-[#6B7280]">
+        <p className="text-base font-medium text-[#6B7280] md:text-lg lg:text-xl">
           {isLogin ? "Sign in to your account" : "Create your account"}
         </p>
       </div>
