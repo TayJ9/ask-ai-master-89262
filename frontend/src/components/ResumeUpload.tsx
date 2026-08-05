@@ -642,7 +642,7 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
           <span className="hidden sm:inline">Interview</span>
         </li>
       </ol>
-      <Card className="overflow-hidden border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
+      <Card className="overflow-hidden border border-border/80 bg-card shadow-xl">
         <CardHeader>
           <motion.div 
             className="mb-3 flex items-start justify-between"

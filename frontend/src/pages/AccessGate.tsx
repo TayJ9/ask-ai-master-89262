@@ -42,7 +42,7 @@ export default function AccessGate() {
 
   return (
     <AnimatedBackground className="flex min-h-[100dvh] items-center justify-center px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
-      <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card/95 shadow-xl backdrop-blur-sm">
+      <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card shadow-xl">
         <CardHeader className="space-y-4 p-4 pb-2 text-center sm:p-6 sm:pb-2">
           <div className="space-y-2 overflow-visible">
             <h1 className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
