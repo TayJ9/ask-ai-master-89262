@@ -96,7 +96,7 @@ For local evaluator scripts (`npm run test:evaluator`), call `initArizeTracing()
 
 ### 9. Access gate (Production — Coolify unified deploy)
 
-Hourly rotating access codes (**US Eastern**, `America/New_York`) gate the app before login. See [docs/COOLIFY_DEPLOYMENT.md](../docs/COOLIFY_DEPLOYMENT.md).
+Hourly rotating access codes (**UTC** hour boundaries) gate the app before login. See [docs/COOLIFY_DEPLOYMENT.md](../docs/COOLIFY_DEPLOYMENT.md).
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
@@ -116,7 +116,7 @@ GET /api/access/current
 X-Admin-Key: <ACCESS_GATE_ADMIN_KEY>
 ```
 
-Response includes `code`, `validUntil` (ISO timestamp), and `timezone: "America/New_York"`.
+Response includes `code`, `validUntil` (ISO timestamp), and `timezone: "UTC"`.
 
 ## Railway / Coolify Environment Variables Setup
 

@@ -673,7 +673,7 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     });
 
     try {
-      await context.with(trace.setSpan(context.active(), span), runEvaluation);
+      return await context.with(trace.setSpan(context.active(), span), runEvaluation);
     } catch (error) {
       span.recordException(error as Error);
       span.setStatus({ code: SpanStatusCode.ERROR, message: (error as Error).message });

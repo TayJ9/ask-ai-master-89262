@@ -8,8 +8,8 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    /* Typography: loaded in index.html (Plus Jakarta Sans) */
-    --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    /* Typography: self-hosted variable font (see src/fonts.ts) */
+    --font-sans: "Plus Jakarta Sans Variable", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 
     /* Calm, investor-ready neutral base (cool slate + warm paper) */
     --background: 220 18% 97%;

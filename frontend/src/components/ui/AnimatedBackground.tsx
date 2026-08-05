@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 
 interface AnimatedBackgroundProps {
   className?: string;
@@ -7,7 +7,12 @@ interface AnimatedBackgroundProps {
   fixedDecor?: boolean;
 }
 
-export default function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
+/** Isolated decor tree — memoized so typing in form children does not re-render SVG/blur layers. */
+const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
+  fixedDecor,
+}: {
+  fixedDecor: boolean;
+}) {
   // PERF: Inject keyframes once; translate3d keeps the subtle waves on the compositor.
   // Update existing style element so code changes take effect on hot reload.
   useEffect(() => {
@@ -258,6 +263,22 @@ export default function AnimatedBackground({ className = "", children, fixedDeco
     </>
   );
 
+  if (fixedDecor) {
+    return (
+      <div
+        className="fixed inset-0 w-full pointer-events-none z-0"
+        style={{ height: "100dvh" }}
+        aria-hidden
+      >
+        {decorLayers}
+      </div>
+    );
+  }
+
+  return decorLayers;
+});
+
+function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
   /*
    * CRITICAL: The root wrapper must NOT have `transform` or `will-change: transform`.
    * Either of those creates a new containing block, which breaks `position: fixed`
@@ -269,28 +290,18 @@ export default function AnimatedBackground({ className = "", children, fixedDeco
    */
   return (
     <div
-      className={`relative min-h-screen ${fixedDecor ? '' : 'overflow-hidden'} ${className}`}
+      className={`relative min-h-screen ${fixedDecor ? "" : "overflow-hidden"} ${className}`}
       style={{
         background:
-          'linear-gradient(135deg, hsl(214 42% 98%) 0%, hsl(218 34% 95%) 42%, hsl(205 34% 94%) 100%)',
+          "linear-gradient(135deg, hsl(214 42% 98%) 0%, hsl(218 34% 95%) 42%, hsl(205 34% 94%) 100%)",
       }}
     >
-      {fixedDecor ? (
-        <div
-          className="fixed inset-0 w-full pointer-events-none z-0"
-          style={{ height: '100dvh' }}
-          aria-hidden
-        >
-          {decorLayers}
-        </div>
-      ) : (
-        decorLayers
-      )}
+      <AnimatedBackgroundDecor fixedDecor={fixedDecor} />
 
-      <div className="relative z-10">
-        {children}
-      </div>
+      <div className="relative z-10">{children}</div>
     </div>
   );
 }
+
+export default memo(AnimatedBackground);
 

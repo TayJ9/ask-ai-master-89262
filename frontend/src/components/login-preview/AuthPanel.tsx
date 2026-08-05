@@ -72,10 +72,7 @@ export default function AuthPanel() {
                 type="text"
                 placeholder="Enter your full name"
                 value={fullName}
-                onChange={(e) => {
-                  setFullName(e.target.value);
-                  if (e.target.value) validateName(e.target.value);
-                }}
+                onChange={(e) => setFullName(e.target.value)}
                 onBlur={() => validateName(fullName)}
                 required={!isLogin}
                 maxLength={100}
@@ -96,10 +93,7 @@ export default function AuthPanel() {
           type="email"
           placeholder="Enter your email address"
           value={email}
-          onChange={(value) => {
-            setEmail(value);
-            if (value) validateEmail(value);
-          }}
+          onChange={(value) => setEmail(value)}
           onBlur={() => validateEmail(email)}
           icon={Mail}
           error={emailError}
@@ -115,10 +109,7 @@ export default function AuthPanel() {
           type="password"
           placeholder="Enter your password"
           value={password}
-          onChange={(value) => {
-            setPassword(value);
-            if (value) validatePassword(value);
-          }}
+          onChange={(value) => setPassword(value)}
           onBlur={() => validatePassword(password)}
           icon={Lock}
           error={passwordError}

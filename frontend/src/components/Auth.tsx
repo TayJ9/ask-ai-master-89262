@@ -204,11 +204,8 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
                   type="text"
                   placeholder="John Doe"
                   value={fullName}
-                  onChange={(e) => {
-                    setFullName(e.target.value);
-                    if (e.target.value) validateName(e.target.value);
-                  }}
-                  onBlur={() => validateName(fullName)}
+                onChange={(e) => setFullName(e.target.value)}
+                onBlur={() => validateName(fullName)}
                   required={!isLogin}
                   maxLength={100}
                   className={nameError ? "border-destructive" : ""}
@@ -224,10 +221,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
                 type="email"
                 placeholder="you@example.com"
                 value={email}
-                onChange={(e) => {
-                  setEmail(e.target.value);
-                  if (e.target.value) validateEmail(e.target.value);
-                }}
+                onChange={(e) => setEmail(e.target.value)}
                 onBlur={() => validateEmail(email)}
                 required
                 maxLength={255}
@@ -245,10 +239,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
                   type={showPassword ? "text" : "password"}
                   placeholder="••••••••"
                   value={password}
-                  onChange={(e) => {
-                    setPassword(e.target.value);
-                    if (e.target.value) validatePassword(e.target.value);
-                  }}
+                  onChange={(e) => setPassword(e.target.value)}
                   onBlur={() => validatePassword(password)}
                   required
                   minLength={6}

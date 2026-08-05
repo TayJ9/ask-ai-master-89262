@@ -1,53 +1,26 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 export const ACCESS_COOKIE_NAME = "mockly_access_granted";
-/** IANA timezone used for hourly code rotation (US Eastern, handles EST/EDT). */
-export const ACCESS_GATE_TIMEZONE = "America/New_York";
+/** IANA timezone used for hourly code rotation (UTC hour boundaries). */
+export const ACCESS_GATE_TIMEZONE = "UTC";
 
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_COOKIE_MAX_AGE_SECONDS = 604800;
 
-type EasternParts = { year: number; month: number; day: number; hour: number };
-
-function getEasternParts(unixMs: number): EasternParts {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone: ACCESS_GATE_TIMEZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date(unixMs));
-
-  const map: Record<string, string> = {};
-  for (const part of parts) {
-    if (part.type !== "literal") map[part.type] = part.value;
-  }
-
-  let hour = Number.parseInt(map.hour, 10);
-  if (hour === 24) hour = 0;
-
-  return {
-    year: Number.parseInt(map.year, 10),
-    month: Number.parseInt(map.month, 10),
-    day: Number.parseInt(map.day, 10),
-    hour,
-  };
-}
-
-function getEasternHourKey(unixMs: number): string {
-  const { year, month, day, hour } = getEasternParts(unixMs);
+function getUtcHourKey(unixMs: number): string {
+  const d = new Date(unixMs);
+  const year = d.getUTCFullYear();
+  const month = d.getUTCMonth() + 1;
+  const day = d.getUTCDate();
+  const hour = d.getUTCHours();
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}`;
 }
 
-function getEasternHourEndIso(now: number): string {
-  const currentKey = getEasternHourKey(now);
-  let t = now + 1000;
-  const limit = now + 4 * HOUR_MS;
-  while (t <= limit && getEasternHourKey(t) === currentKey) {
-    t += 1000;
-  }
-  return new Date(t).toISOString();
+function getUtcHourEndIso(now: number): string {
+  const d = new Date(now);
+  d.setUTCMinutes(0, 0, 0);
+  d.setUTCHours(d.getUTCHours() + 1);
+  return d.toISOString();
 }
 
 export function isAccessGateEnabled(): boolean {
@@ -63,7 +36,7 @@ function getSecret(): string {
 }
 
 export function getHourlyCode(secret: string, unixMs: number): string {
-  const hourKey = getEasternHourKey(unixMs);
+  const hourKey = getUtcHourKey(unixMs);
   const hmac = createHmac("sha256", secret).update(hourKey).digest("base64url");
   return hmac.slice(0, 8).toUpperCase();
 }
@@ -93,7 +66,7 @@ export function getCurrentAccessCode(now = Date.now()): { code: string; validUnt
   const raw = getHourlyCode(secret, now);
   return {
     code: formatAccessCode(raw),
-    validUntilIso: getEasternHourEndIso(now),
+    validUntilIso: getUtcHourEndIso(now),
   };
 }
 

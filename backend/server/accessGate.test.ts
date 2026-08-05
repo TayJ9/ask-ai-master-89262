@@ -12,12 +12,12 @@ import {
 
 const TEST_SECRET = "test-secret-at-least-32-characters-long";
 
-/** 3:30 PM US Eastern on 2026-01-15 (EST, UTC-5). */
-const EASTERN_MID_HOUR = Date.parse("2026-01-15T20:30:00.000Z");
-/** 3:59:59 PM US Eastern on 2026-01-15. */
-const EASTERN_END_OF_HOUR = Date.parse("2026-01-15T20:59:59.000Z");
-/** 4:00:00 PM US Eastern on 2026-01-15. */
-const EASTERN_START_OF_NEXT_HOUR = Date.parse("2026-01-15T21:00:00.000Z");
+/** 8:30 PM UTC on 2026-01-15. */
+const UTC_MID_HOUR = Date.parse("2026-01-15T20:30:00.000Z");
+/** 8:59:59 PM UTC on 2026-01-15. */
+const UTC_END_OF_HOUR = Date.parse("2026-01-15T20:59:59.000Z");
+/** 9:00:00 PM UTC on 2026-01-15. */
+const UTC_START_OF_NEXT_HOUR = Date.parse("2026-01-15T21:00:00.000Z");
 
 describe("accessGate hourly codes", () => {
   beforeEach(() => {
@@ -28,21 +28,21 @@ describe("accessGate hourly codes", () => {
     delete process.env.ACCESS_GATE_SECRET;
   });
 
-  it("returns a stable code within the same US Eastern hour", () => {
-    const a = getHourlyCode(TEST_SECRET, EASTERN_MID_HOUR);
-    const b = getHourlyCode(TEST_SECRET, EASTERN_MID_HOUR + 15 * 60 * 1000);
+  it("returns a stable code within the same UTC hour", () => {
+    const a = getHourlyCode(TEST_SECRET, UTC_MID_HOUR);
+    const b = getHourlyCode(TEST_SECRET, UTC_MID_HOUR + 15 * 60 * 1000);
     assert.equal(a, b);
     assert.equal(a.length, 8);
   });
 
-  it("changes the code at the US Eastern hour boundary", () => {
-    const before = getHourlyCode(TEST_SECRET, EASTERN_END_OF_HOUR);
-    const after = getHourlyCode(TEST_SECRET, EASTERN_START_OF_NEXT_HOUR);
+  it("changes the code at the UTC hour boundary", () => {
+    const before = getHourlyCode(TEST_SECRET, UTC_END_OF_HOUR);
+    const after = getHourlyCode(TEST_SECRET, UTC_START_OF_NEXT_HOUR);
     assert.notEqual(before, after);
   });
 
   it("accepts the current hour and previous hour codes", () => {
-    const now = EASTERN_MID_HOUR;
+    const now = UTC_MID_HOUR;
     const current = getHourlyCode(TEST_SECRET, now);
     const previous = getHourlyCode(TEST_SECRET, now - 3600 * 1000);
 
@@ -52,16 +52,16 @@ describe("accessGate hourly codes", () => {
   });
 
   it("normalizes dashed, case-insensitive input", () => {
-    const raw = getHourlyCode(TEST_SECRET, EASTERN_MID_HOUR);
+    const raw = getHourlyCode(TEST_SECRET, UTC_MID_HOUR);
     const dashed = `${raw.slice(0, 4)}-${raw.slice(4)}`.toLowerCase();
-    assert.equal(verifyAccessCode(dashed, EASTERN_MID_HOUR), true);
+    assert.equal(verifyAccessCode(dashed, UTC_MID_HOUR), true);
   });
 
-  it("returns formatted current code and Eastern-hour expiry", () => {
-    const { code, validUntilIso } = getCurrentAccessCode(EASTERN_MID_HOUR);
-    assert.match(code, /^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-    assert.equal(validUntilIso, new Date(EASTERN_START_OF_NEXT_HOUR).toISOString());
-    assert.equal(ACCESS_GATE_TIMEZONE, "America/New_York");
+  it("returns formatted current code and UTC-hour expiry", () => {
+    const { code, validUntilIso } = getCurrentAccessCode(UTC_MID_HOUR);
+    assert.match(code, /^[A-Z0-9_-]{4}-[A-Z0-9_-]{4}$/);
+    assert.equal(validUntilIso, new Date(UTC_START_OF_NEXT_HOUR).toISOString());
+    assert.equal(ACCESS_GATE_TIMEZONE, "UTC");
   });
 });
 
@@ -77,7 +77,7 @@ describe("accessGate cookie", () => {
   });
 
   it("signs and verifies a cookie round trip", () => {
-    const now = EASTERN_MID_HOUR;
+    const now = UTC_MID_HOUR;
     const token = signAccessCookie(now);
     assert.equal(verifyAccessCookie(token, now + 1000), true);
     assert.equal(verifyAccessCookie(token, now + 3601 * 1000), false);

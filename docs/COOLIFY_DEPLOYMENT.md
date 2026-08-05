@@ -45,9 +45,9 @@ ALLOW_VERCEL_ORIGINS=false
 ALLOW_SIGNUP=false
 ```
 
-## Hourly access codes (US Eastern)
+## Hourly access codes (UTC)
 
-Codes rotate every **US Eastern hour** (`America/New_York`, including EST/EDT). The operator fetches the current code via:
+Codes rotate every **UTC hour**. The operator fetches the current code via:
 
 ```http
 GET https://mockly.yourdomain.com/api/access/current
@@ -59,8 +59,8 @@ Response:
 ```json
 {
   "code": "ABCD-EFGH",
-  "validUntil": "2026-01-15T16:00:00.000Z",
-  "timezone": "America/New_York"
+  "validUntil": "2026-01-15T21:00:00.000Z",
+  "timezone": "UTC"
 }
 ```
 
@@ -69,7 +69,7 @@ Share the code with invitees. Users enter it at `/gate` before sign-in or sign-u
 ### n8n reminder workflow (optional)
 
 ```text
-Cron: 0 * * * *   (every hour; schedule in US Eastern if your cron runner uses local time)
+Cron: 0 * * * *   (every hour at :00 UTC)
   → HTTP GET https://mockly.yourdomain.com/api/access/current
       Header: X-Admin-Key: {{ACCESS_GATE_ADMIN_KEY}}
   → Optional: Slack / email / Telegram notification with {{code}}

@@ -257,7 +257,7 @@ app.use((req, res, next) => {
       log(`  JWT_SECRET: ${isJwtSecretConfigured() ? '✅ Set' : '❌ Missing (required in production)'}`);
       log(`  DATABASE_URL: ${process.env.DATABASE_URL ? '✅ Set' : '❌ Missing (CRITICAL)'}`);
       log(`  FRONTEND_URL: ${process.env.FRONTEND_URL ? '✅ Set' : 'ℹ️  Not set (required for production CORS on Coolify)'}`);
-      log(`  ACCESS_GATE: ${isAccessGateEnabled() ? '✅ Enabled (hourly codes, US Eastern)' : 'ℹ️  Disabled (ACCESS_GATE_SECRET unset)'}`);
+      log(`  ACCESS_GATE: ${isAccessGateEnabled() ? '✅ Enabled (hourly codes, UTC)' : 'ℹ️  Disabled (ACCESS_GATE_SECRET unset)'}`);
       log(`  ARIZE_TRACING: ${process.env.ARIZE_SPACE_ID && process.env.ARIZE_API_KEY ? '✅ Enabled (scoring traces → Arize)' : 'ℹ️  Disabled (set ARIZE_SPACE_ID + ARIZE_API_KEY to enable)'}`);
       
       // Validate ElevenLabs configuration FIRST (before other initialization)

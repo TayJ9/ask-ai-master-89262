@@ -1,6 +1,6 @@
 # Resume website — Mockly link
 
-> **Note:** The public `/demo` hub has been removed. Mockly now uses an **hourly access gate** (US Eastern codes) before login. For portfolio links, point visitors to your deployed app root and share an access code when needed. See [COOLIFY_DEPLOYMENT.md](./COOLIFY_DEPLOYMENT.md) and [ACCESS_GATE_COOLIFY_IMPLEMENTATION_PLAN.md](./ACCESS_GATE_COOLIFY_IMPLEMENTATION_PLAN.md).
+> **Note:** The public `/demo` hub has been removed. Mockly now uses an **hourly access gate** (UTC codes) before login. For portfolio links, point visitors to your deployed app root and share an access code when needed. See [COOLIFY_DEPLOYMENT.md](./COOLIFY_DEPLOYMENT.md) and [ACCESS_GATE_COOLIFY_IMPLEMENTATION_PLAN.md](./ACCESS_GATE_COOLIFY_IMPLEMENTATION_PLAN.md).
 
 Sample mock results (no account) remain available from the login page via **Preview sample report** buttons.
 

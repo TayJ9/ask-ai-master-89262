@@ -1,5 +1,8 @@
 // Utilities for ElevenLabs debugging. Safe, no-op unless DEBUG flag is enabled.
-const LOG_ENDPOINT = 'http://localhost:7242/ingest/8463aa58-11b8-4b43-b3fe-ab8f1de892e8';
+// Dev-only ingest — omitted from production builds to avoid mixed-content warnings.
+const LOG_ENDPOINT = import.meta.env.DEV
+  ? "http://localhost:7242/ingest/8463aa58-11b8-4b43-b3fe-ab8f1de892e8"
+  : "";
 const SESSION_ID = 'debug-session';
 const RUN_ID = 'pre-fix';
 const SENTINEL = 'SENTINEL_PHRASE_9Q3K';
@@ -64,7 +67,7 @@ type DebugLogPayload = {
 };
 
 export const debugLog = ({ hypothesisId, location, message, data }: DebugLogPayload) => {
-  if (!shouldDebugEleven() || typeof fetch === 'undefined') return;
+  if (!LOG_ENDPOINT || !shouldDebugEleven() || typeof fetch === "undefined") return;
   // #region agent log
   fetch(LOG_ENDPOINT, {
     method: 'POST',

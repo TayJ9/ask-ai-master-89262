@@ -3,6 +3,8 @@
 interface ImportMetaEnv {
   readonly VITE_API_URL?: string;
   readonly NEXT_PUBLIC_API_URL?: string;
+  readonly VITE_GITHUB_REPO?: string;
+  readonly VITE_RESUME_URL?: string;
 }
 
 interface ImportMeta {
