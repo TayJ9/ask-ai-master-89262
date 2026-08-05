@@ -18,6 +18,14 @@ import { normalizeEvaluationJson, scoreInterview, EvaluationJsonSchema } from ".
 import { buildResumeProfile } from "./resumeProfileHeuristic";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { persistResumeForSession } from "./persistResume";
+import {
+  normalizeElevenLabsToolBody,
+  readElevenLabsApiSecret,
+  readElevenLabsToolCandidateId,
+  readElevenLabsToolConversationId,
+  readElevenLabsToolInterviewId,
+  summarizeElevenLabsToolBody,
+} from "./elevenLabsToolRequest";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 
@@ -3425,27 +3433,35 @@ export function registerRoutes(app: Express) {
     verified: boolean;
     kind: "interview" | "session" | "legacy-direct";
   }> {
-    const interview = await (db.query as any).interviews?.findFirst({
-      where: (interviews: any, { eq }: any) => eq(interviews.id, requestedId),
-    });
-    if (interview) {
-      return { lookupIds: [requestedId], verified: true, kind: "interview" };
-    }
+    try {
+      const interview = await (db.query as any).interviews?.findFirst({
+        where: (interviews: any, { eq }: any) => eq(interviews.id, requestedId),
+      });
+      if (interview) {
+        return { lookupIds: [requestedId], verified: true, kind: "interview" };
+      }
 
-    const sessionByClientId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-      where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, requestedId),
-    });
-    const session =
-      sessionByClientId ||
-      (await (db.query as any).elevenLabsInterviewSessions?.findFirst({
-        where: (sessions: any, { eq }: any) => eq(sessions.id, requestedId),
-      }));
+      const sessionByClientId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+        where: (sessions: any, { eq }: any) => eq(sessions.clientSessionId, requestedId),
+      });
+      const session =
+        sessionByClientId ||
+        (await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+          where: (sessions: any, { eq }: any) => eq(sessions.id, requestedId),
+        }));
 
-    if (session) {
-      const lookupIds = session.interviewId
-        ? [session.interviewId, session.clientSessionId].filter(Boolean)
-        : [session.clientSessionId];
-      return { lookupIds, verified: true, kind: "session" };
+      if (session) {
+        const lookupIds = session.interviewId
+          ? [session.interviewId, session.clientSessionId].filter(Boolean)
+          : [session.clientSessionId];
+        return { lookupIds, verified: true, kind: "session" };
+      }
+    } catch (lookupError: unknown) {
+      const msg = lookupError instanceof Error ? lookupError.message : String(lookupError);
+      console.warn('[RESUME-LOOKUP] Session/interview lookup failed; falling back to direct id', {
+        requestedId,
+        error: msg,
+      });
     }
 
     // Backward compatible for resume uploads that predate session creation.
@@ -3463,32 +3479,47 @@ export function registerRoutes(app: Express) {
     return { resume: undefined, lookupId: context.lookupIds[0] || requestedId, context };
   }
 
-  /** ElevenLabs dashboard tools often send snake_case; backend docs use compact keys. */
-  function readElevenLabsToolInterviewId(body: Record<string, unknown> | undefined): string | undefined {
-    const raw = body?.interviewid ?? body?.interview_id;
-    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
-  }
+  async function resolveInterviewIdForServerTool(body: unknown): Promise<string | undefined> {
+    const normalized = normalizeElevenLabsToolBody(body);
+    const directId = readElevenLabsToolInterviewId(normalized);
+    if (directId) return directId;
 
-  function readElevenLabsToolCandidateId(body: Record<string, unknown> | undefined): string | undefined {
-    const raw = body?.candidateid ?? body?.candidate_id;
-    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
-  }
+    const conversationId = readElevenLabsToolConversationId(normalized);
+    if (!conversationId) return undefined;
 
-  function readElevenLabsToolConversationId(body: Record<string, unknown> | undefined): string | undefined {
-    const raw = body?.conversationid ?? body?.conversation_id;
-    return typeof raw === "string" && raw.trim() ? raw.trim() : undefined;
+    try {
+      const session = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+        where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversationId),
+      });
+      return session?.clientSessionId || undefined;
+    } catch (lookupError: unknown) {
+      const msg = lookupError instanceof Error ? lookupError.message : String(lookupError);
+      console.warn('[RESUME-LOOKUP] conversation_id session lookup failed', {
+        conversationId,
+        error: msg,
+      });
+      return undefined;
+    }
   }
 
   app.post("/api/get-resume-profile", async (req, res) => {
     try {
-      const apiSecret = req.headers['x-api-secret'];
+      const apiSecret = readElevenLabsApiSecret(req.headers);
       if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      const interviewId = readElevenLabsToolInterviewId(req.body);
+      console.log('[RESUME-PROFILE] tool request', summarizeElevenLabsToolBody(req.body));
+
+      const interviewId = await resolveInterviewIdForServerTool(req.body);
       if (!interviewId) {
-        return res.status(400).json({ error: 'Missing interviewid (or interview_id) in body' });
+        return res.status(400).json({
+          error: 'Missing interviewid (or interview_id) in body/parameters, and no session matched conversation_id',
+          result: {
+            error: true,
+            message: 'Missing interview id for resume lookup',
+          },
+        });
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
@@ -3501,13 +3532,23 @@ export function registerRoutes(app: Express) {
       });
 
       if (!resume || !resume.resumeProfile) {
-        return res.status(404).json({ error: 'Resume profile not found' });
+        return res.status(404).json({
+          error: 'Resume profile not found',
+          result: {
+            error: true,
+            message: 'Resume profile not found for this interview',
+            interviewid: interviewId,
+          },
+        });
       }
 
-      return res.json({
+      const payload = {
         interviewid: interviewId,
         resumeprofile: resume.resumeProfile,
-      });
+      };
+
+      // ElevenLabs webhook tools read the `result` field into agent context.
+      return res.json({ result: payload, ...payload });
     } catch (error: any) {
       console.error('[RESUME-PROFILE] Error:', error);
       return res.status(500).json({ error: 'Failed to fetch resume profile' });
@@ -3516,14 +3557,22 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/get-resume-fulltext", async (req, res) => {
     try {
-      const apiSecret = req.headers['x-api-secret'];
+      const apiSecret = readElevenLabsApiSecret(req.headers);
       if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      const interviewId = readElevenLabsToolInterviewId(req.body);
+      console.log('[RESUME-FULLTEXT] tool request', summarizeElevenLabsToolBody(req.body));
+
+      const interviewId = await resolveInterviewIdForServerTool(req.body);
       if (!interviewId) {
-        return res.status(400).json({ error: 'Missing interviewid (or interview_id) in body' });
+        return res.status(400).json({
+          error: 'Missing interviewid (or interview_id) in body/parameters, and no session matched conversation_id',
+          result: {
+            error: true,
+            message: 'Missing interview id for resume lookup',
+          },
+        });
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
@@ -3537,7 +3586,14 @@ export function registerRoutes(app: Express) {
       });
 
       if (!resume || !resume.resumeFulltext) {
-        return res.status(404).json({ error: 'Resume full text not found' });
+        return res.status(404).json({
+          error: 'Resume full text not found',
+          result: {
+            error: true,
+            message: 'Resume full text not found for this interview',
+            interviewid: interviewId,
+          },
+        });
       }
 
       const truncated = resume.resumeFulltext.length > RESUME_FULLTEXT_MAX_CHARS;
@@ -3546,12 +3602,14 @@ export function registerRoutes(app: Express) {
         : resume.resumeFulltext;
       const safeText = stripResumeContactInfo(rawTruncated);
 
-      return res.json({
+      const payload = {
         interviewid: interviewId,
         resumefulltext: safeText,
         truncated,
         maxChars: RESUME_FULLTEXT_MAX_CHARS,
-      });
+      };
+
+      return res.json({ result: payload, ...payload });
     } catch (error: any) {
       console.error('[RESUME-FULLTEXT] Error:', error);
       return res.status(500).json({ error: 'Failed to fetch resume full text' });
@@ -3564,15 +3622,20 @@ export function registerRoutes(app: Express) {
   app.post("/api/mark-interview-complete", async (req, res) => {
     try {
       // Validate API secret header
-      const apiSecret = req.headers['x-api-secret'];
+      const apiSecret = readElevenLabsApiSecret(req.headers);
       if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
+      const normalizedBody = normalizeElevenLabsToolBody(req.body);
+      console.log('[MARK-INTERVIEW-COMPLETE] tool request', summarizeElevenLabsToolBody(req.body));
+
       // Validate required body fields
-      const interviewId = readElevenLabsToolInterviewId(req.body);
-      const conversationId = readElevenLabsToolConversationId(req.body);
-      const candidateId = readElevenLabsToolCandidateId(req.body);
+      const interviewId =
+        readElevenLabsToolInterviewId(normalizedBody) ||
+        (await resolveInterviewIdForServerTool(req.body));
+      const conversationId = readElevenLabsToolConversationId(normalizedBody);
+      const candidateId = readElevenLabsToolCandidateId(normalizedBody);
 
       if (!interviewId || !candidateId) {
         return res.status(400).json({ 
@@ -3605,11 +3668,13 @@ export function registerRoutes(app: Express) {
         console.warn('[MARK-INTERVIEW-COMPLETE] Session update failed (non-fatal):', dbError?.message || dbError);
       }
 
-      return res.json({
+      const payload = {
         status: "completed",
         interviewid: interviewId,
         timestamp: new Date().toISOString(),
-      });
+      };
+
+      return res.json({ result: payload, ...payload });
     } catch (error: any) {
       console.error('[MARK-INTERVIEW-COMPLETE] Error:', error);
       return res.status(500).json({ error: 'Failed to mark interview as complete' });

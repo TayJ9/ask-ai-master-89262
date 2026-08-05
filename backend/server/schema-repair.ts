@@ -186,6 +186,13 @@ export async function repairSchema(): Promise<void> {
     // 10. Results email tracking on interview_evaluations
     await executeQuery(`ALTER TABLE interview_evaluations ADD COLUMN IF NOT EXISTS results_email_sent_at TIMESTAMP;`);
     console.log('✅ Added/verified results_email_sent_at on interview_evaluations');
+
+    // 11. Candidate context on elevenlabs_interview_sessions (evaluation + webhook linking)
+    await executeQuery(`
+      ALTER TABLE elevenlabs_interview_sessions
+      ADD COLUMN IF NOT EXISTS candidate_context JSONB;
+    `);
+    console.log('✅ Added/verified candidate_context on elevenlabs_interview_sessions');
     
     console.log('✅ Schema repair completed successfully!');
   } catch (error: any) {

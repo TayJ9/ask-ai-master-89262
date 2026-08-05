@@ -146,7 +146,32 @@ async function main() {
   if (profileBody.interviewid !== sessionId || !profileBody.resumeprofile) {
     fail("get-resume-profile response shape", profileBody);
   }
+  if (!profileBody.result?.resumeprofile) {
+    fail("get-resume-profile includes ElevenLabs result wrapper", profileBody);
+  }
   ok("get-resume-profile returns resumeprofile for sessionId");
+
+  const profileEnvelopeRes = await fetch(`${API_BASE}/api/get-resume-profile`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-secret": ELEVENLABS_API_KEY!,
+    },
+    body: JSON.stringify({
+      tool_call_id: "call_test",
+      tool_name: "GetResumeProfile",
+      parameters: { interview_id: sessionId },
+      conversation_id: "conv_test",
+    }),
+  });
+  const profileEnvelopeBody = await profileEnvelopeRes.json().catch(() => ({}));
+  if (profileEnvelopeRes.status !== 200 || profileEnvelopeBody.result?.interviewid !== sessionId) {
+    fail("get-resume-profile accepts ElevenLabs parameters envelope", {
+      status: profileEnvelopeRes.status,
+      profileEnvelopeBody,
+    });
+  }
+  ok("get-resume-profile accepts ElevenLabs parameters envelope");
 
   const profileSnakeRes = await fetch(`${API_BASE}/api/get-resume-profile`, {
     method: "POST",

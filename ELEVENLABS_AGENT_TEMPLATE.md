@@ -61,13 +61,44 @@ Content-Type: application/json
 x-api-secret: <ELEVENLABS_API_KEY>
 ```
 
-**Body** (both tools)
+**Body** (configure in tool `request_body_schema`; ElevenLabs sends values inside a `parameters` object)
 
 ```json
-{ "interviewid": "{{interviewid}}" }
+{
+  "type": "object",
+  "properties": {
+    "interviewid": {
+      "type": "string",
+      "description": "Interview session id from dynamic variable interviewid"
+    }
+  },
+  "required": ["interviewid"]
+}
 ```
 
-`{{interviewid}}` must match the session id the frontend sends in `dynamicVariables.interviewid` at session start.
+Use dynamic variable `{{interviewid}}` on the `interviewid` property (or `interview_id` — both are accepted).
+
+ElevenLabs POSTs this envelope to your webhook:
+
+```json
+{
+  "tool_call_id": "call_abc123",
+  "tool_name": "GetResumeProfile",
+  "parameters": { "interviewid": "<session-uuid>" },
+  "conversation_id": "conv_xyz789"
+}
+```
+
+**Response** — wrap payload in `result` (required for the agent to receive tool output):
+
+```json
+{
+  "result": {
+    "interviewid": "<session-uuid>",
+    "resumeprofile": { "skills": [], "experience": [], "education": [] }
+  }
+}
+```
 
 ### Force the tool to run every session
 
