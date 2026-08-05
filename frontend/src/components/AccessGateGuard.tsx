@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
   fetchAndCacheAccessStatus,
@@ -55,7 +55,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     () => cached?.validUntil,
   );
 
-  useEffect(() => {
+  const revalidateAccess = useCallback(async () => {
     if (isPublicPath(location, search)) {
       setAllowed(true);
       setChecking(false);
@@ -66,38 +66,68 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     if (sessionCached) {
       setAccessValidUntil(sessionCached.validUntil);
       applyAccessStatus(sessionCached, location, setAllowed, setLocation);
+    }
+
+    try {
+      const status = await fetchAndCacheAccessStatus();
+      setAccessValidUntil(status.validUntil);
+      applyAccessStatus(status, location, setAllowed, setLocation);
+    } catch {
+      setAllowed(false);
+      redirectToAccessGate(setLocation);
+    } finally {
+      setChecking(false);
+    }
+  }, [location, search, setLocation]);
+
+  useEffect(() => {
+    if (isPublicPath(location, search)) {
+      setAllowed(true);
       setChecking(false);
       return;
     }
 
+    if (!readAccessStatusCache()) {
+      setChecking(true);
+    }
+
     let cancelled = false;
-    setChecking(true);
 
     (async () => {
-      try {
-        const status = await fetchAndCacheAccessStatus();
-        if (cancelled) return;
-        setAccessValidUntil(status.validUntil);
-        applyAccessStatus(status, location, setAllowed, setLocation);
-      } catch {
-        if (cancelled) return;
-        setAllowed(false);
-        redirectToAccessGate(setLocation);
-      } finally {
-        if (!cancelled) setChecking(false);
-      }
+      if (cancelled) return;
+      await revalidateAccess();
     })();
+
+    const onWake = () => {
+      if (document.visibilityState === "visible" && !cancelled) {
+        void revalidateAccess();
+      }
+    };
+
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted && !cancelled) {
+        void revalidateAccess();
+      }
+    };
+
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("pageshow", onPageShow);
 
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("pageshow", onPageShow);
     };
-  }, [location, search, setLocation]);
+  }, [location, search, revalidateAccess]);
 
   useEffect(() => {
     if (!allowed || isPublicPath(location, search)) return;
 
     const delayMs = getAccessExpiryDelayMs(accessValidUntil);
-    if (delayMs == null) return;
+    if (delayMs == null) {
+      void revalidateAccess();
+      return;
+    }
 
     if (delayMs <= 0) {
       redirectToAccessGate(setLocation);
@@ -109,7 +139,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     }, delayMs + 250);
 
     return () => window.clearTimeout(timer);
-  }, [allowed, accessValidUntil, location, search, setLocation]);
+  }, [allowed, accessValidUntil, location, search, setLocation, revalidateAccess]);
 
   if (checking) {
     return (

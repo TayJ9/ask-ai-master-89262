@@ -37,7 +37,7 @@ import {
   signAccessCookie,
   verifyAccessCode,
 } from "./accessGate";
-import { requireAccessCookieForAuth, setAccessCookie } from "./requireAccessGate";
+import { requireAccessCookieForAuth, setAccessCookie, clearAccessCookie } from "./requireAccessGate";
 import {
   generateVerificationToken,
   hashVerificationToken,
@@ -836,14 +836,21 @@ export function registerRoutes(app: Express) {
 
   app.get("/api/access/status", (req, res) => {
     const required = isAccessGateEnabled();
+    const cookie = getAccessCookieFromRequest(req);
     const granted = required ? hasValidAccessCookie(req) : true;
     let validUntil: string | undefined;
+
+    if (required && cookie && !granted) {
+      clearAccessCookie(res);
+    }
+
     if (required && granted) {
-      const expiresAt = getAccessCookieExpiresAt(getAccessCookieFromRequest(req));
+      const expiresAt = getAccessCookieExpiresAt(cookie);
       if (expiresAt != null) {
         validUntil = new Date(expiresAt).toISOString();
       }
     }
+
     res.json({
       required,
       granted,
@@ -881,6 +888,11 @@ export function registerRoutes(app: Express) {
       ok: true,
       validUntil: new Date(getAccessSessionExpiresMs(now)).toISOString(),
     });
+  });
+
+  app.post("/api/access/revoke", (_req, res) => {
+    clearAccessCookie(res);
+    return res.json({ ok: true });
   });
 
   app.get("/api/access/current", accessAdminRateLimiter, (req, res) => {

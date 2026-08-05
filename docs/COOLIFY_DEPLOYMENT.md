@@ -40,14 +40,16 @@ ELEVENLABS_WEBHOOK_SECRET=...
 Optional:
 
 ```env
-ACCESS_GATE_COOKIE_MAX_AGE_SECONDS=604800
+ACCESS_GATE_COOKIE_MAX_AGE_SECONDS=3600
 ALLOW_VERCEL_ORIGINS=false
 ALLOW_SIGNUP=false
 ```
 
-## Hourly access codes (UTC)
+## Hourly access codes (US Eastern)
 
-Codes rotate every **UTC hour**. The operator fetches the current code via:
+Codes rotate every **US Eastern hour** (:00 ET). Access after entering a code lasts **one hour from entry**, then users must enter the current hourly code again at `/gate`.
+
+The operator fetches the current code via:
 
 ```http
 GET https://mockly.yourdomain.com/api/access/current
@@ -60,16 +62,19 @@ Response:
 {
   "code": "ABCD-EFGH",
   "validUntil": "2026-01-15T21:00:00.000Z",
-  "timezone": "UTC"
+  "timezone": "America/New_York",
+  "timezoneLabel": "US Eastern Time (ET)"
 }
 ```
 
 Share the code with invitees. Users enter it at `/gate` before sign-in or sign-up.
 
+**Coolify note:** Do not cache HTML at the proxy/CDN layer for `/` — the access gate is enforced on each document request. Set `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS=3600` (or remove it to use the default). If you previously set `604800`, change it to `3600` and redeploy.
+
 ### n8n reminder workflow (optional)
 
 ```text
-Cron: 0 * * * *   (every hour at :00 UTC)
+Cron: 0 * * * *   (every hour at :00 US/Eastern — adjust for your scheduler)
   → HTTP GET https://mockly.yourdomain.com/api/access/current
       Header: X-Admin-Key: {{ACCESS_GATE_ADMIN_KEY}}
   → Optional: Slack / email / Telegram notification with {{code}}

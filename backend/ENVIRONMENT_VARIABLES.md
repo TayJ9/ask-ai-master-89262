@@ -121,7 +121,7 @@ Hourly rotating access codes (**UTC** hour boundaries) gate the app before login
 |----------|----------|---------|-------------|
 | `ACCESS_GATE_SECRET` | ✅ Yes (Prod) | — | HMAC secret for hourly codes (32+ random bytes, hex or base32) |
 | `ACCESS_GATE_ADMIN_KEY` | Recommended | — | Protects `GET /api/access/current` (operator / n8n) |
-| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | No | `604800` (7 days) | Gate cookie lifetime after successful verify |
+| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | No | `3600` (1 hour) | Browser cookie cap; session expiry is always 1h from code entry |
 | `ALLOW_SIGNUP` | No | `true` | Set `false` to disable registration (invite-only) |
 | `ALLOW_VERCEL_ORIGINS` | No | `false` | Set `true` to re-enable `*.vercel.app` CORS |
 | `FRONTEND_URL` | ✅ Yes (Prod) | — | Public app URL for CORS (e.g. `https://mockly.yourdomain.com`) |
@@ -191,7 +191,7 @@ Response includes `code`, `validUntil` (ISO timestamp), and `timezone: "UTC"`.
 | `ARIZE_PROJECT_NAME` | ❌ No | `mockly-scoring` | Arize project for scoring traces |
 | `ACCESS_GATE_SECRET` | ✅ Yes (Prod) | None | Hourly access code HMAC secret |
 | `ACCESS_GATE_ADMIN_KEY` | Recommended | None | Admin key for `/api/access/current` |
-| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | ❌ No | `604800` | Gate cookie max age (seconds) |
+| `ACCESS_GATE_COOKIE_MAX_AGE_SECONDS` | ❌ No | `3600` | Gate cookie max age (seconds); should match 1-hour session |
 | `ALLOW_SIGNUP` | ❌ No | `true` | Set `false` to disable registration |
 | `ALLOW_VERCEL_ORIGINS` | ❌ No | `false` | Allow `*.vercel.app` CORS origins |
 | `FRONTEND_URL` | ✅ Yes (Prod) | None | Frontend URL for CORS |

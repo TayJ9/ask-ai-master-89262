@@ -9,6 +9,7 @@ import {
 
 const EXEMPT_API_PATHS = new Set([
   "/api/access/verify",
+  "/api/access/revoke",
   "/api/access/status",
   "/api/access/current",
   "/api/health",
@@ -62,6 +63,11 @@ export function requireAccessGate(req: Request, res: Response, next: NextFunctio
     return;
   }
 
+  const staleCookie = getAccessCookieFromRequest(req);
+  if (staleCookie) {
+    clearAccessCookie(res);
+  }
+
   if (req.path.startsWith("/api/")) {
     res.status(401).json({ error: "ACCESS_GATE_REQUIRED" });
     return;
@@ -101,10 +107,25 @@ export function requireAccessCookieForAuth(req: Request, res: Response, next: Ne
 
 export function getAccessCookieMaxAgeSeconds(): number {
   const maxAgeSeconds = Number.parseInt(
-    process.env.ACCESS_GATE_COOKIE_MAX_AGE_SECONDS ?? "604800",
+    process.env.ACCESS_GATE_COOKIE_MAX_AGE_SECONDS ?? "3600",
     10,
   );
-  return Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0 ? maxAgeSeconds : 604800;
+  return Number.isFinite(maxAgeSeconds) && maxAgeSeconds > 0 ? maxAgeSeconds : 3600;
+}
+
+export function clearAccessCookie(res: Response): void {
+  const isProduction = process.env.NODE_ENV === "production";
+  const parts = [
+    `${ACCESS_COOKIE_NAME}=`,
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=0",
+  ];
+  if (isProduction) {
+    parts.push("Secure");
+  }
+  res.setHeader("Set-Cookie", parts.join("; "));
 }
 
 export function setAccessCookie(res: Response, token: string): void {

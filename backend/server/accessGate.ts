@@ -6,7 +6,7 @@ export const ACCESS_GATE_TIMEZONE = "America/New_York";
 export const ACCESS_GATE_TIMEZONE_LABEL = "US Eastern Time (ET)";
 
 const HOUR_MS = 3600 * 1000;
-const DEFAULT_COOKIE_MAX_AGE_SECONDS = 604800;
+const DEFAULT_COOKIE_MAX_AGE_SECONDS = 3600;
 
 /** Access granted after code entry lasts this long (rolling 1h from verify time). */
 export const ACCESS_SESSION_DURATION_MS = HOUR_MS;

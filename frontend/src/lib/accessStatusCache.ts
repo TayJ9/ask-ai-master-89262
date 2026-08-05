@@ -20,9 +20,9 @@ function isBrowser(): boolean {
 }
 
 function isAccessExpired(validUntil?: string): boolean {
-  if (!validUntil) return false;
+  if (!validUntil) return true;
   const expiresAt = Date.parse(validUntil);
-  return Number.isFinite(expiresAt) && expiresAt <= Date.now();
+  return !Number.isFinite(expiresAt) || expiresAt <= Date.now();
 }
 
 export function readAccessStatusCache(): AccessStatus | null {
@@ -41,7 +41,7 @@ export function readAccessStatusCache(): AccessStatus | null {
       return null;
     }
 
-    if (parsed.granted && isAccessExpired(parsed.validUntil)) {
+    if (parsed.granted && isAccessExpired(parsed.validUntil ?? undefined)) {
       sessionStorage.removeItem(CACHE_KEY);
       return {
         required: parsed.required,
@@ -92,7 +92,7 @@ export function clearAccessStatusCache(): void {
 
 export async function fetchAndCacheAccessStatus(): Promise<AccessStatus> {
   const status = (await apiGet("/api/access/status")) as AccessStatus;
-  if (status.granted && isAccessExpired(status.validUntil)) {
+  if (status.granted && isAccessExpired(status.validUntil ?? undefined)) {
     const expired: AccessStatus = { ...status, granted: false };
     writeAccessStatusCache(expired);
     return expired;

@@ -73,6 +73,7 @@ function isPublicApiPath(path: string): boolean {
   return (
     path === '/api/access/status' ||
     path === '/api/access/verify' ||
+    path === '/api/access/revoke' ||
     path === '/api/auth/config' ||
     path.startsWith('/api/auth/verify-email') ||
     isAuthSignInOrSignUp(path)

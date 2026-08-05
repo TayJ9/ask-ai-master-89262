@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Request, Response } from "express";
-import { requireAccessGate } from "./requireAccessGate.js";
+import { requireAccessGate, clearAccessCookie } from "./requireAccessGate.js";
 
 const TEST_SECRET = "test-secret-at-least-32-characters-long";
 
@@ -87,5 +87,14 @@ describe("requireAccessGate HTML routing", () => {
     });
 
     assert.equal(nextCalled, true);
+  });
+});
+
+describe("clearAccessCookie", () => {
+  it("sets Max-Age=0 to expire the access cookie", () => {
+    const { res, state } = mockRes();
+    clearAccessCookie(res);
+    assert.match(state.headers["Set-Cookie"], /mockly_access_granted=/);
+    assert.match(state.headers["Set-Cookie"], /Max-Age=0/);
   });
 });
