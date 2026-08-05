@@ -29,6 +29,22 @@ SKILLS
 JavaScript, Python, React, Kubernetes
 `.trim();
 
+const PROFESSIONAL_EXPERIENCE_RESUME = `
+Taylor Johnson
+
+EDUCATION
+College of Charleston, Honors College — Charleston, SC
+Bachelor of Science, Computer Information Systems (CIS), GPA: 3.7, Expected Graduation: May 2028
+
+PROFESSIONAL EXPERIENCE
+Annotation Engineer, CallMiner — Remote May 2026 – Present
+Annotated ~75 hours of English call center transcripts. Analyzed trends and patterns due to different dialects and accents.
+Worked as part of a team to achieve >95% annotation accuracy through rigorous calibration
+
+TECHNICAL SKILLS
+Python, SQL, JavaScript, React, Git
+`.trim();
+
 describe("buildResumeProfile", () => {
   it("extracts labeled inline sections", () => {
     const profile = buildResumeProfile(SAMPLE_RESUME);
@@ -44,6 +60,15 @@ describe("buildResumeProfile", () => {
     assert.ok(profile.projects.some((p) => /sentiment-analysis chatbot/i.test(p)));
     assert.ok(profile.education.some((e) => /college of charleston/i.test(e)));
     assert.ok(profile.experience.some((e) => /quantumleap robotics/i.test(e)));
+  });
+
+  it("stops education at PROFESSIONAL EXPERIENCE and parses skills block", () => {
+    const profile = buildResumeProfile(PROFESSIONAL_EXPERIENCE_RESUME);
+    assert.ok(profile.education.some((e) => /college of charleston/i.test(e)));
+    assert.ok(!profile.education.some((e) => /professional experience/i.test(e)));
+    assert.ok(!profile.education.some((e) => /callminer/i.test(e)));
+    assert.ok(profile.experience.some((e) => /callminer/i.test(e)));
+    assert.ok(profile.skills.some((s) => /python/i.test(s)));
   });
 });
 

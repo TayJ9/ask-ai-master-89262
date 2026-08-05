@@ -9,12 +9,23 @@ const SECTION_HEADERS: Record<string, "skills" | "projects" | "experience" | "ed
   "technical skills": "skills",
   technologies: "skills",
   tech: "skills",
+  "core skills": "skills",
+  "core competencies": "skills",
+  "programming languages": "skills",
   projects: "projects",
   project: "projects",
+  "personal projects": "projects",
+  "relevant projects": "projects",
+  "selected projects": "projects",
   experience: "experience",
   work: "experience",
   "work experience": "experience",
+  "professional experience": "experience",
+  "relevant experience": "experience",
+  "internship experience": "experience",
+  internships: "experience",
   employment: "experience",
+  "work history": "experience",
   education: "education",
   academic: "education",
   academics: "education",
@@ -26,6 +37,28 @@ function normalizeHeader(line: string): string {
     .replace(/[^a-z\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Match known section headers, including common resume variants like PROFESSIONAL EXPERIENCE. */
+function resolveSectionKind(line: string): "skills" | "projects" | "experience" | "education" | null {
+  const norm = normalizeHeader(line);
+  if (!norm) return null;
+
+  const exact = SECTION_HEADERS[norm];
+  if (exact) return exact;
+
+  // Short header lines that contain a section keyword (PDF extracts often add spacing/case noise).
+  const words = norm.split(" ").filter(Boolean);
+  if (words.length > 5) return null;
+
+  if (/\b(professional|work|relevant|internship)?\s*experience\b/.test(norm) && !norm.includes("education")) {
+    return "experience";
+  }
+  if (/\bprojects?\b/.test(norm)) return "projects";
+  if (/\b(skills?|technologies|competencies|programming languages)\b/.test(norm)) return "skills";
+  if (/\beducation\b/.test(norm) || /\bacademic\b/.test(norm)) return "education";
+
+  return null;
 }
 
 function extractListAfterLabel(lines: string[], label: string): string[] {
@@ -58,8 +91,7 @@ function contentAfterLabel(line: string, label: RegExp): string | null {
 function collectSectionBody(lines: string[], startIdx: number): string[] {
   const body: string[] = [];
   for (let i = startIdx + 1; i < lines.length; i++) {
-    const header = SECTION_HEADERS[normalizeHeader(lines[i])];
-    if (header) break;
+    if (resolveSectionKind(lines[i])) break;
     const cleaned = lines[i].replace(/^[-*•]\s*/, "").trim();
     if (cleaned) body.push(cleaned);
     if (body.length >= 8) break;
@@ -87,7 +119,7 @@ export function buildResumeProfile(resumeText: string) {
 
   // Block sections: EDUCATION / PROJECTS / ... followed by body lines
   for (let i = 0; i < lines.length; i++) {
-    const kind = SECTION_HEADERS[normalizeHeader(lines[i])];
+    const kind = resolveSectionKind(lines[i]);
     if (!kind || kind === "skills") continue;
     const body = collectSectionBody(lines, i);
     if (kind === "projects") projects.push(...body);
@@ -98,7 +130,7 @@ export function buildResumeProfile(resumeText: string) {
   // Skills may also appear as a block of comma-separated lines under SKILLS
   if (skills.length === 0) {
     for (let i = 0; i < lines.length; i++) {
-      if (SECTION_HEADERS[normalizeHeader(lines[i])] !== "skills") continue;
+      if (resolveSectionKind(lines[i]) !== "skills") continue;
       const body = collectSectionBody(lines, i);
       for (const row of body) {
         skills.push(
