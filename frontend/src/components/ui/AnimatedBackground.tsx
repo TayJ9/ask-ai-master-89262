@@ -6,13 +6,17 @@ interface AnimatedBackgroundProps {
   children?: React.ReactNode;
   /** When true, decorative layers are viewport-fixed to prevent bottom-of-page scroll artifacts. */
   fixedDecor?: boolean;
+  /** When true, render the same wave decor without CSS animations (form pages — lower GPU load). */
+  staticDecor?: boolean;
 }
 
 /** Isolated decor tree — memoized so typing in form children does not re-render SVG/blur layers. */
 const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
   fixedDecor,
+  staticDecor,
 }: {
   fixedDecor: boolean;
+  staticDecor: boolean;
 }) {
   // PERF: Inject keyframes once; translate3d keeps the subtle waves on the compositor.
   // Update existing style element so code changes take effect on hot reload.
@@ -68,6 +72,12 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
       html.form-input-focused .wave-haze {
         animation-play-state: paused !important;
       }
+      .wave-decor-static .wave-band,
+      .wave-decor-static .wave-edge,
+      .wave-decor-static .wave-haze {
+        animation: none !important;
+        will-change: auto;
+      }
       @media (max-width: 640px) {
         .wave-band-5, .wave-edge-5 {
           display: none;
@@ -81,7 +91,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
   }, []);
 
   const decorLayers = (
-    <>
+    <div className={staticDecor ? "wave-decor-static contents" : "contents"}>
       <div
         className="absolute inset-0 overflow-hidden z-[1]"
         style={{ contain: 'strict' }}
@@ -266,7 +276,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
           background: 'linear-gradient(180deg, hsl(220 40% 8% / 0.72) 0%, hsl(222 34% 12% / 0.56) 50%, hsl(220 40% 8% / 0.7) 100%)',
         }}
       />
-    </>
+    </div>
   );
 
   if (fixedDecor) {
@@ -284,7 +294,12 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
   return decorLayers;
 });
 
-function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
+function AnimatedBackground({
+  className = "",
+  children,
+  fixedDecor = false,
+  staticDecor = false,
+}: AnimatedBackgroundProps) {
   useFormInputFocus();
 
   /*
@@ -304,7 +319,7 @@ function AnimatedBackground({ className = "", children, fixedDecor = false }: An
           "linear-gradient(135deg, hsl(214 42% 98%) 0%, hsl(218 34% 95%) 42%, hsl(205 34% 94%) 100%)",
       }}
     >
-      <AnimatedBackgroundDecor fixedDecor={fixedDecor} />
+      <AnimatedBackgroundDecor fixedDecor={fixedDecor} staticDecor={staticDecor} />
 
       <div className="relative z-10">{children}</div>
     </div>

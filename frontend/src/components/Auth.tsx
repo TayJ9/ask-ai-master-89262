@@ -176,7 +176,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
     "flex h-auto min-h-11 w-full flex-col items-center justify-center gap-2 whitespace-normal px-3 py-3 text-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4";
 
   return (
-    <AnimatedBackground className="flex min-h-[100dvh] items-center justify-center px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
+    <AnimatedBackground staticDecor className="flex min-h-[100dvh] items-center justify-center px-4 py-4 pt-[max(1rem,env(safe-area-inset-top))] pb-[max(1rem,env(safe-area-inset-bottom))] sm:p-6">
       <Card className="w-full max-w-md animate-scale-in border border-border/80 bg-card shadow-xl">
         <CardHeader className="space-y-4 p-4 pb-2 text-center sm:p-6 sm:pb-2">
           <div className="space-y-2 overflow-visible">
