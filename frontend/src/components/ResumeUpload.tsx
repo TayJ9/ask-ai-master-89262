@@ -600,7 +600,7 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
   };
 
   return (
-    <AnimatedBackground staticDecor className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+    <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}

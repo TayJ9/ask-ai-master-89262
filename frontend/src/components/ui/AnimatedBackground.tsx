@@ -1,80 +1,32 @@
 import { memo, useEffect } from "react";
-import { useFormInputFocus } from "@/hooks/useFormInputFocus";
 
 interface AnimatedBackgroundProps {
   className?: string;
   children?: React.ReactNode;
   /** When true, decorative layers are viewport-fixed to prevent bottom-of-page scroll artifacts. */
   fixedDecor?: boolean;
-  /** When true, render the same wave decor without CSS animations (form pages — lower GPU load). */
-  staticDecor?: boolean;
 }
 
 /** Isolated decor tree — memoized so typing in form children does not re-render SVG/blur layers. */
 const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
   fixedDecor,
-  staticDecor,
 }: {
   fixedDecor: boolean;
-  staticDecor: boolean;
 }) {
-  // PERF: Inject keyframes once; translate3d keeps the subtle waves on the compositor.
-  // Update existing style element so code changes take effect on hot reload.
+  // PERF: Static wave decor only — CSS animations removed to avoid compositor/GPU load app-wide.
   useEffect(() => {
-    const styleId = 'animated-background-styles';
+    const styleId = "animated-background-styles";
     let style = document.getElementById(styleId) as HTMLStyleElement | null;
     if (!style) {
-      style = document.createElement('style');
+      style = document.createElement("style");
       style.id = styleId;
       document.head.appendChild(style);
     }
     style.textContent = `
-      @keyframes wave-drift-1 {
-        0%, 100% { transform: translate3d(0, 0, 0); }
-        50% { transform: translate3d(22px, -7px, 0); }
-      }
-      @keyframes wave-drift-2 {
-        0%, 100% { transform: translate3d(0, 0, 0); }
-        50% { transform: translate3d(-15px, 13px, 0); }
-      }
-      @keyframes wave-drift-3 {
-        0%, 100% { transform: translate3d(0, 0, 0); }
-        50% { transform: translate3d(18px, 16px, 0); }
-      }
-      @keyframes wave-drift-4 {
-        0%, 100% { transform: translate3d(0, 0, 0); }
-        50% { transform: translate3d(-11px, -15px, 0); }
-      }
-      @keyframes wave-drift-5 {
-        0%, 100% { transform: translate3d(0, 0, 0); }
-        50% { transform: translate3d(-20px, 8px, 0); }
-      }
       .wave-band,
       .wave-edge,
       .wave-haze {
-        will-change: transform, opacity;
         backface-visibility: hidden;
-        animation-fill-mode: backwards;
-      }
-      .wave-band-1, .wave-edge-1 { animation: wave-drift-1 88s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-      .wave-band-2, .wave-edge-2 { animation: wave-drift-2 102s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-      .wave-band-3, .wave-edge-3 { animation: wave-drift-3 76s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-      .wave-band-4, .wave-edge-4 { animation: wave-drift-4 116s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-      .wave-band-5, .wave-edge-5 { animation: wave-drift-5 94s cubic-bezier(0.45, 0, 0.55, 1) infinite; }
-      @media (prefers-reduced-motion: reduce) {
-        .wave-band, .wave-edge, .wave-haze {
-          animation: none !important;
-          will-change: auto;
-        }
-      }
-      html.form-input-focused .wave-band,
-      html.form-input-focused .wave-edge,
-      html.form-input-focused .wave-haze {
-        animation-play-state: paused !important;
-      }
-      .wave-decor-static .wave-band,
-      .wave-decor-static .wave-edge,
-      .wave-decor-static .wave-haze {
         animation: none !important;
         will-change: auto;
       }
@@ -86,26 +38,26 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
     `;
 
     // Do NOT remove styles on unmount – they're shared by all AnimatedBackground instances.
-    // Removing would cause a flash when transitioning between views (roles→resume→voice):
-    // old view unmounts → styles removed → brief moment without keyframes → new view mounts → styles re-injected.
   }, []);
 
   const decorLayers = (
-    <div className={staticDecor ? "wave-decor-static contents" : "contents"}>
+    <>
       <div
         className="absolute inset-0 overflow-hidden z-[1]"
-        style={{ contain: 'strict' }}
+        style={{ contain: "strict" }}
       >
         <div
           className="wave-haze absolute -left-[18%] -top-[22%] h-[460px] w-[780px] rounded-full blur-3xl sm:h-[580px] sm:w-[980px]"
           style={{
-            background: 'radial-gradient(ellipse at center, hsl(206 64% 82% / 0.36), hsl(218 48% 88% / 0.2) 45%, transparent 72%)',
+            background:
+              "radial-gradient(ellipse at center, hsl(206 64% 82% / 0.36), hsl(218 48% 88% / 0.2) 45%, transparent 72%)",
           }}
         />
         <div
           className="wave-haze absolute -bottom-[28%] right-[-20%] h-[560px] w-[900px] rounded-full blur-3xl sm:h-[720px] sm:w-[1120px]"
           style={{
-            background: 'radial-gradient(ellipse at center, hsl(215 38% 72% / 0.22), hsl(196 42% 82% / 0.18) 48%, transparent 74%)',
+            background:
+              "radial-gradient(ellipse at center, hsl(215 38% 72% / 0.22), hsl(196 42% 82% / 0.18) 48%, transparent 74%)",
           }}
         />
         <svg
@@ -151,7 +103,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             d="M-120 132 C 76 74 238 94 386 188 C 548 292 704 272 884 158 C 1064 44 1238 86 1560 212 L1560 338 C 1300 254 1112 232 940 326 C 738 438 532 416 346 304 C 184 206 46 208 -120 276 Z"
             fill="url(#waveGlassBack)"
             style={{
-              filter: 'drop-shadow(0 24px 54px hsl(218 34% 45% / 0.08))',
+              filter: "drop-shadow(0 24px 54px hsl(218 34% 45% / 0.08))",
             }}
           />
           <path
@@ -167,7 +119,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             d="M-120 284 C 92 196 300 240 486 366 C 642 472 826 430 1006 296 C 1186 162 1320 174 1560 244 L1560 432 C 1332 360 1180 362 1038 468 C 844 614 620 626 410 498 C 232 390 70 368 -120 454 Z"
             fill="url(#waveGlassMid)"
             style={{
-              filter: 'drop-shadow(0 30px 70px hsl(204 32% 48% / 0.11))',
+              filter: "drop-shadow(0 30px 70px hsl(204 32% 48% / 0.11))",
             }}
           />
           <path
@@ -183,7 +135,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             d="M-120 540 C 120 424 298 464 504 574 C 698 678 878 650 1078 492 C 1228 374 1368 386 1560 444 L1560 662 C 1348 604 1210 630 1058 748 C 854 906 632 882 420 756 C 238 648 70 654 -120 742 Z"
             fill="url(#waveGlassFront)"
             style={{
-              filter: 'drop-shadow(0 -18px 58px hsl(224 30% 44% / 0.13))',
+              filter: "drop-shadow(0 -18px 58px hsl(224 30% 44% / 0.13))",
             }}
           />
           <path
@@ -202,7 +154,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             strokeWidth="8"
             strokeLinecap="round"
             style={{
-              filter: 'blur(2.4px)',
+              filter: "blur(2.4px)",
             }}
           />
           <path
@@ -210,7 +162,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             d="M-160 -88 C 328 -66 762 58 1122 188 C 1288 240 1398 188 1560 128 L1560 314 C 1386 390 1258 430 1100 370 C 900 292 664 206 -160 176 Z"
             fill="url(#waveGlassTop)"
             style={{
-              filter: 'drop-shadow(-22px 30px 58px hsl(216 28% 56% / 0.08))',
+              filter: "drop-shadow(-22px 30px 58px hsl(216 28% 56% / 0.08))",
             }}
           />
           <path
@@ -226,7 +178,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             d="M-120 698 C 96 582 330 620 516 732 C 710 848 902 870 1138 724 C 1280 636 1402 636 1560 704 L1560 940 L-120 940 Z"
             fill="url(#waveGlassLower)"
             style={{
-              filter: 'drop-shadow(0 -30px 70px hsl(212 34% 46% / 0.13))',
+              filter: "drop-shadow(0 -30px 70px hsl(212 34% 46% / 0.13))",
             }}
           />
           <path
@@ -245,7 +197,7 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
             strokeWidth="9"
             strokeLinecap="round"
             style={{
-              filter: 'blur(2.8px)',
+              filter: "blur(2.8px)",
             }}
           />
         </svg>
@@ -253,13 +205,13 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
 
       <div
         className="absolute inset-0 overflow-hidden z-[2]"
-        style={{ contain: 'strict' }}
+        style={{ contain: "strict" }}
       >
         <div
           className="absolute inset-0"
           style={{
             background:
-              'radial-gradient(ellipse 48% 58% at 50% 38%, hsl(0 0% 100% / 0.72), hsl(214 42% 98% / 0.42) 46%, transparent 76%)',
+              "radial-gradient(ellipse 48% 58% at 50% 38%, hsl(0 0% 100% / 0.72), hsl(214 42% 98% / 0.42) 46%, transparent 76%)",
           }}
         />
       </div>
@@ -267,16 +219,18 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
       <div
         className="absolute inset-0 dark:hidden z-[3] transition-opacity duration-700"
         style={{
-          background: 'linear-gradient(180deg, hsl(210 44% 98% / 0.52) 0%, hsl(214 38% 97% / 0.18) 44%, hsl(218 34% 95% / 0.42) 100%)',
+          background:
+            "linear-gradient(180deg, hsl(210 44% 98% / 0.52) 0%, hsl(214 38% 97% / 0.18) 44%, hsl(218 34% 95% / 0.42) 100%)",
         }}
       />
       <div
         className="absolute inset-0 hidden dark:block z-[3] transition-opacity duration-700"
         style={{
-          background: 'linear-gradient(180deg, hsl(220 40% 8% / 0.72) 0%, hsl(222 34% 12% / 0.56) 50%, hsl(220 40% 8% / 0.7) 100%)',
+          background:
+            "linear-gradient(180deg, hsl(220 40% 8% / 0.72) 0%, hsl(222 34% 12% / 0.56) 50%, hsl(220 40% 8% / 0.7) 100%)",
         }}
       />
-    </div>
+    </>
   );
 
   if (fixedDecor) {
@@ -294,22 +248,12 @@ const AnimatedBackgroundDecor = memo(function AnimatedBackgroundDecor({
   return decorLayers;
 });
 
-function AnimatedBackground({
-  className = "",
-  children,
-  fixedDecor = false,
-  staticDecor = false,
-}: AnimatedBackgroundProps) {
-  useFormInputFocus();
-
+function AnimatedBackground({ className = "", children, fixedDecor = false }: AnimatedBackgroundProps) {
   /*
    * CRITICAL: The root wrapper must NOT have `transform` or `will-change: transform`.
    * Either of those creates a new containing block, which breaks `position: fixed`
    * on the decor wrapper -- turning it into `position: absolute` and causing the
    * background to scroll with the content (white-flash artifacts on fast scroll).
-   *
-   * GPU promotion is applied only to the leaf animated elements (blobs/particles)
-   * and to the content wrapper, NOT to this root.
    */
   return (
     <div
@@ -319,7 +263,7 @@ function AnimatedBackground({
           "linear-gradient(135deg, hsl(214 42% 98%) 0%, hsl(218 34% 95%) 42%, hsl(205 34% 94%) 100%)",
       }}
     >
-      <AnimatedBackgroundDecor fixedDecor={fixedDecor} staticDecor={staticDecor} />
+      <AnimatedBackgroundDecor fixedDecor={fixedDecor} />
 
       <div className="relative z-10">{children}</div>
     </div>
@@ -327,4 +271,3 @@ function AnimatedBackground({
 }
 
 export default memo(AnimatedBackground);
-
