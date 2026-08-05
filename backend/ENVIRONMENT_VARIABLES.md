@@ -94,7 +94,26 @@ ARIZE_PROJECT_NAME=mockly-scoring
 
 For local evaluator scripts (`npm run test:evaluator`), call `initArizeTracing()` after loading `.env` if you want traces from test runs.
 
-### 9. Access gate (Production — Coolify unified deploy)
+### 10. Email (Resend — verification + results)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RESEND_API_KEY` | ✅ Yes (Prod) | — | Resend API key for verification and results emails |
+| `EMAIL_FROM` | Recommended | `Mockly <onboarding@resend.dev>` | Verified sender address in Resend |
+| `FRONTEND_URL` | ✅ Yes (Prod) | — | Used in verification and results email links |
+
+- **Used in**: `server/email.ts`, `server/resultsEmail.ts`, auth signup/resend routes
+- **When disabled**: Signup still works; verification email is skipped (dev logs verify URL). Results emails are skipped.
+
+Example:
+
+```env
+RESEND_API_KEY=re_xxxxxxxx
+EMAIL_FROM=Mockly <noreply@yourdomain.com>
+FRONTEND_URL=https://mockly.yourdomain.com
+```
+
+### 11. Access gate (Production — Coolify unified deploy)
 
 Hourly rotating access codes (**UTC** hour boundaries) gate the app before login. See [docs/COOLIFY_DEPLOYMENT.md](../docs/COOLIFY_DEPLOYMENT.md).
 

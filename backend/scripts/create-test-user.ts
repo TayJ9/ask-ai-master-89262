@@ -61,7 +61,7 @@ async function createTestUser() {
   if (existing) {
     await db
       .update(profiles)
-      .set({ passwordHash, fullName })
+      .set({ passwordHash, fullName, emailVerifiedAt: new Date() })
       .where(eq(profiles.email, email));
     console.log("✅ User already existed; password and name updated.");
     console.log(`   User ID: ${existing.id}`);
@@ -74,6 +74,7 @@ async function createTestUser() {
         email,
         fullName,
         passwordHash,
+        emailVerifiedAt: new Date(),
         createdAt: new Date(),
       })
       .returning();

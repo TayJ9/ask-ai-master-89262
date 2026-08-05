@@ -181,6 +181,32 @@ try {
     // Column exists, ignore
   }
 
+  // Email verification columns on profiles
+  for (const col of [
+    "email_verified_at TEXT",
+    "email_verification_token_hash TEXT",
+    "email_verification_sent_at TEXT",
+  ]) {
+    try {
+      db.exec(`ALTER TABLE profiles ADD COLUMN ${col}`);
+    } catch {
+      // Column exists
+    }
+  }
+  db.exec(`
+    UPDATE profiles
+    SET email_verified_at = COALESCE(email_verified_at, datetime('now'))
+    WHERE email_verified_at IS NULL;
+  `);
+  console.log('✅ Added email verification columns on profiles');
+
+  try {
+    db.exec(`ALTER TABLE interview_evaluations ADD COLUMN results_email_sent_at TEXT`);
+    console.log('✅ Added results_email_sent_at on interview_evaluations');
+  } catch {
+    // Column exists
+  }
+
   // Dedupe before adding unique indexes. Preserve duplicate interview rows by
   // clearing duplicate conversation IDs instead of deleting interviews.
   db.exec(`

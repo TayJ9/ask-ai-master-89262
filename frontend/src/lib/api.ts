@@ -55,7 +55,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public statusCode?: number,
-    public originalError?: Error
+    public originalError?: Error,
+    public code?: string,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -73,6 +74,7 @@ function isPublicApiPath(path: string): boolean {
     path === '/api/access/status' ||
     path === '/api/access/verify' ||
     path === '/api/auth/config' ||
+    path.startsWith('/api/auth/verify-email') ||
     isAuthSignInOrSignUp(path)
   );
 }
@@ -143,7 +145,7 @@ export async function handleApiResponse(response: Response, path?: string): Prom
       }
     }
     
-    throw new ApiError(errorMessage, response.status);
+    throw new ApiError(errorMessage, response.status, undefined, errorData?.code);
   }
   
   // Handle empty responses

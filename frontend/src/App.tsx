@@ -26,6 +26,7 @@ const InterviewPreview = lazy(() => import("./pages/InterviewPreview"));
 const LoginPreview = lazy(() => import("./pages/LoginPreview"));
 const Terms = lazy(() => import("./pages/Terms"));
 const Results = lazy(() => import("./pages/Results"));
+const VerifyEmail = lazy(() => import("./pages/VerifyEmail"));
 
 const RouteLoadingFallback = () => (
   <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -86,6 +87,7 @@ const AppContent = () => {
                 <Route path="/gate" component={AccessGate} />
                 <Route path="/" component={Index} />
                 <Route path="/results" component={Results} />
+                <Route path="/verify-email" component={VerifyEmail} />
                 <Route path="/interview-preview" component={InterviewPreview} />
                 <Route path="/login-preview" component={LoginPreview} />
                 <Route path="/terms" component={Terms} />

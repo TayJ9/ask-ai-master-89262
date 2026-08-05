@@ -658,6 +658,11 @@ export async function evaluateInterview(interviewId: string): Promise<void> {
     status: 'complete',
     timestamp: new Date().toISOString(),
   });
+
+  const { sendResultsEmailIfEligible } = await import("./resultsEmail");
+  void sendResultsEmailIfEligible(interviewId).catch((err) => {
+    console.error(`[RESULTS_EMAIL] Failed for interview ${interviewId}:`, err);
+  });
   };
 
   if (!isScoringTracingEnabled()) {

@@ -29,7 +29,8 @@
     "test:results-audit-fixes": "tsx scripts/test-results-audit-fixes.ts",
     "test:vague-scoring": "tsx scripts/test-vague-answer-scoring.ts",
     "test:resume-server-tools": "tsx scripts/test-resume-server-tools.ts",
-    "test:resume-dynamic-pipeline": "tsx scripts/setup-sqlite.ts && tsx scripts/test-resume-dynamic-pipeline.ts"
+    "test:resume-dynamic-pipeline": "tsx scripts/setup-sqlite.ts && tsx scripts/test-resume-dynamic-pipeline.ts",
+    "test:local-features": "tsx scripts/test-local-features.ts"
   },
   "keywords": [
     "express",
@@ -67,6 +68,7 @@
     "openai": "^4.28.0",
     "pdf-parse": "^1.1.1",
     "pg": "^8.11.3",
+    "resend": "^6.18.1",
     "tsx": "^4.7.0",
     "uuid": "^9.0.1",
     "vite": "^5.2.0",

@@ -38,6 +38,13 @@ import {
   verifyAccessCode,
 } from "./accessGate";
 import { requireAccessCookieForAuth, setAccessCookie } from "./requireAccessGate";
+import {
+  generateVerificationToken,
+  hashVerificationToken,
+  isVerificationTokenExpired,
+  VERIFICATION_RESEND_COOLDOWN_MS,
+} from "./emailVerification";
+import { sendVerificationEmail } from "./email";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -1030,8 +1037,26 @@ export function registerRoutes(app: Express) {
         passwordHash,
       });
 
+      const { token, tokenHash } = generateVerificationToken();
+      const sentAt = new Date();
+      await storage.updateProfile(profile.id, {
+        emailVerificationTokenHash: tokenHash,
+        emailVerificationSentAt: sentAt,
+      });
+
+      const emailSent = await sendVerificationEmail(profile.email!, token);
+      if (!emailSent && !isProd) {
+        console.warn(`[SIGNUP] Verification email not sent (RESEND_API_KEY missing?) — dev token logged below`);
+        console.warn(`[SIGNUP] Dev verify URL: ${(process.env.FRONTEND_URL || "http://localhost:5173").replace(/\/$/, "")}/verify-email?token=${token}`);
+      }
+
       console.log(`[SIGNUP] Success! Profile created with ID: ${profile.id}`);
-      res.json({ message: "Account created successfully" });
+      res.json({
+        message: emailSent
+          ? "Account created. Check your email to verify your address before signing in."
+          : "Account created. Email verification could not be sent — use resend verification or contact support.",
+        verificationRequired: true,
+      });
     } catch (error: any) {
       console.error("❌ [SIGNUP] Error:", error?.message || error, { code: error?.code, stack: error?.stack });
 
@@ -1084,6 +1109,14 @@ export function registerRoutes(app: Express) {
       }
 
       console.log(`[SIGNIN] Password valid, generating token...`);
+
+      if (!profile.emailVerifiedAt) {
+        return res.status(403).json({
+          error: "Please verify your email before signing in. Check your inbox for the verification link.",
+          code: "EMAIL_NOT_VERIFIED",
+        });
+      }
+
       let token: string;
       try {
         token = jwt.sign({ userId: profile.id }, getJWTSecret(), { expiresIn: '7d' });
@@ -1102,6 +1135,7 @@ export function registerRoutes(app: Express) {
           id: profile.id,
           email: profile.email,
           fullName: profile.fullName,
+          emailVerified: Boolean(profile.emailVerifiedAt),
         }
       });
     } catch (error: any) {
@@ -1136,10 +1170,96 @@ export function registerRoutes(app: Express) {
         id: profile.id,
         email: profile.email,
         fullName: profile.fullName,
+        emailVerified: Boolean(profile.emailVerifiedAt),
       });
     } catch (error) {
       console.error("Get user error:", error);
       res.status(500).json({ error: "Failed to get user" });
+    }
+  });
+
+  app.get("/api/auth/verify-email", async (req, res) => {
+    try {
+      const token = typeof req.query.token === "string" ? req.query.token.trim() : "";
+      if (!token) {
+        return res.status(400).json({ error: "Verification token is required" });
+      }
+
+      const tokenHash = hashVerificationToken(token);
+      const profile = await storage.getProfileByVerificationTokenHash(tokenHash);
+      if (!profile) {
+        return res.status(400).json({ error: "Invalid or expired verification link" });
+      }
+
+      if (profile.emailVerifiedAt) {
+        return res.json({ message: "Email already verified", alreadyVerified: true });
+      }
+
+      if (isVerificationTokenExpired(profile.emailVerificationSentAt)) {
+        return res.status(400).json({ error: "Verification link has expired. Request a new one." });
+      }
+
+      await storage.updateProfile(profile.id, {
+        emailVerifiedAt: new Date(),
+        emailVerificationTokenHash: null,
+        emailVerificationSentAt: null,
+      });
+
+      res.json({ message: "Email verified successfully. You can now sign in." });
+    } catch (error) {
+      console.error("Verify email error:", error);
+      res.status(500).json({ error: "Failed to verify email" });
+    }
+  });
+
+  app.post("/api/auth/resend-verification", authRateLimiter, async (req, res) => {
+    try {
+      const email = typeof req.body?.email === "string" ? req.body.email.toLowerCase().trim() : "";
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+
+      const profile = await storage.getProfileByEmail(email);
+      if (!profile || !profile.passwordHash) {
+        // Avoid revealing whether account exists
+        return res.json({ message: "If an unverified account exists for this email, a verification link was sent." });
+      }
+
+      if (profile.emailVerifiedAt) {
+        return res.json({ message: "This email is already verified. You can sign in." });
+      }
+
+      const sentAt = profile.emailVerificationSentAt;
+      if (sentAt) {
+        const sentMs = sentAt instanceof Date ? sentAt.getTime() : new Date(sentAt).getTime();
+        if (!Number.isNaN(sentMs) && Date.now() - sentMs < VERIFICATION_RESEND_COOLDOWN_MS) {
+          return res.status(429).json({ error: "Please wait a minute before requesting another verification email." });
+        }
+      }
+
+      const { token, tokenHash } = generateVerificationToken();
+      const now = new Date();
+      await storage.updateProfile(profile.id, {
+        emailVerificationTokenHash: tokenHash,
+        emailVerificationSentAt: now,
+      });
+
+      await sendVerificationEmail(email, token);
+
+      res.json({ message: "Verification email sent. Check your inbox." });
+    } catch (error) {
+      console.error("Resend verification error:", error);
+      res.status(500).json({ error: "Failed to resend verification email" });
+    }
+  });
+
+  app.get("/api/interviews", authenticateToken, async (req: any, res) => {
+    try {
+      const items = await storage.getInterviewsByUserId(req.userId);
+      res.json(items);
+    } catch (error) {
+      console.error("List interviews error:", error);
+      res.status(500).json({ error: "Failed to list interviews" });
     }
   });
 

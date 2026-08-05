@@ -98,6 +98,9 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
   const [resumeSummary, setResumeSummary] = useState<string | undefined>();
   const [resumeHighlights, setResumeHighlights] = useState<string | undefined>();
   const [resumeSkills, setResumeSkills] = useState<string[] | undefined>();
+  const [step, setStep] = useState<"form" | "confirm">("form");
+  const [pendingResumeText, setPendingResumeText] = useState("");
+  const [pendingCandidateInfo, setPendingCandidateInfo] = useState<ResumeUploadCandidateInfo | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const noResumeWarningShownRef = useRef(false);
   const mountedRef = useRef(true);
@@ -151,15 +154,30 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
   }, [resumeText]);
 
   const proceedWithoutResume = () => {
-    clearDraft();
     const sessionId = generateClientSessionId();
-    onResumeUploaded("", {
+    showConfirmStep("", {
       firstName: candidateFirstName.trim(),
       major: candidateMajor.trim(),
       year: candidateYear.trim(),
       sessionId,
       resumeSource: "not_provided",
     });
+  };
+
+  const showConfirmStep = (resume: string, candidateInfo: ResumeUploadCandidateInfo) => {
+    setPendingResumeText(resume);
+    setPendingCandidateInfo(candidateInfo);
+    setStep("confirm");
+  };
+
+  const handleConfirmProceed = () => {
+    if (!pendingCandidateInfo) return;
+    clearDraft();
+    onResumeUploaded(pendingResumeText, pendingCandidateInfo);
+  };
+
+  const handleBackToEdit = () => {
+    setStep("form");
   };
 
   const warnOrProceedWithoutResume = () => {
@@ -374,8 +392,8 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
         description: "Your resume has been processed and is ready for your interview.",
       });
       
-      // Call callback with resume text and candidate info
-      onResumeUploaded(extractedResumeText, candidateInfo);
+      // Call callback with resume text and candidate info — review step first
+      showConfirmStep(extractedResumeText, candidateInfo);
     } catch (error: any) {
       if (!isCurrentUploadAttempt(generation) || error?.statusCode === 499) {
         return;
@@ -572,7 +590,7 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
       };
       clearDraft();
       if (!isCurrentUploadAttempt(generation)) return;
-      onResumeUploaded(resumeTextForInterview, candidateInfo);
+      showConfirmStep(resumeTextForInterview, candidateInfo);
     } catch (error: unknown) {
       if (
         !isCurrentUploadAttempt(generation) ||
@@ -598,6 +616,71 @@ function ResumeUpload({ onResumeUploaded, onBack }: ResumeUploadProps) {
       }
     }
   };
+
+  if (step === "confirm" && pendingCandidateInfo) {
+    const resumeStatus = pendingResumeText.trim()
+      ? uploadedFileName
+        ? `PDF uploaded: ${uploadedFileName}`
+        : "Resume text provided"
+      : "No resume provided";
+
+    return (
+      <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, ease: [0.33, 1, 0.68, 1] }}
+          className="w-full max-w-2xl"
+        >
+          <Card className="overflow-hidden border border-border/80 bg-card shadow-xl">
+            <CardHeader>
+              <CardTitle className="text-2xl tracking-tight sm:text-3xl">Review before you start</CardTitle>
+              <CardDescription className="text-base leading-relaxed">
+                Confirm your details are correct. You can go back to edit anything before the interview begins.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="grid gap-4 rounded-lg border bg-muted/40 p-4 sm:grid-cols-3">
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">First name</p>
+                  <p className="mt-1 font-medium">{pendingCandidateInfo.firstName}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Major</p>
+                  <p className="mt-1 font-medium">{pendingCandidateInfo.major}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Academic level</p>
+                  <p className="mt-1 font-medium">{pendingCandidateInfo.year}</p>
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-4">
+                <p className="text-sm font-medium">Resume</p>
+                <p className="mt-1 text-sm text-muted-foreground">{resumeStatus}</p>
+                {pendingResumeText.trim() && (
+                  <p className="mt-3 line-clamp-4 text-sm text-muted-foreground">{pendingResumeText}</p>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <Button type="button" variant="outline" className="flex-1" onClick={handleBackToEdit}>
+                  Back to edit
+                </Button>
+                <Button
+                  type="button"
+                  className="flex-1 gradient-primary text-white"
+                  onClick={handleConfirmProceed}
+                >
+                  Confirm and continue
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </AnimatedBackground>
+    );
+  }
 
   return (
     <AnimatedBackground className="flex min-h-screen items-center justify-center p-4 sm:p-6">

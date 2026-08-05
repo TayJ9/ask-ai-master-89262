@@ -30,6 +30,8 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
   const [passwordError, setPasswordError] = useState("");
   const [nameError, setNameError] = useState("");
   const [signupEnabled, setSignupEnabled] = useState(true);
+  const [showResendVerification, setShowResendVerification] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
   const { toast } = useToast();
   const [, setLocation] = useLocation();
 
@@ -77,6 +79,7 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
     setEmailError("");
     setPasswordError("");
     setNameError("");
+    setShowResendVerification(false);
 
     try {
       const isEmailValid = validateEmail(email);
@@ -142,14 +145,12 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
         toast({ title: "Welcome back!" });
         onAuthSuccess(data.user, trimmedToken);
       } else {
-        toast({ 
-          title: "Success!", 
-          description: "Your account has been created successfully. You can now sign in with your credentials.",
+        toast({
+          title: "Check your email",
+          description: data?.message || "We sent a verification link. Verify your email before signing in.",
         });
         setIsLogin(true);
-        // Clear password but keep email for convenience
         setPassword("");
-        // Optionally clear name field
         setFullName("");
       }
     } catch (error: any) {
@@ -158,6 +159,9 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       
       if (error instanceof ApiError) {
         errorMessage = error.message;
+        if (error.code === "EMAIL_NOT_VERIFIED") {
+          setShowResendVerification(true);
+        }
       } else if (error.message) {
         errorMessage = error.message.replace(/[<>]/g, '');
       }
@@ -169,6 +173,38 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (!email.trim()) {
+      toast({
+        title: "Enter your email",
+        description: "Type the email you used to sign up, then try resend.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setResendLoading(true);
+    try {
+      const { apiPost } = await import("@/lib/api");
+      const data = await apiPost("/api/auth/resend-verification", {
+        email: email.trim().toLowerCase(),
+      });
+      toast({
+        title: "Verification email sent",
+        description: data?.message || "Check your inbox for the verification link.",
+      });
+    } catch (error: unknown) {
+      const { ApiError } = await import("@/lib/api");
+      toast({
+        title: "Could not resend",
+        description: error instanceof ApiError ? error.message : "Please try again later.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -273,6 +309,17 @@ export default function Auth({ onAuthSuccess }: AuthProps) {
             >
               {isLogin ? "Sign In" : "Create Account"}
             </LoadingButton>
+            {showResendVerification && isLogin && (
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full"
+                onClick={handleResendVerification}
+                disabled={resendLoading}
+              >
+                {resendLoading ? "Sending…" : "Resend verification email"}
+              </Button>
+            )}
             {signupEnabled && (
               <Button
                 type="button"

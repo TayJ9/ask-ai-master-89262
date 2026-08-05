@@ -171,6 +171,21 @@ export async function repairSchema(): Promise<void> {
     await executeQuery(`CREATE UNIQUE INDEX IF NOT EXISTS idx_evaluations_interview_id_unique ON interview_evaluations(interview_id);`);
     await executeQuery(`CREATE INDEX IF NOT EXISTS idx_evaluations_status ON interview_evaluations(status);`);
     console.log('✅ Created/verified indexes for interview_evaluations table');
+
+    // 9. Email verification columns on profiles
+    await executeQuery(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email_verified_at TIMESTAMP;`);
+    await executeQuery(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email_verification_token_hash TEXT;`);
+    await executeQuery(`ALTER TABLE profiles ADD COLUMN IF NOT EXISTS email_verification_sent_at TIMESTAMP;`);
+    await executeQuery(`
+      UPDATE profiles
+      SET email_verified_at = COALESCE(email_verified_at, NOW())
+      WHERE email_verified_at IS NULL;
+    `);
+    console.log('✅ Added/verified email verification columns on profiles');
+
+    // 10. Results email tracking on interview_evaluations
+    await executeQuery(`ALTER TABLE interview_evaluations ADD COLUMN IF NOT EXISTS results_email_sent_at TIMESTAMP;`);
+    console.log('✅ Added/verified results_email_sent_at on interview_evaluations');
     
     console.log('✅ Schema repair completed successfully!');
   } catch (error: any) {

@@ -1,4 +1,5 @@
 import { eq, and, desc, sql } from "drizzle-orm";
+import { randomUUID } from "crypto";
 import { db, pool, sqlite } from "./db";
 import { 
   profiles, 
@@ -6,6 +7,9 @@ import {
   interviewSessions, 
   interviewResponses,
   interviewTurns,
+  interviews,
+  interviewEvaluations,
+  elevenLabsInterviewSessions,
   InsertProfile,
   Profile,
   InsertInterviewQuestion,
@@ -20,11 +24,33 @@ import {
   Resume
 } from "../shared/schema";
 
+export interface UserInterviewListItem {
+  id: string;
+  status: string;
+  durationSeconds: number | null;
+  startedAt: Date | string | null;
+  endedAt: Date | string | null;
+  createdAt: Date | string | null;
+  overallScore: number | null;
+  evaluationStatus: string | null;
+  role: string | null;
+  major: string | null;
+}
+
 export interface IStorage {
   // Profiles
   createProfile(data: InsertProfile): Promise<Profile>;
   getProfileById(id: string): Promise<Profile | undefined>;
   getProfileByEmail(email: string): Promise<Profile | undefined>;
+  getProfileByVerificationTokenHash(tokenHash: string): Promise<Profile | undefined>;
+  updateProfile(id: string, data: Partial<InsertProfile & {
+    emailVerifiedAt?: Date | null;
+    emailVerificationTokenHash?: string | null;
+    emailVerificationSentAt?: Date | null;
+  }>): Promise<void>;
+  
+  // Voice interviews (history)
+  getInterviewsByUserId(userId: string): Promise<UserInterviewListItem[]>;
   
   // Interview Questions
   getQuestionsByRole(role: string): Promise<InterviewQuestion[]>;
@@ -93,7 +119,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createProfile(data: InsertProfile): Promise<Profile> {
-    const [profile] = await db.insert(profiles).values(data).returning();
+    const isSqlite = process.env.DATABASE_URL?.startsWith("file:");
+    const values = isSqlite
+      ? { ...data, id: randomUUID(), createdAt: new Date() }
+      : data;
+    const [profile] = await db.insert(profiles).values(values).returning();
     return profile;
   }
 
@@ -106,6 +136,62 @@ export class DatabaseStorage implements IStorage {
   async getProfileByEmail(email: string): Promise<Profile | undefined> {
     return await db.query.profiles.findFirst({
       where: eq(profiles.email, email),
+    });
+  }
+
+  async getProfileByVerificationTokenHash(tokenHash: string): Promise<Profile | undefined> {
+    return await db.query.profiles.findFirst({
+      where: eq(profiles.emailVerificationTokenHash, tokenHash),
+    });
+  }
+
+  async updateProfile(
+    id: string,
+    data: Partial<InsertProfile & {
+      emailVerifiedAt?: Date | null;
+      emailVerificationTokenHash?: string | null;
+      emailVerificationSentAt?: Date | null;
+    }>,
+  ): Promise<void> {
+    await db.update(profiles).set(data).where(eq(profiles.id, id));
+  }
+
+  async getInterviewsByUserId(userId: string): Promise<UserInterviewListItem[]> {
+    const rows = await db
+      .select({
+        id: interviews.id,
+        status: interviews.status,
+        durationSeconds: interviews.durationSeconds,
+        startedAt: interviews.startedAt,
+        endedAt: interviews.endedAt,
+        createdAt: interviews.createdAt,
+        overallScore: interviewEvaluations.overallScore,
+        evaluationStatus: interviewEvaluations.status,
+        candidateContext: elevenLabsInterviewSessions.candidateContext,
+      })
+      .from(interviews)
+      .leftJoin(interviewEvaluations, eq(interviewEvaluations.interviewId, interviews.id))
+      .leftJoin(
+        elevenLabsInterviewSessions,
+        eq(elevenLabsInterviewSessions.interviewId, interviews.id),
+      )
+      .where(eq(interviews.userId, userId))
+      .orderBy(desc(interviews.createdAt));
+
+    return rows.map((row) => {
+      const ctx = (row.candidateContext ?? {}) as { role?: string; major?: string };
+      return {
+        id: row.id,
+        status: row.status,
+        durationSeconds: row.durationSeconds,
+        startedAt: row.startedAt,
+        endedAt: row.endedAt,
+        createdAt: row.createdAt,
+        overallScore: row.overallScore,
+        evaluationStatus: row.evaluationStatus,
+        role: ctx.role ?? "General Interview",
+        major: ctx.major ?? null,
+      };
     });
   }
 

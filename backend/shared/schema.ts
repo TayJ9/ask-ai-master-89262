@@ -8,6 +8,9 @@ export const profiles = pgTable("profiles", {
   email: text("email"),
   fullName: text("full_name"),
   passwordHash: text("password_hash"),
+  emailVerifiedAt: timestamp("email_verified_at"),
+  emailVerificationTokenHash: text("email_verification_token_hash"),
+  emailVerificationSentAt: timestamp("email_verification_sent_at"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 
@@ -122,6 +125,7 @@ export const interviewEvaluations = pgTable("interview_evaluations", {
   overallScore: integer("overall_score"),
   evaluationJson: jsonb("evaluation_json"),
   error: text("error"),
+  resultsEmailSentAt: timestamp("results_email_sent_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => ({
