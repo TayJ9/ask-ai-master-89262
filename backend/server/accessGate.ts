@@ -16,11 +16,16 @@ function getUtcHourKey(unixMs: number): string {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}`;
 }
 
-function getUtcHourEndIso(now: number): string {
-  const d = new Date(now);
+/** Milliseconds since epoch when the current UTC hour ends (next :00). */
+export function getUtcHourEndMs(unixMs: number): number {
+  const d = new Date(unixMs);
   d.setUTCMinutes(0, 0, 0);
   d.setUTCHours(d.getUTCHours() + 1);
-  return d.toISOString();
+  return d.getTime();
+}
+
+function getUtcHourEndIso(now: number): string {
+  return new Date(getUtcHourEndMs(now)).toISOString();
 }
 
 export function isAccessGateEnabled(): boolean {
@@ -80,12 +85,21 @@ export function getCookieMaxAgeSeconds(): number {
 
 export function signAccessCookie(now = Date.now()): string {
   const secret = getSecret();
-  const maxAge = getCookieMaxAgeSeconds();
-  const expiresAt = now + maxAge * 1000;
+  const expiresAt = getUtcHourEndMs(now);
   const nonce = randomBytes(16).toString("hex");
   const payload = `${expiresAt}.${nonce}`;
   const sig = createHmac("sha256", secret).update(payload).digest("base64url");
   return `${payload}.${sig}`;
+}
+
+export function getAccessCookieExpiresAt(
+  cookie: string | undefined,
+): number | null {
+  if (!cookie?.trim()) return null;
+  const parts = cookie.split(".");
+  if (parts.length !== 3) return null;
+  const expiresAt = Number.parseInt(parts[0], 10);
+  return Number.isFinite(expiresAt) ? expiresAt : null;
 }
 
 export function verifyAccessCookie(cookie: string | undefined, now = Date.now()): boolean {

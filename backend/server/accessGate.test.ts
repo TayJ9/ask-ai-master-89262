@@ -68,7 +68,6 @@ describe("accessGate hourly codes", () => {
 describe("accessGate cookie", () => {
   beforeEach(() => {
     process.env.ACCESS_GATE_SECRET = TEST_SECRET;
-    process.env.ACCESS_GATE_COOKIE_MAX_AGE_SECONDS = "3600";
   });
 
   afterEach(() => {
@@ -76,11 +75,11 @@ describe("accessGate cookie", () => {
     delete process.env.ACCESS_GATE_COOKIE_MAX_AGE_SECONDS;
   });
 
-  it("signs and verifies a cookie round trip", () => {
+  it("signs and verifies a cookie until the UTC hour ends", () => {
     const now = UTC_MID_HOUR;
     const token = signAccessCookie(now);
-    assert.equal(verifyAccessCookie(token, now + 1000), true);
-    assert.equal(verifyAccessCookie(token, now + 3601 * 1000), false);
+    assert.equal(verifyAccessCookie(token, UTC_END_OF_HOUR), true);
+    assert.equal(verifyAccessCookie(token, UTC_START_OF_NEXT_HOUR), false);
   });
 
   it("rejects tampered cookies", () => {

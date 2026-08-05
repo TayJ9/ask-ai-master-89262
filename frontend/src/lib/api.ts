@@ -106,6 +106,16 @@ export async function handleApiResponse(response: Response, path?: string): Prom
       if (contentType?.includes('application/json')) {
         errorData = await response.json();
         errorMessage = errorData.error || errorData.message || `Server error (${response.status})`;
+
+        if (
+          response.status === 401 &&
+          errorData.error === 'ACCESS_GATE_REQUIRED' &&
+          typeof window !== 'undefined' &&
+          !path?.startsWith('/api/access/')
+        ) {
+          const { redirectToAccessGate } = await import('@/lib/authSession');
+          redirectToAccessGate();
+        }
       } else {
         const text = await response.text();
         errorMessage = text || `Server error (${response.status})`;

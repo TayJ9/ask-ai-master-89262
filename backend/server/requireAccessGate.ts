@@ -75,7 +75,10 @@ export function getAccessCookieMaxAgeSeconds(): number {
 
 export function setAccessCookie(res: Response, token: string): void {
   const isProduction = process.env.NODE_ENV === "production";
-  const maxAge = getAccessCookieMaxAgeSeconds();
+  const expiresAt = Number.parseInt(token.split(".")[0] ?? "", 10);
+  const maxAge = Number.isFinite(expiresAt)
+    ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1000))
+    : getAccessCookieMaxAgeSeconds();
   const parts = [
     `${ACCESS_COOKIE_NAME}=${encodeURIComponent(token)}`,
     "Path=/",

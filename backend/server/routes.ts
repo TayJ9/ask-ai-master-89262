@@ -27,7 +27,10 @@ const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice")
 import { getJwtSecretForSigning, isJwtSecretConfigured } from "./jwtSecret";
 import {
   ACCESS_GATE_TIMEZONE,
+  getAccessCookieExpiresAt,
+  getAccessCookieFromRequest,
   getCurrentAccessCode,
+  getUtcHourEndMs,
   hasValidAccessCookie,
   isAccessGateEnabled,
   signAccessCookie,
@@ -88,6 +91,96 @@ function formatTranscriptArray(messages: any[]): string {
   }
   
   return formattedLines.join('\n\n');
+}
+
+type NormalizedElevenLabsWebhook = {
+  eventType: string | null;
+  conversation_id: string | null;
+  user_id: string | null;
+  agent_id: string | null;
+  transcript: string | null;
+  duration: number | null;
+  status: string | null;
+  started_at: Date | null;
+  ended_at: Date | null;
+  year: string | null;
+  skipProcessing: boolean;
+  skipReason?: string;
+};
+
+/** Map ElevenLabs post-call webhook payloads (nested under `data`) to our internal shape. */
+function normalizeElevenLabsWebhookBody(body: any): NormalizedElevenLabsWebhook {
+  const eventType = typeof body?.type === "string" ? body.type : null;
+  const payload = body?.data && typeof body.data === "object" ? body.data : body;
+
+  if (eventType === "post_call_audio" || eventType === "call_initiation_failure") {
+    return {
+      eventType,
+      conversation_id: payload.conversation_id ?? null,
+      user_id: null,
+      agent_id: payload.agent_id ?? null,
+      transcript: null,
+      duration: null,
+      status: null,
+      started_at: null,
+      ended_at: null,
+      year: null,
+      skipProcessing: true,
+      skipReason: eventType,
+    };
+  }
+
+  let transcript: string | null = null;
+  if (typeof payload.transcript === "string") {
+    transcript = payload.transcript;
+  } else if (Array.isArray(payload.transcript)) {
+    transcript = formatTranscriptArray(payload.transcript);
+  }
+
+  const metadata =
+    payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {};
+  const duration =
+    typeof payload.duration === "number"
+      ? payload.duration
+      : typeof metadata.call_duration_secs === "number"
+        ? metadata.call_duration_secs
+        : null;
+
+  let started_at: Date | null = null;
+  let ended_at: Date | null = null;
+  if (typeof payload.started_at === "string") {
+    started_at = new Date(payload.started_at);
+  } else if (typeof metadata.start_time_unix_secs === "number") {
+    started_at = new Date(metadata.start_time_unix_secs * 1000);
+  }
+  if (typeof payload.ended_at === "string") {
+    ended_at = new Date(payload.ended_at);
+  } else if (started_at && duration != null) {
+    ended_at = new Date(started_at.getTime() + duration * 1000);
+  }
+
+  let year: string | null = null;
+  const clientData = payload.conversation_initiation_client_data;
+  const dynVars = clientData?.dynamic_variables;
+  if (dynVars && typeof dynVars.year === "string" && dynVars.year.trim()) {
+    year = dynVars.year.trim();
+  } else if (typeof payload.year === "string" && payload.year.trim()) {
+    year = payload.year.trim();
+  }
+
+  return {
+    eventType,
+    conversation_id: payload.conversation_id ?? body.conversation_id ?? null,
+    user_id: payload.user_id ?? body.user_id ?? null,
+    agent_id: payload.agent_id ?? body.agent_id ?? null,
+    transcript,
+    duration,
+    status: payload.status ?? body.status ?? null,
+    started_at,
+    ended_at,
+    year,
+    skipProcessing: false,
+  };
 }
 
 /** Max polls when ConvAI returns 404 or transcript not ready yet (conversation still finalizing). */
@@ -733,14 +826,22 @@ export function registerRoutes(app: Express) {
     },
   });
 
-  app.get("/api/access/status", (_req, res) => {
+  app.get("/api/access/status", (req, res) => {
     const required = isAccessGateEnabled();
-    const granted = required ? hasValidAccessCookie(_req) : true;
+    const granted = required ? hasValidAccessCookie(req) : true;
+    let validUntil: string | undefined;
+    if (required && granted) {
+      const expiresAt = getAccessCookieExpiresAt(getAccessCookieFromRequest(req));
+      if (expiresAt != null) {
+        validUntil = new Date(expiresAt).toISOString();
+      }
+    }
     res.json({
       required,
       granted,
       signupEnabled: process.env.ALLOW_SIGNUP !== "false",
       timezone: ACCESS_GATE_TIMEZONE,
+      ...(validUntil ? { validUntil } : {}),
     });
   });
 
@@ -764,8 +865,13 @@ export function registerRoutes(app: Express) {
       return res.status(401).json({ error: "Invalid access code" });
     }
 
-    setAccessCookie(res, signAccessCookie());
-    return res.json({ ok: true });
+    const now = Date.now();
+    const token = signAccessCookie(now);
+    setAccessCookie(res, token);
+    return res.json({
+      ok: true,
+      validUntil: new Date(getUtcHourEndMs(now)).toISOString(),
+    });
   });
 
   app.get("/api/access/current", accessAdminRateLimiter, (req, res) => {
@@ -2156,32 +2262,96 @@ export function registerRoutes(app: Express) {
         timestamp: new Date().toISOString(),
       });
       console.log('[WEBHOOK] 📋 Request body fields:', {
-        hasConversationId: !!body.conversation_id,
-        hasTranscript: !!body.transcript,
-        transcriptLength: body.transcript?.length || 0,
-        hasUserId: !!body.user_id,
-        hasAgentId: !!body.agent_id,
-        hasDuration: !!body.duration,
-        hasStatus: !!body.status,
-        hasStartedAt: !!body.started_at,
-        hasEndedAt: !!body.ended_at,
-        hasYear: !!body.year,
-        bodyKeys: Object.keys(body),
+        topLevelType: body.type,
+        hasDataObject: !!body.data,
+        topLevelKeys: Object.keys(body),
       });
 
-      const { conversation_id, transcript, duration, user_id, agent_id, started_at, ended_at, status, year } = body;
+      const normalized = normalizeElevenLabsWebhookBody(body);
+
+      if (normalized.skipProcessing) {
+        console.log('[WEBHOOK] Acknowledged event without processing', {
+          eventType: normalized.eventType,
+          reason: normalized.skipReason,
+          conversation_id: normalized.conversation_id,
+        });
+        return res.json({
+          success: true,
+          acknowledged: true,
+          eventType: normalized.eventType,
+        });
+      }
+
+      let {
+        conversation_id,
+        user_id,
+        transcript,
+        duration,
+        agent_id,
+        started_at,
+        ended_at,
+        status,
+        year,
+      } = normalized;
+
+      console.log('[WEBHOOK] Normalized payload', {
+        eventType: normalized.eventType,
+        conversation_id,
+        hasUserId: !!user_id,
+        hasTranscript: !!transcript,
+        transcriptLength: transcript?.length || 0,
+        duration,
+        status,
+      });
 
       // Validate required fields
       if (!conversation_id) {
-        console.error('[WEBHOOK] ❌ Missing conversation_id in request body');
+        console.error('[WEBHOOK] ❌ Missing conversation_id in webhook payload');
         console.error('[WEBHOOK] Available fields:', Object.keys(body));
         return res.status(400).json({ error: 'Missing conversation_id' });
       }
 
       if (!user_id) {
-        console.error('[WEBHOOK] ❌ Missing user_id in request body');
-        console.error('[WEBHOOK] Available fields:', Object.keys(body));
-        return res.status(400).json({ error: 'Missing user_id' });
+        try {
+          const sessionByConversationId = await (db.query as any).elevenLabsInterviewSessions?.findFirst({
+            where: (sessions: any, { eq }: any) => eq(sessions.conversationId, conversation_id),
+          });
+          if (sessionByConversationId?.userId) {
+            user_id = sessionByConversationId.userId;
+            console.log('[WEBHOOK] Resolved user_id from interview session', {
+              conversation_id,
+              user_id,
+            });
+          }
+        } catch (lookupError: any) {
+          console.error('[WEBHOOK] Failed to resolve user_id from session (non-critical):', lookupError);
+        }
+      }
+
+      if (!user_id) {
+        const existingInterview = await (db.query as any).interviews?.findFirst({
+          where: (interviews: any, { eq }: any) => eq(interviews.conversationId, conversation_id),
+        });
+        if (existingInterview) {
+          user_id = existingInterview.userId;
+          console.log('[WEBHOOK] Resolved user_id from existing interview', {
+            conversation_id,
+            user_id,
+            interviewId: existingInterview.id,
+          });
+        }
+      }
+
+      if (!user_id) {
+        console.warn('[WEBHOOK] Missing user_id — acknowledging webhook without creating interview', {
+          conversation_id,
+          eventType: normalized.eventType,
+        });
+        return res.json({
+          success: true,
+          acknowledged: true,
+          message: 'Missing user_id; interview may already be saved via client',
+        });
       }
 
       console.log('[WEBHOOK] ✅ Required fields validated', {
@@ -2281,9 +2451,8 @@ export function registerRoutes(app: Express) {
         });
       }
 
-      // Parse timestamps if provided as strings
-      const startedAt = started_at ? new Date(started_at) : null;
-      const endedAt = ended_at ? new Date(ended_at) : null;
+      const startedAt = started_at;
+      const endedAt = ended_at;
 
       // Insert interview record (with error handling for duplicates)
       let interview;

@@ -22,8 +22,10 @@ export default function AccessGate() {
     setLoading(true);
 
     try {
-      await apiPost("/api/access/verify", { code: code.trim() });
-      markAccessGranted();
+      const data = (await apiPost("/api/access/verify", { code: code.trim() })) as {
+        validUntil?: string;
+      };
+      markAccessGranted(data.validUntil);
       preloadIndexRoute();
       toast({ title: "Access granted", description: "Welcome to Mockly." });
       setLocation("/");

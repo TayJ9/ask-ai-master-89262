@@ -2,9 +2,11 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
   fetchAndCacheAccessStatus,
+  getAccessExpiryDelayMs,
   readAccessStatusCache,
   type AccessStatus,
 } from "@/lib/accessStatusCache";
+import { redirectToAccessGate } from "@/lib/authSession";
 import { preloadIndexRoute } from "@/lib/routePreload";
 
 function isMockResultsPath(pathname: string, search: string): boolean {
@@ -31,7 +33,7 @@ function applyAccessStatus(
   const allowed = canProceedWithStatus(status);
   setAllowed(allowed);
   if (!allowed && pathname !== "/gate") {
-    setLocation("/gate");
+    redirectToAccessGate(setLocation);
   } else if (allowed) {
     preloadIndexRoute();
   }
@@ -49,6 +51,9 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     if (cached) return canProceedWithStatus(cached);
     return true;
   });
+  const [accessValidUntil, setAccessValidUntil] = useState<string | undefined>(
+    () => cached?.validUntil,
+  );
 
   useEffect(() => {
     if (isPublicPath(location, search)) {
@@ -59,6 +64,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
 
     const sessionCached = readAccessStatusCache();
     if (sessionCached) {
+      setAccessValidUntil(sessionCached.validUntil);
       applyAccessStatus(sessionCached, location, setAllowed, setLocation);
       setChecking(false);
       return;
@@ -71,6 +77,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
       try {
         const status = await fetchAndCacheAccessStatus();
         if (cancelled) return;
+        setAccessValidUntil(status.validUntil);
         applyAccessStatus(status, location, setAllowed, setLocation);
       } catch {
         if (cancelled) return;
@@ -84,6 +91,24 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [location, search, setLocation]);
+
+  useEffect(() => {
+    if (!allowed || isPublicPath(location, search)) return;
+
+    const delayMs = getAccessExpiryDelayMs(accessValidUntil);
+    if (delayMs == null) return;
+
+    if (delayMs <= 0) {
+      redirectToAccessGate(setLocation);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      redirectToAccessGate(setLocation);
+    }, delayMs + 250);
+
+    return () => window.clearTimeout(timer);
+  }, [allowed, accessValidUntil, location, search, setLocation]);
 
   if (checking) {
     return (
