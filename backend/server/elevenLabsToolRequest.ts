@@ -2,7 +2,7 @@ import type { IncomingHttpHeaders } from "http";
 
 const UNRESOLVED_TEMPLATE_RE = /^\{\{.*\}\}$/;
 
-/** Read x-api-secret with common ElevenLabs header aliases. */
+/** Read tool auth from x-api-secret or Authorization: Bearer (ElevenLabs dashboard patterns). */
 export function readElevenLabsApiSecret(headers: IncomingHttpHeaders): string | undefined {
   const raw =
     headers["x-api-secret"] ??
@@ -10,7 +10,34 @@ export function readElevenLabsApiSecret(headers: IncomingHttpHeaders): string | 
     headers["xapisecret"];
   if (typeof raw === "string" && raw.trim()) return raw.trim();
   if (Array.isArray(raw) && typeof raw[0] === "string" && raw[0].trim()) return raw[0].trim();
+
+  const authorization = headers.authorization;
+  if (typeof authorization === "string") {
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
+
   return undefined;
+}
+
+/** Merge POST JSON body and GET query params (ElevenLabs default webhook method is GET). */
+export function mergeElevenLabsToolInput(
+  body: unknown,
+  query: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const normalized = normalizeElevenLabsToolBody(body);
+  if (!query) return normalized;
+
+  const fromQuery: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (typeof value === "string" && value.trim()) {
+      fromQuery[key] = value.trim();
+    } else if (Array.isArray(value) && typeof value[0] === "string" && value[0].trim()) {
+      fromQuery[key] = value[0].trim();
+    }
+  }
+
+  return { ...normalized, ...fromQuery };
 }
 
 /**
@@ -64,5 +91,20 @@ export function summarizeElevenLabsToolBody(body: unknown): Record<string, unkno
     has_parameters: Boolean(body && typeof body === "object" && "parameters" in (body as object)),
     interviewId: readElevenLabsToolInterviewId(normalized),
     conversationId: readElevenLabsToolConversationId(normalized),
+  };
+}
+
+export function summarizeElevenLabsToolRequest(input: {
+  method?: string;
+  body?: unknown;
+  query?: Record<string, unknown>;
+  headers: IncomingHttpHeaders;
+}): Record<string, unknown> {
+  const merged = mergeElevenLabsToolInput(input.body, input.query);
+  return {
+    method: input.method,
+    authPresent: Boolean(readElevenLabsApiSecret(input.headers)),
+    hasQuery: Boolean(input.query && Object.keys(input.query).length > 0),
+    ...summarizeElevenLabsToolBody(merged),
   };
 }

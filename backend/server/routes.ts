@@ -19,12 +19,14 @@ import { buildResumeProfile } from "./resumeProfileHeuristic";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { persistResumeForSession } from "./persistResume";
 import {
+  mergeElevenLabsToolInput,
   normalizeElevenLabsToolBody,
   readElevenLabsApiSecret,
   readElevenLabsToolCandidateId,
   readElevenLabsToolConversationId,
   readElevenLabsToolInterviewId,
   summarizeElevenLabsToolBody,
+  summarizeElevenLabsToolRequest,
 } from "./elevenLabsToolRequest";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
@@ -3479,8 +3481,8 @@ export function registerRoutes(app: Express) {
     return { resume: undefined, lookupId: context.lookupIds[0] || requestedId, context };
   }
 
-  async function resolveInterviewIdForServerTool(body: unknown): Promise<string | undefined> {
-    const normalized = normalizeElevenLabsToolBody(body);
+  async function resolveInterviewIdForServerTool(input: unknown): Promise<string | undefined> {
+    const normalized = normalizeElevenLabsToolBody(input);
     const directId = readElevenLabsToolInterviewId(normalized);
     if (directId) return directId;
 
@@ -3502,19 +3504,36 @@ export function registerRoutes(app: Express) {
     }
   }
 
-  app.post("/api/get-resume-profile", async (req, res) => {
+  function verifyElevenLabsToolAuth(
+    req: Request,
+    logPrefix: string,
+  ): boolean {
+    const apiSecret = readElevenLabsApiSecret(req.headers);
+    if (apiSecret && apiSecret === ELEVENLABS_API_KEY) {
+      return true;
+    }
+    console.warn(`[${logPrefix}] unauthorized tool request`, {
+      method: req.method,
+      hasSecret: Boolean(apiSecret),
+      authHeader: typeof req.headers.authorization === "string" ? "present" : "missing",
+    });
+    return false;
+  }
+
+  app.all("/api/get-resume-profile", async (req, res) => {
+    const logPrefix = "RESUME-PROFILE";
+    console.log(`[${logPrefix}] incoming`, summarizeElevenLabsToolRequest(req));
+
     try {
-      const apiSecret = readElevenLabsApiSecret(req.headers);
-      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
+      if (!verifyElevenLabsToolAuth(req, logPrefix)) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      console.log('[RESUME-PROFILE] tool request', summarizeElevenLabsToolBody(req.body));
-
-      const interviewId = await resolveInterviewIdForServerTool(req.body);
+      const toolInput = mergeElevenLabsToolInput(req.body, req.query as Record<string, unknown>);
+      const interviewId = await resolveInterviewIdForServerTool(toolInput);
       if (!interviewId) {
         return res.status(400).json({
-          error: 'Missing interviewid (or interview_id) in body/parameters, and no session matched conversation_id',
+          error: 'Missing interviewid (or interview_id) in body/parameters/query, and no session matched conversation_id',
           result: {
             error: true,
             message: 'Missing interview id for resume lookup',
@@ -3523,7 +3542,7 @@ export function registerRoutes(app: Express) {
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
-      console.log('[RESUME-PROFILE] lookup result', {
+      console.log(`[${logPrefix}] lookup result`, {
         interviewId,
         lookupId,
         verified: context.verified,
@@ -3547,27 +3566,27 @@ export function registerRoutes(app: Express) {
         resumeprofile: resume.resumeProfile,
       };
 
-      // ElevenLabs webhook tools read the `result` field into agent context.
       return res.json({ result: payload, ...payload });
     } catch (error: any) {
-      console.error('[RESUME-PROFILE] Error:', error);
+      console.error(`[${logPrefix}] Error:`, error);
       return res.status(500).json({ error: 'Failed to fetch resume profile' });
     }
   });
 
-  app.post("/api/get-resume-fulltext", async (req, res) => {
+  app.all("/api/get-resume-fulltext", async (req, res) => {
+    const logPrefix = "RESUME-FULLTEXT";
+    console.log(`[${logPrefix}] incoming`, summarizeElevenLabsToolRequest(req));
+
     try {
-      const apiSecret = readElevenLabsApiSecret(req.headers);
-      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
+      if (!verifyElevenLabsToolAuth(req, logPrefix)) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      console.log('[RESUME-FULLTEXT] tool request', summarizeElevenLabsToolBody(req.body));
-
-      const interviewId = await resolveInterviewIdForServerTool(req.body);
+      const toolInput = mergeElevenLabsToolInput(req.body, req.query as Record<string, unknown>);
+      const interviewId = await resolveInterviewIdForServerTool(toolInput);
       if (!interviewId) {
         return res.status(400).json({
-          error: 'Missing interviewid (or interview_id) in body/parameters, and no session matched conversation_id',
+          error: 'Missing interviewid (or interview_id) in body/parameters/query, and no session matched conversation_id',
           result: {
             error: true,
             message: 'Missing interview id for resume lookup',
@@ -3576,7 +3595,7 @@ export function registerRoutes(app: Express) {
       }
 
       const { resume, lookupId, context } = await getVerifiedResumeForServerTool(interviewId);
-      console.log('[RESUME-FULLTEXT] lookup result', {
+      console.log(`[${logPrefix}] lookup result`, {
         interviewId,
         lookupId,
         verified: context.verified,
@@ -3611,7 +3630,7 @@ export function registerRoutes(app: Express) {
 
       return res.json({ result: payload, ...payload });
     } catch (error: any) {
-      console.error('[RESUME-FULLTEXT] Error:', error);
+      console.error(`[${logPrefix}] Error:`, error);
       return res.status(500).json({ error: 'Failed to fetch resume full text' });
     }
   });
@@ -3619,21 +3638,21 @@ export function registerRoutes(app: Express) {
   // ========================================================================
   // ElevenLabs Server Tool: Mark interview as complete
   // ========================================================================
-  app.post("/api/mark-interview-complete", async (req, res) => {
+  app.all("/api/mark-interview-complete", async (req, res) => {
+    const logPrefix = "MARK-INTERVIEW-COMPLETE";
+    console.log(`[${logPrefix}] incoming`, summarizeElevenLabsToolRequest(req));
+
     try {
-      // Validate API secret header
-      const apiSecret = readElevenLabsApiSecret(req.headers);
-      if (!apiSecret || apiSecret !== ELEVENLABS_API_KEY) {
+      if (!verifyElevenLabsToolAuth(req, logPrefix)) {
         return res.status(401).json({ error: 'Unauthorized: Invalid API secret' });
       }
 
-      const normalizedBody = normalizeElevenLabsToolBody(req.body);
-      console.log('[MARK-INTERVIEW-COMPLETE] tool request', summarizeElevenLabsToolBody(req.body));
+      const toolInput = mergeElevenLabsToolInput(req.body, req.query as Record<string, unknown>);
+      const normalizedBody = normalizeElevenLabsToolBody(toolInput);
 
-      // Validate required body fields
       const interviewId =
         readElevenLabsToolInterviewId(normalizedBody) ||
-        (await resolveInterviewIdForServerTool(req.body));
+        (await resolveInterviewIdForServerTool(toolInput));
       const conversationId = readElevenLabsToolConversationId(normalizedBody);
       const candidateId = readElevenLabsToolCandidateId(normalizedBody);
 

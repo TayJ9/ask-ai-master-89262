@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  mergeElevenLabsToolInput,
   normalizeElevenLabsToolBody,
+  readElevenLabsApiSecret,
   readElevenLabsToolInterviewId,
   summarizeElevenLabsToolBody,
 } from "./elevenLabsToolRequest.js";
@@ -41,6 +43,21 @@ describe("elevenLabsToolRequest", () => {
         interviewId: "abc",
         conversationId: "conv_1",
       },
+    );
+  });
+
+  it("merges GET query params with POST body", () => {
+    const merged = mergeElevenLabsToolInput(
+      { parameters: { interview_id: "from-body" } },
+      { interviewid: "from-query" },
+    );
+    assert.equal(readElevenLabsToolInterviewId(merged), "from-query");
+  });
+
+  it("reads Bearer token as api secret", () => {
+    assert.equal(
+      readElevenLabsApiSecret({ authorization: "Bearer test-key-123" }),
+      "test-key-123",
     );
   });
 });

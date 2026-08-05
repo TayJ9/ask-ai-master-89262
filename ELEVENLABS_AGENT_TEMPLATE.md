@@ -51,8 +51,10 @@ Each tool must point at your **public** backend URL (not `http://127.0.0.1`). El
 
 | Tool | Method | URL |
 |------|--------|-----|
-| GetResumeProfile | POST | `{PUBLIC_BACKEND_URL}/api/get-resume-profile` |
-| GetResumeFullText | POST | `{PUBLIC_BACKEND_URL}/api/get-resume-fulltext` |
+| GetResumeProfile | POST (required) | `{PUBLIC_BACKEND_URL}/api/get-resume-profile` |
+| GetResumeFullText | POST (required) | `{PUBLIC_BACKEND_URL}/api/get-resume-fulltext` |
+
+**Important:** ElevenLabs defaults webhook tools to **GET**. If the method is GET, requests hit the SPA and return HTML instead of JSON — the tool will always fail with no backend logs. Set **Method: POST** in the tool configuration. GET query params are supported as a fallback if POST cannot be used.
 
 **Headers**
 
@@ -60,6 +62,8 @@ Each tool must point at your **public** backend URL (not `http://127.0.0.1`). El
 Content-Type: application/json
 x-api-secret: <ELEVENLABS_API_KEY>
 ```
+
+`Authorization: Bearer <ELEVENLABS_API_KEY>` is also accepted if your ElevenLabs tool uses Bearer auth instead of `x-api-secret`.
 
 **Body** (configure in tool `request_body_schema`; ElevenLabs sends values inside a `parameters` object)
 
