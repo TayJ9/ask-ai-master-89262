@@ -17,6 +17,12 @@ const SECTION_HEADERS: Record<string, "skills" | "projects" | "experience" | "ed
   "personal projects": "projects",
   "relevant projects": "projects",
   "selected projects": "projects",
+  "technical projects": "projects",
+  "technical project": "projects",
+  "class projects": "projects",
+  "academic projects": "projects",
+  "capstone projects": "projects",
+  "project experience": "projects",
   experience: "experience",
   work: "experience",
   "work experience": "experience",
@@ -54,8 +60,12 @@ function resolveSectionKind(line: string): "skills" | "projects" | "experience" 
   if (/\b(professional|work|relevant|internship)?\s*experience\b/.test(norm) && !norm.includes("education")) {
     return "experience";
   }
-  if (/\bprojects?\b/.test(norm)) return "projects";
-  if (/\b(skills?|technologies|competencies|programming languages)\b/.test(norm)) return "skills";
+  if (/\b(technical|personal|relevant|selected|class|academic|capstone)?\s*projects?\b/.test(norm)) {
+    return "projects";
+  }
+  if (/\b(technical|core)?\s*(skills?|technologies|competencies)\b/.test(norm) || /\bprogramming languages\b/.test(norm)) {
+    return "skills";
+  }
   if (/\beducation\b/.test(norm) || /\bacademic\b/.test(norm)) return "education";
 
   return null;
@@ -85,6 +95,23 @@ function contentAfterLabel(line: string, label: RegExp): string | null {
   return stripped || null;
 }
 
+/** Inline labeled rows such as "Technical Projects: Chatbot in Python". */
+function extractInlineSectionLine(
+  line: string,
+): { kind: "skills" | "projects" | "experience" | "education"; content: string } | null {
+  const colonIdx = line.indexOf(":");
+  if (colonIdx <= 0) return null;
+
+  const label = line.slice(0, colonIdx).trim();
+  const kind = resolveSectionKind(label);
+  if (!kind) return null;
+
+  const content = line.slice(colonIdx + 1).trim();
+  if (!content) return null;
+
+  return { kind, content };
+}
+
 /**
  * Collect bullet/body lines under a section header until the next known header.
  */
@@ -107,11 +134,27 @@ export function buildResumeProfile(resumeText: string) {
   const experience: string[] = [];
   const education: string[] = [];
 
-  // Inline labeled lines: "Education: College of Charleston, CS"
+  // Inline labeled lines: "Education: ..." or "Technical Projects: ..."
   for (const line of lines) {
+    const inline = extractInlineSectionLine(line);
+    if (inline) {
+      if (inline.kind === "education") education.push(inline.content);
+      if (inline.kind === "experience") experience.push(inline.content);
+      if (inline.kind === "projects") projects.push(inline.content);
+      if (inline.kind === "skills") {
+        skills.push(
+          ...inline.content
+            .split(/[,;•|]/)
+            .map((s) => s.trim())
+            .filter(Boolean),
+        );
+      }
+      continue;
+    }
+
     const edu = contentAfterLabel(line, /^education\b/i);
     if (edu) education.push(edu);
-    const exp = contentAfterLabel(line, /^(experience|work experience|employment)\b/i);
+    const exp = contentAfterLabel(line, /^(experience|work experience|employment|professional experience)\b/i);
     if (exp) experience.push(exp);
     const proj = contentAfterLabel(line, /^projects?\b/i);
     if (proj) projects.push(proj);

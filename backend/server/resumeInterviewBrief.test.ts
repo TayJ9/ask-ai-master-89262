@@ -70,6 +70,30 @@ describe("buildResumeProfile", () => {
     assert.ok(profile.experience.some((e) => /callminer/i.test(e)));
     assert.ok(profile.skills.some((s) => /python/i.test(s)));
   });
+
+  it("recognizes Technical Projects as a projects section (block and inline)", () => {
+    const blockResume = `
+EDUCATION
+State University
+
+TECHNICAL PROJECTS
+AI Interview Coach — full-stack web app with React and Node.js
+Campus course planner with PostgreSQL backend
+
+TECHNICAL SKILLS
+Python, TypeScript, React
+`.trim();
+    const blockProfile = buildResumeProfile(blockResume);
+    assert.ok(blockProfile.projects.some((p) => /interview coach/i.test(p)));
+    assert.ok(blockProfile.projects.some((p) => /course planner/i.test(p)));
+    assert.ok(!blockProfile.education.some((e) => /interview coach/i.test(e)));
+
+    const inlineResume =
+      "Technical Projects: Built a sentiment-analysis chatbot; deployed a portfolio site with Next.js";
+    const inlineProfile = buildResumeProfile(inlineResume);
+    assert.ok(inlineProfile.projects.some((p) => /sentiment-analysis chatbot/i.test(p)));
+    assert.ok(inlineProfile.projects.some((p) => /portfolio site/i.test(p)));
+  });
 });
 
 describe("buildInterviewResumeBrief", () => {
