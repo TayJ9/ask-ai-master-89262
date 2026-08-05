@@ -3,28 +3,47 @@ import { useToast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
 import { z } from "zod";
 import { devLog } from "@/lib/utils";
-import {
-  hasValidTermsConsent,
-  storeTermsConsent,
-  clearTermsConsent,
-} from "@/lib/termsConsent";
 
 const emailSchema = z.string().email("Invalid email address");
 const passwordSchema = z.string().min(6, "Password must be at least 6 characters");
 const nameSchema = z.string().min(2, "Name must be at least 2 characters");
 
-export function useAuthForm() {
+type UseAuthFormOptions = {
+  onAuthSuccess?: (user: unknown, token: string) => void;
+};
+
+export function useAuthForm(options: UseAuthFormOptions = {}) {
+  const { onAuthSuccess } = options;
   const [isLogin, setIsLogin] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
-  const [termsAccepted, setTermsAccepted] = useState(() => hasValidTermsConsent());
+  const [signupEnabled, setSignupEnabled] = useState(true);
   const [emailError, setEmailError] = useState("");
   const [passwordError, setPasswordError] = useState("");
   const [nameError, setNameError] = useState("");
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const { apiGet } = await import("@/lib/api");
+        const config = await apiGet("/api/auth/config");
+        if (!cancelled && config && typeof config.signupEnabled === "boolean") {
+          setSignupEnabled(config.signupEnabled);
+          if (!config.signupEnabled) setIsLogin(true);
+        }
+      } catch {
+        // Keep signup visible when config is unavailable (local dev without gate)
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const validateEmail = useCallback((value: string) => {
     const result = emailSchema.safeParse(value);
@@ -44,20 +63,6 @@ export function useAuthForm() {
     return result.success;
   }, []);
 
-  const acceptTerms = useCallback(() => {
-    storeTermsConsent();
-    setTermsAccepted(true);
-  }, []);
-
-  const revokeTerms = useCallback(() => {
-    clearTermsConsent();
-    setTermsAccepted(false);
-  }, []);
-
-  useEffect(() => {
-    setTermsAccepted(hasValidTermsConsent());
-  }, [isLogin]);
-
   const toggleMode = useCallback(() => {
     setIsLogin((prev) => !prev);
     setPasswordError("");
@@ -73,18 +78,6 @@ export function useAuthForm() {
     setNameError("");
 
     try {
-      if (!termsAccepted) {
-        toast({
-          title: "Terms required",
-          description: isLogin
-            ? "Please read and accept the Terms & Conditions to continue."
-            : "Please read and accept the Terms & Conditions to create an account.",
-          variant: "destructive",
-        });
-        setLoading(false);
-        return;
-      }
-
       const isEmailValid = validateEmail(email);
       const isPasswordValid = validatePassword(password);
       const isNameValid = isLogin || validateName(fullName);
@@ -141,7 +134,11 @@ export function useAuthForm() {
         }
 
         toast({ title: "Welcome back!" });
-        setLocation("/");
+        if (onAuthSuccess) {
+          onAuthSuccess(data.user, trimmedToken);
+        } else {
+          setLocation("/");
+        }
       } else {
         toast({
           title: "Success!",
@@ -181,9 +178,7 @@ export function useAuthForm() {
     fullName,
     setFullName,
     loading,
-    termsAccepted,
-    acceptTerms,
-    revokeTerms,
+    signupEnabled,
     emailError,
     passwordError,
     nameError,

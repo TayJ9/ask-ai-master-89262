@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, startTransition } from "react";
 import { useLocation } from "wouter";
 import { AnimatePresence, motion } from "framer-motion";
 import { fadeInVariants, defaultFadeTransition } from "@/lib/animations";
-import Auth from "@/components/Auth";
+import LoginScreen from "@/components/LoginScreen";
 import RoleSelection from "@/components/RoleSelection";
 import VoiceInterviewWebSocket from "@/components/VoiceInterviewWebSocket";
 import VoiceInterviewErrorBoundary from "@/components/VoiceInterviewErrorBoundary";
@@ -380,7 +380,7 @@ export default function Index() {
   }, [resetInterviewState]);
 
   if (!user) {
-    return <Auth onAuthSuccess={handleAuthSuccess} />;
+    return <LoginScreen onAuthSuccess={handleAuthSuccess} />;
   }
 
   return (

@@ -1,20 +1,19 @@
-import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Zap } from "lucide-react";
-import { Link, useLocation } from "wouter";
+import { Zap, Mail, Lock, User } from "lucide-react";
+import { useLocation } from "wouter";
 import { cn } from "@/lib/utils";
 import { useAuthForm } from "@/hooks/useAuthForm";
 import IconInput from "./IconInput";
-import { Mail, Lock, User } from "lucide-react";
-import TermsAgreementDialog from "@/components/legal/TermsAgreementDialog";
 
-export default function AuthPanel() {
+type AuthPanelProps = {
+  onAuthSuccess?: (user: unknown, token: string) => void;
+};
+
+export default function AuthPanel({ onAuthSuccess }: AuthPanelProps) {
   const [, setLocation] = useLocation();
-  const [termsDialogOpen, setTermsDialogOpen] = useState(false);
   const {
     isLogin,
     email,
@@ -24,9 +23,7 @@ export default function AuthPanel() {
     fullName,
     setFullName,
     loading,
-    termsAccepted,
-    acceptTerms,
-    revokeTerms,
+    signupEnabled,
     emailError,
     passwordError,
     nameError,
@@ -35,16 +32,18 @@ export default function AuthPanel() {
     validateName,
     toggleMode,
     handleAuth,
-  } = useAuthForm();
+  } = useAuthForm({ onAuthSuccess });
 
   const sampleCardClass =
     "flex h-[52px] w-full items-center justify-between gap-3 rounded-lg border border-[#E5E7EB] bg-white px-3.5 py-2.5 text-left transition-colors hover:border-[#D1D5DB] hover:bg-[#F9FAFB]";
 
   return (
     <div className="flex w-full flex-col bg-white p-8 md:w-1/2 md:p-10 lg:p-12">
-      {/* Header */}
       <div className="mb-7 space-y-1 text-center">
-        <h1 className="text-[1.875rem] font-bold tracking-tight">
+        <h1
+          className="text-[1.875rem] font-bold tracking-tight"
+          data-testid="text-app-title"
+        >
           <span className="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">
             Mockly
           </span>
@@ -120,46 +119,6 @@ export default function AuthPanel() {
           data-testid="input-password"
         />
 
-        {( !isLogin || !termsAccepted) && (
-          <>
-            <div className="flex items-start gap-2.5 pt-0.5">
-              <Checkbox
-                id="terms"
-                checked={termsAccepted}
-                onCheckedChange={(checked) => {
-                  if (checked === true) {
-                    setTermsDialogOpen(true);
-                  } else {
-                    revokeTerms();
-                  }
-                }}
-                className="mt-0.5 h-4 w-4 rounded border-[#D1D5DB] data-[state=checked]:border-[#1a2634] data-[state=checked]:bg-[#1a2634]"
-              />
-              <label htmlFor="terms" className="cursor-pointer text-sm leading-snug text-[#6B7280]">
-                I agree with the{" "}
-                <button
-                  type="button"
-                  onClick={() => setTermsDialogOpen(true)}
-                  className="font-medium text-[#1a2634] underline-offset-2 hover:underline"
-                >
-                  Terms & Conditions
-                </button>{" "}
-                (
-                <Link href="/terms" className="underline-offset-2 hover:underline">
-                  read full document
-                </Link>
-                )
-              </label>
-            </div>
-
-            <TermsAgreementDialog
-              open={termsDialogOpen}
-              onOpenChange={setTermsDialogOpen}
-              onAccept={acceptTerms}
-            />
-          </>
-        )}
-
         <LoadingButton
           type="submit"
           loading={loading}
@@ -169,17 +128,18 @@ export default function AuthPanel() {
           {isLogin ? "Sign In" : "Create Account"}
         </LoadingButton>
 
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={toggleMode}
-          data-testid="button-toggle-mode"
-          className="h-auto w-full py-1 text-sm font-normal text-[#6B7280] hover:bg-transparent hover:text-[#1a2634]"
-        >
-          {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
-        </Button>
+        {signupEnabled && (
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={toggleMode}
+            data-testid="button-toggle-mode"
+            className="h-auto w-full py-1 text-sm font-normal text-[#6B7280] hover:bg-transparent hover:text-[#1a2634]"
+          >
+            {isLogin ? "Need an account? Sign up" : "Already have an account? Sign in"}
+          </Button>
+        )}
 
-        {/* Preview sample report */}
         <div className="relative pt-2">
           <div className="absolute inset-0 flex items-center">
             <div className="w-full border-t border-[#E5E7EB]" />
