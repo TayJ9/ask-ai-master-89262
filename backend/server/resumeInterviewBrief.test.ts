@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { buildResumeProfile } from "./resumeProfileHeuristic.js";
+import { buildResumeProfile, buildToolResumeProfile } from "./resumeProfileHeuristic.js";
 import { buildInterviewResumeBrief } from "./resumeInterviewBrief.js";
 
 const SAMPLE_RESUME = [
@@ -83,5 +83,24 @@ describe("buildInterviewResumeBrief", () => {
     );
     assert.equal(brief.source, "slice_fallback");
     assert.ok(brief.resume_summary.includes("tutoring"));
+  });
+});
+
+describe("buildToolResumeProfile", () => {
+  it("rebuilds skills/projects from fulltext when stored profile lost arrays", () => {
+    const toolProfile = buildToolResumeProfile(
+      {
+        role: "Computer Information Systems",
+        year: "Junior",
+        major: "Computer Information Systems",
+        first_name: "Taylor",
+      },
+      BLOCK_RESUME,
+    );
+    assert.ok(Array.isArray(toolProfile.skills) && toolProfile.skills.length > 0);
+    assert.ok(Array.isArray(toolProfile.projects) && toolProfile.projects.length > 0);
+    assert.ok(Array.isArray(toolProfile.experience) && toolProfile.experience.length > 0);
+    assert.equal(toolProfile.first_name, "Taylor");
+    assert.equal(toolProfile.major, "Computer Information Systems");
   });
 });

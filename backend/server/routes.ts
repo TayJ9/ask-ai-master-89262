@@ -15,7 +15,7 @@ import { db } from "./db";
 import { sql, eq } from "drizzle-orm";
 import { evaluationQueue, recordTerminalEvaluationFailure } from "./evaluation";
 import { normalizeEvaluationJson, scoreInterview, EvaluationJsonSchema } from "./llm/openaiEvaluator";
-import { buildResumeProfile } from "./resumeProfileHeuristic";
+import { buildResumeProfile, buildToolResumeProfile, overlayFormFieldsOnResumeProfile } from "./resumeProfileHeuristic";
 import { stripResumeContactInfo } from "./resumeSanitize";
 import { persistResumeForSession } from "./persistResume";
 import {
@@ -1505,7 +1505,7 @@ export function registerRoutes(app: Express) {
       }
 
       if (formCandidateContext) {
-        const mergedProfile = mergeCandidateContextRecords(
+        const mergedProfile = overlayFormFieldsOnResumeProfile(
           persisted.resumeProfile as Record<string, unknown>,
           formCandidateContext,
         );
@@ -3561,9 +3561,14 @@ export function registerRoutes(app: Express) {
         });
       }
 
+      const resumeprofile = buildToolResumeProfile(
+        resume.resumeProfile,
+        resume.resumeFulltext,
+      );
+
       const payload = {
         interviewid: interviewId,
-        resumeprofile: resume.resumeProfile,
+        resumeprofile,
       };
 
       return res.json({ result: payload, ...payload });

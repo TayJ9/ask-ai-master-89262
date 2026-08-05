@@ -132,3 +132,54 @@ export function buildResumeProfile(resumeText: string) {
     education: uniq(education, 6),
   };
 }
+
+const FORM_PROFILE_STRING_KEYS = [
+  "first_name",
+  "firstName",
+  "name",
+  "major",
+  "year",
+  "role",
+] as const;
+
+/** Overlay confirm-step / form fields onto a parsed profile without dropping array sections. */
+export function overlayFormFieldsOnResumeProfile(
+  parsedProfile: Record<string, unknown>,
+  formFields: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  if (!formFields || typeof formFields !== "object") {
+    return parsedProfile;
+  }
+  const overlay: Record<string, unknown> = {};
+  for (const key of FORM_PROFILE_STRING_KEYS) {
+    const value = formFields[key];
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (key === "firstName") {
+      overlay.first_name = value.trim();
+    } else {
+      overlay[key] = value.trim();
+    }
+  }
+  if (overlay.major && !overlay.role) {
+    overlay.role = overlay.major;
+  }
+  return { ...parsedProfile, ...overlay };
+}
+
+/**
+ * Structured profile for GetResumeProfile — always includes parsed skills/projects/etc.
+ * Re-parses fulltext so legacy rows that lost arrays during form merge still work.
+ */
+export function buildToolResumeProfile(
+  storedProfile: unknown,
+  resumeFulltext: string | undefined,
+): Record<string, unknown> {
+  const parsed = resumeFulltext
+    ? buildResumeProfile(resumeFulltext)
+    : { skills: [], projects: [], experience: [], education: [] };
+  const stored =
+    storedProfile && typeof storedProfile === "object"
+      ? (storedProfile as Record<string, unknown>)
+      : {};
+  return overlayFormFieldsOnResumeProfile(parsed, stored);
+}
