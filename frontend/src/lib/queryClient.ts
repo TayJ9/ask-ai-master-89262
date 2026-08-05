@@ -28,16 +28,31 @@ const defaultQueryFn = async ({ queryKey }: { queryKey: readonly unknown[] }) =>
     });
     
     clearTimeout(timeoutId);
-    
-    // Handle authentication errors
+
     if (response.status === 401 || response.status === 403) {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('user');
-      window.location.href = '/';
-      throw new ApiError('Authentication required. Please sign in again.', response.status);
+      let gateRequired = false;
+      try {
+        const cloned = response.clone();
+        const contentType = cloned.headers.get("content-type");
+        if (contentType?.includes("application/json")) {
+          const data = await cloned.json();
+          gateRequired = data?.error === "ACCESS_GATE_REQUIRED";
+        }
+      } catch {
+        // Fall through to gate redirect below.
+      }
+
+      const { expireAccessSession } = await import("./authSession");
+      expireAccessSession();
+      throw new ApiError(
+        gateRequired
+          ? "Your access session expired. Enter the current hourly code to continue."
+          : "Authentication required. Please sign in again.",
+        response.status,
+      );
     }
-    
-    return handleApiResponse(response);
+
+    return handleApiResponse(response, path);
   } catch (error: any) {
     clearTimeout(timeoutId);
     

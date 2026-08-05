@@ -116,8 +116,8 @@ export async function handleApiResponse(response: Response, path?: string): Prom
           typeof window !== 'undefined' &&
           !path?.startsWith('/api/access/')
         ) {
-          const { redirectToAccessGate } = await import('@/lib/authSession');
-          redirectToAccessGate();
+          const { expireAccessSession } = await import('@/lib/authSession');
+          expireAccessSession();
         }
       } else {
         const text = await response.text();

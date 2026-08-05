@@ -6,7 +6,7 @@ import {
   readAccessStatusCache,
   type AccessStatus,
 } from "@/lib/accessStatusCache";
-import { redirectToAccessGate } from "@/lib/authSession";
+import { expireAccessSession, redirectToAccessGate } from "@/lib/authSession";
 import { preloadIndexRoute } from "@/lib/routePreload";
 
 function isMockResultsPath(pathname: string, search: string): boolean {
@@ -28,19 +28,23 @@ function applyAccessStatus(
   status: AccessStatus,
   pathname: string,
   setAllowed: (value: boolean) => void,
-  setLocation: (path: string) => void,
+  hadGrantedSession: boolean,
 ): void {
   const allowed = canProceedWithStatus(status);
   setAllowed(allowed);
   if (!allowed && pathname !== "/gate") {
-    redirectToAccessGate(setLocation);
+    if (status.required && hadGrantedSession) {
+      expireAccessSession();
+      return;
+    }
+    redirectToAccessGate({ hard: true });
   } else if (allowed) {
     preloadIndexRoute();
   }
 }
 
 export default function AccessGateGuard({ children }: { children: ReactNode }) {
-  const [location, setLocation] = useLocation();
+  const [location] = useLocation();
   const search = window.location.search;
   const isPublic = isPublicPath(location, search);
   const cached = isPublic ? null : readAccessStatusCache();
@@ -63,22 +67,28 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     }
 
     const sessionCached = readAccessStatusCache();
+    const hadGrantedSession = Boolean(sessionCached?.validUntil);
     if (sessionCached) {
       setAccessValidUntil(sessionCached.validUntil);
-      applyAccessStatus(sessionCached, location, setAllowed, setLocation);
+      applyAccessStatus(sessionCached, location, setAllowed, hadGrantedSession);
     }
 
     try {
       const status = await fetchAndCacheAccessStatus();
       setAccessValidUntil(status.validUntil);
-      applyAccessStatus(status, location, setAllowed, setLocation);
+      applyAccessStatus(
+        status,
+        location,
+        setAllowed,
+        hadGrantedSession || Boolean(status.validUntil),
+      );
     } catch {
       setAllowed(false);
-      redirectToAccessGate(setLocation);
+      expireAccessSession();
     } finally {
       setChecking(false);
     }
-  }, [location, search, setLocation]);
+  }, [location, search]);
 
   useEffect(() => {
     if (isPublicPath(location, search)) {
@@ -130,16 +140,26 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
     }
 
     if (delayMs <= 0) {
-      redirectToAccessGate(setLocation);
+      expireAccessSession();
       return;
     }
 
     const timer = window.setTimeout(() => {
-      redirectToAccessGate(setLocation);
+      expireAccessSession();
     }, delayMs + 250);
 
     return () => window.clearTimeout(timer);
-  }, [allowed, accessValidUntil, location, search, setLocation, revalidateAccess]);
+  }, [allowed, accessValidUntil, location, search, revalidateAccess]);
+
+  useEffect(() => {
+    if (!allowed || isPublicPath(location, search)) return;
+
+    const interval = window.setInterval(() => {
+      void revalidateAccess();
+    }, 60_000);
+
+    return () => window.clearInterval(interval);
+  }, [allowed, location, search, revalidateAccess]);
 
   if (checking) {
     return (

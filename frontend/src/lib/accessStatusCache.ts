@@ -47,6 +47,7 @@ export function readAccessStatusCache(): AccessStatus | null {
         required: parsed.required,
         granted: false,
         signupEnabled: parsed.signupEnabled,
+        validUntil: parsed.validUntil,
       };
     }
 
