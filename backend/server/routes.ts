@@ -27,6 +27,7 @@ const VOICE_FIXTURES_DIR = join(__dirname, "..", "..", "test-fixtures", "voice")
 import { getJwtSecretForSigning, isJwtSecretConfigured } from "./jwtSecret";
 import {
   ACCESS_GATE_TIMEZONE,
+  ACCESS_GATE_TIMEZONE_LABEL,
   getAccessCookieExpiresAt,
   getAccessCookieFromRequest,
   getCurrentAccessCode,
@@ -841,6 +842,7 @@ export function registerRoutes(app: Express) {
       granted,
       signupEnabled: process.env.ALLOW_SIGNUP !== "false",
       timezone: ACCESS_GATE_TIMEZONE,
+      timezoneLabel: ACCESS_GATE_TIMEZONE_LABEL,
       ...(validUntil ? { validUntil } : {}),
     });
   });
@@ -894,6 +896,7 @@ export function registerRoutes(app: Express) {
       code,
       validUntil: validUntilIso,
       timezone: ACCESS_GATE_TIMEZONE,
+      timezoneLabel: ACCESS_GATE_TIMEZONE_LABEL,
     });
   });
 

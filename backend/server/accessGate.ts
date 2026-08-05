@@ -1,8 +1,9 @@
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 export const ACCESS_COOKIE_NAME = "mockly_access_granted";
-/** IANA timezone used for hourly code rotation (UTC hour boundaries). */
-export const ACCESS_GATE_TIMEZONE = "UTC";
+/** IANA timezone used for hourly code rotation (US Eastern hour boundaries). */
+export const ACCESS_GATE_TIMEZONE = "America/New_York";
+export const ACCESS_GATE_TIMEZONE_LABEL = "US Eastern Time (ET)";
 
 const HOUR_MS = 3600 * 1000;
 const DEFAULT_COOKIE_MAX_AGE_SECONDS = 604800;
@@ -14,25 +15,59 @@ export function getAccessSessionExpiresMs(unixMs: number): number {
   return unixMs + ACCESS_SESSION_DURATION_MS;
 }
 
-function getUtcHourKey(unixMs: number): string {
-  const d = new Date(unixMs);
-  const year = d.getUTCFullYear();
-  const month = d.getUTCMonth() + 1;
-  const day = d.getUTCDate();
-  const hour = d.getUTCHours();
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}T${String(hour).padStart(2, "0")}`;
+type ZonedParts = {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+};
+
+function getZonedParts(unixMs: number, timeZone: string): ZonedParts {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+  }).formatToParts(new Date(unixMs));
+
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "00";
+  let hour = Number.parseInt(get("hour"), 10);
+  if (hour === 24) hour = 0;
+
+  return {
+    year: Number.parseInt(get("year"), 10),
+    month: Number.parseInt(get("month"), 10),
+    day: Number.parseInt(get("day"), 10),
+    hour,
+  };
 }
 
-/** Milliseconds since epoch when the current UTC hour ends (next :00). */
-export function getUtcHourEndMs(unixMs: number): number {
-  const d = new Date(unixMs);
-  d.setUTCMinutes(0, 0, 0);
-  d.setUTCHours(d.getUTCHours() + 1);
-  return d.getTime();
+function getAccessGateHourKey(unixMs: number): string {
+  const p = getZonedParts(unixMs, ACCESS_GATE_TIMEZONE);
+  return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}T${String(p.hour).padStart(2, "0")}`;
 }
 
-function getUtcHourEndIso(now: number): string {
-  return new Date(getUtcHourEndMs(now)).toISOString();
+/** Milliseconds since epoch when the current access-gate hour ends (next :00 in US Eastern). */
+export function getAccessGateHourEndMs(unixMs: number): number {
+  const hourKey = getAccessGateHourKey(unixMs);
+  let hi = unixMs + HOUR_MS;
+  while (getAccessGateHourKey(hi) === hourKey) {
+    hi += HOUR_MS;
+  }
+
+  let lo = unixMs;
+  while (hi - lo > 1) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (getAccessGateHourKey(mid) === hourKey) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+}
+
+function getAccessGateHourEndIso(now: number): string {
+  return new Date(getAccessGateHourEndMs(now)).toISOString();
 }
 
 export function isAccessGateEnabled(): boolean {
@@ -48,7 +83,7 @@ function getSecret(): string {
 }
 
 export function getHourlyCode(secret: string, unixMs: number): string {
-  const hourKey = getUtcHourKey(unixMs);
+  const hourKey = getAccessGateHourKey(unixMs);
   const hmac = createHmac("sha256", secret).update(hourKey).digest("base64url");
   return hmac.slice(0, 8).toUpperCase();
 }
@@ -78,7 +113,7 @@ export function getCurrentAccessCode(now = Date.now()): { code: string; validUnt
   const raw = getHourlyCode(secret, now);
   return {
     code: formatAccessCode(raw),
-    validUntilIso: getUtcHourEndIso(now),
+    validUntilIso: getAccessGateHourEndIso(now),
   };
 }
 

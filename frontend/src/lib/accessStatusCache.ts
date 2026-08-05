@@ -7,6 +7,8 @@ export type AccessStatus = {
   granted: boolean;
   signupEnabled?: boolean;
   validUntil?: string;
+  timezone?: string;
+  timezoneLabel?: string;
 };
 
 type CachedAccessStatus = AccessStatus & {
@@ -53,6 +55,8 @@ export function readAccessStatusCache(): AccessStatus | null {
       granted: parsed.granted,
       signupEnabled: parsed.signupEnabled,
       validUntil: parsed.validUntil,
+      timezone: parsed.timezone,
+      timezoneLabel: parsed.timezoneLabel,
     };
   } catch {
     sessionStorage.removeItem(CACHE_KEY);

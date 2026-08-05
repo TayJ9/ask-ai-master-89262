@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import AnimatedBackground from "@/components/ui/AnimatedBackground";
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card";
@@ -6,16 +6,38 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { LoadingButton } from "@/components/ui/loading-button";
 import { useToast } from "@/hooks/use-toast";
-import { apiPost, ApiError } from "@/lib/api";
+import { apiGet, apiPost, ApiError } from "@/lib/api";
 import { markAccessGranted } from "@/lib/accessStatusCache";
 import { preloadIndexRoute } from "@/lib/routePreload";
 import { Link } from "wouter";
+
+const DEFAULT_TIMEZONE_LABEL = "US Eastern Time (ET)";
 
 export default function AccessGate() {
   const [, setLocation] = useLocation();
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [timezoneLabel, setTimezoneLabel] = useState(DEFAULT_TIMEZONE_LABEL);
   const { toast } = useToast();
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const status = (await apiGet("/api/access/status")) as {
+          timezoneLabel?: string;
+        };
+        if (!cancelled && status.timezoneLabel) {
+          setTimezoneLabel(status.timezoneLabel);
+        }
+      } catch {
+        // Keep default label when status is unavailable.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -53,7 +75,8 @@ export default function AccessGate() {
               </span>
             </h1>
             <CardDescription className="text-balance text-base leading-relaxed">
-              Enter the hourly access code to continue. Access lasts one hour from when you enter it; codes rotate on the UTC hour.
+              Enter the hourly access code to continue. Access lasts one hour from when you enter it;
+              codes rotate each hour in {timezoneLabel}.
             </CardDescription>
           </div>
         </CardHeader>
