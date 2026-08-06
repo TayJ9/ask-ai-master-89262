@@ -11,6 +11,38 @@ export type AccessStatus = {
   timezoneLabel?: string;
 };
 
+/** Fail closed: only allow when gate is off or access is explicitly granted. */
+export function canProceedWithAccessStatus(
+  status: AccessStatus | null | undefined,
+): boolean {
+  if (
+    !status ||
+    typeof status.required !== "boolean" ||
+    typeof status.granted !== "boolean"
+  ) {
+    return false;
+  }
+
+  if (!status.required) return true;
+  return status.granted;
+}
+
+function normalizeAccessStatusResponse(raw: unknown): AccessStatus {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Invalid access status response");
+  }
+
+  const status = raw as AccessStatus;
+  if (
+    typeof status.required !== "boolean" ||
+    typeof status.granted !== "boolean"
+  ) {
+    throw new Error("Invalid access status response");
+  }
+
+  return status;
+}
+
 type CachedAccessStatus = AccessStatus & {
   cachedAt: number;
 };
@@ -92,7 +124,9 @@ export function clearAccessStatusCache(): void {
 }
 
 export async function fetchAndCacheAccessStatus(): Promise<AccessStatus> {
-  const status = (await apiGet("/api/access/status")) as AccessStatus;
+  const status = normalizeAccessStatusResponse(
+    await apiGet("/api/access/status"),
+  );
   if (status.granted && isAccessExpired(status.validUntil ?? undefined)) {
     const expired: AccessStatus = { ...status, granted: false };
     writeAccessStatusCache(expired);

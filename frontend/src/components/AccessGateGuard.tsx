@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import {
+  canProceedWithAccessStatus,
   fetchAndCacheAccessStatus,
   getAccessExpiryDelayMs,
   readAccessStatusCache,
@@ -20,17 +21,13 @@ function isPublicPath(pathname: string, search: string): boolean {
   return isMockResultsPath(pathname, search);
 }
 
-function canProceedWithStatus(status: AccessStatus): boolean {
-  return !status.required || status.granted;
-}
-
 function applyAccessStatus(
   status: AccessStatus,
   pathname: string,
   setAllowed: (value: boolean) => void,
   hadGrantedSession: boolean,
 ): void {
-  const allowed = canProceedWithStatus(status);
+  const allowed = canProceedWithAccessStatus(status);
   setAllowed(allowed);
   if (!allowed && pathname !== "/gate") {
     if (status.required && hadGrantedSession) {
@@ -47,16 +44,11 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const search = window.location.search;
   const isPublic = isPublicPath(location, search);
-  const cached = isPublic ? null : readAccessStatusCache();
 
-  const [checking, setChecking] = useState(() => !isPublic && !cached);
-  const [allowed, setAllowed] = useState(() => {
-    if (isPublic) return true;
-    if (cached) return canProceedWithStatus(cached);
-    return false;
-  });
+  const [checking, setChecking] = useState(() => !isPublic);
+  const [allowed, setAllowed] = useState(() => isPublic);
   const [accessValidUntil, setAccessValidUntil] = useState<string | undefined>(
-    () => cached?.validUntil,
+    () => (isPublic ? undefined : readAccessStatusCache()?.validUntil),
   );
 
   const revalidateAccess = useCallback(async () => {
@@ -97,9 +89,7 @@ export default function AccessGateGuard({ children }: { children: ReactNode }) {
       return;
     }
 
-    if (!readAccessStatusCache()) {
-      setChecking(true);
-    }
+    setChecking(true);
 
     let cancelled = false;
 
